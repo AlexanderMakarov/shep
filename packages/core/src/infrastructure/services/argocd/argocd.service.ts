@@ -14,6 +14,7 @@ import type {
 } from '../../../application/ports/output/services/argocd-service.interface.js';
 import { KubectlError, KubectlErrorCode } from '../../errors/kubectl-error.js';
 import type { ExecFunction } from '../git/worktree.service.js';
+import { NODE_CLI_TIMEOUT_MS } from '../cli-exec.constants.js';
 
 const ARGOCD_INSTALL_URL =
   'https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml';
@@ -28,31 +29,32 @@ export class ArgoCDService implements IArgoCDService {
 
     try {
       // Create namespace if it doesn't exist
-      await this.execFile('kubectl', [
-        'create',
-        'namespace',
-        ns,
-        '--kubeconfig',
-        kubeconfigPath,
-        '--dry-run=client',
-        '-o',
-        'yaml',
-      ]).then(({ stdout }) =>
+      await this.execFile(
+        'kubectl',
+        [
+          'create',
+          'namespace',
+          ns,
+          '--kubeconfig',
+          kubeconfigPath,
+          '--dry-run=client',
+          '-o',
+          'yaml',
+        ],
+        { timeout: NODE_CLI_TIMEOUT_MS }
+      ).then(({ stdout }) =>
         this.execFile('kubectl', ['apply', '-f', '-', '--kubeconfig', kubeconfigPath], {
           input: stdout,
+          timeout: NODE_CLI_TIMEOUT_MS,
         })
       );
 
       // Apply ArgoCD manifests
-      await this.execFile('kubectl', [
-        'apply',
-        '-n',
-        ns,
-        '-f',
-        ARGOCD_INSTALL_URL,
-        '--kubeconfig',
-        kubeconfigPath,
-      ]);
+      await this.execFile(
+        'kubectl',
+        ['apply', '-n', ns, '-f', ARGOCD_INSTALL_URL, '--kubeconfig', kubeconfigPath],
+        { timeout: NODE_CLI_TIMEOUT_MS }
+      );
     } catch (error) {
       throw this.parseError(error);
     }

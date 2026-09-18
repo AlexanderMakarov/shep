@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ListClustersUseCase } from '@/application/use-cases/clusters/list-clusters.use-case.js';
+import type { ReconcileStuckClusterUseCase } from '@/application/use-cases/clusters/reconcile-stuck-cluster.use-case.js';
 import type { IClusterRepository } from '@/application/ports/output/repositories/cluster-repository.interface.js';
 import type { Cluster } from '@/domain/generated/output.js';
 import { ClusterStatus } from '@/domain/generated/output.js';
@@ -50,10 +51,14 @@ const sampleClusters: Cluster[] = [
 describe('ListClustersUseCase', () => {
   let useCase: ListClustersUseCase;
   let mockRepo: IClusterRepository;
+  let mockReconcileStuckCluster: ReconcileStuckClusterUseCase;
 
   beforeEach(() => {
     mockRepo = createMockClusterRepo();
-    useCase = new ListClustersUseCase(mockRepo);
+    mockReconcileStuckCluster = {
+      execute: vi.fn(async (cluster: Cluster) => cluster),
+    } as unknown as ReconcileStuckClusterUseCase;
+    useCase = new ListClustersUseCase(mockRepo, mockReconcileStuckCluster);
   });
 
   it('should return all clusters', async () => {
@@ -78,5 +83,32 @@ describe('ListClustersUseCase', () => {
     const result = await useCase.execute();
 
     expect(result).toEqual([]);
+  });
+
+  it('should reconcile each cluster and reflect a stuck cluster transitioned to Error', async () => {
+    const provisioning: Cluster = {
+      ...sampleClusters[0],
+      id: 'cluster-3',
+      status: ClusterStatus.Provisioning,
+      workerPid: 4242,
+    };
+    vi.mocked(mockRepo.list).mockResolvedValue([sampleClusters[0], provisioning]);
+    vi.mocked(mockReconcileStuckCluster.execute).mockImplementation(async (cluster) =>
+      cluster.id === 'cluster-3'
+        ? {
+            ...cluster,
+            status: ClusterStatus.Error,
+            errorMessage: 'Provisioning worker stopped responding (process no longer running)',
+          }
+        : cluster
+    );
+
+    const result = await useCase.execute();
+
+    expect(mockReconcileStuckCluster.execute).toHaveBeenCalledTimes(2);
+    expect(result.find((c) => c.id === 'cluster-3')?.status).toBe(ClusterStatus.Error);
+    expect(result.find((c) => c.id === 'cluster-3')?.errorMessage).toContain(
+      'process no longer running'
+    );
   });
 });

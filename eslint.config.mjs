@@ -46,6 +46,11 @@ export default tseslint.config(
       // Git worktrees (parallel development checkouts)
       '.worktrees/**',
 
+      // Locally-installed skill assets (gitignored, not part of the repo source)
+      '.agents/**',
+      '.claude/skills/frontend-design/**',
+      '.claude/skills/remotion-best-practices/**',
+
       // Generated files
       'apis/**',
       '*.generated.*',

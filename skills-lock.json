@@ -12,9 +12,10 @@
       "computedHash": "1e6fdd46125290fa228cb0d49e49e18ec568860f4b696eacf86c6ee75c3f8341"
     },
     "frontend-design": {
-      "source": "anthropics/skills",
+      "source": "anthropics/claude-code",
       "sourceType": "github",
-      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+      "skillPath": "plugins/frontend-design/skills/frontend-design/SKILL.md",
+      "computedHash": "3e0be122a3db8206b6d0d6b07cca898b5c75fb9b7b2101abe143fb2851734d2e"
     },
     "next-best-practices": {
       "source": "vercel-labs/next-skills",
@@ -30,6 +31,12 @@
       "source": "bobmatnyc/claude-mpm-skills",
       "sourceType": "github",
       "computedHash": "ce264ac6f9cbeba1fd354d4b34eac7f3758d630aabaf4b59a836e3db980c8486"
+    },
+    "remotion-best-practices": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-best-practices/SKILL.md",
+      "computedHash": "83df8d5bd9123b0bad380e2b01bbaec2f69ce4ece64e6b8d6127897acc22df12"
     },
     "storybook-story-writing": {
       "source": "thebushidocollective/han",

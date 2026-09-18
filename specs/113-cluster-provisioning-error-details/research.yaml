@@ -1,0 +1,377 @@
+name: "cluster-provisioning-error-details"
+summary: >
+  Confirmed by direct code inspection: cluster-agent-worker.ts's uncaughtException/unhandledRejection
+  handlers (lines 218-226) log and exit without persisting status, ProvisionClusterUseCase discards
+  the spawn() PID, and both configure-kubectl.ts and install-argocd.ts call execFile-backed services
+  with no timeout while health-check.ts already has a 120s exponential-backoff budget. The codebase
+  already has two directly-reusable precedents for the exact shape of fix needed here: AgentRun
+  already carries `pid`/`lastHeartbeat` fields with a `ShowAgentRunUseCase` that computes
+  `isAlive` from `IFeatureAgentProcessService.isAlive(pid)`, and `ReconcileBlockedFeaturesUseCase`
+  is a "self-healing sweep on read" use case injected wherever staleness must be corrected. The
+  plan mirrors both: add `workerPid` to Cluster the same way AgentRun models `pid`, and introduce
+  one `ReconcileStuckClusterUseCase` injected into ListClustersUseCase, GetClusterUseCase, and
+  GetClusterStatusUseCase (all three read paths must reconcile — CLI `ls`/`show`/`status` and the
+  web UI use different use cases today, so putting the check in only one of them would leave
+  parity gaps FR-8 explicitly forbids). Timeout hardening for configure-kubectl/install-argocd is
+  a two-line change per call site: ExecFunction is `promisify(execFile)` from node:child_process
+  (registered in register-services.ts:163), whose options object already flows through to
+  execFile's native `timeout` option — no new AbortController/Promise.race machinery is needed,
+  unlike the bespoke `withTimeout()` helper in supervisor-graph.ts.
+
+relatedFeatures: []
+
+technologies:
+  - "TypeScript"
+  - "TypeSpec (tsp) domain modeling"
+  - "LangGraph (StateGraph) for the cluster-agent provisioning graph"
+  - "Node.js child_process.fork()/execFile() for the cluster-agent worker and CLI wrappers"
+  - "SQLite (better-sqlite3) persistence"
+  - "Next.js App Router (API routes)"
+  - "tsyringe (dependency injection)"
+
+relatedLinks: []
+
+decisions:
+  - title: "Where crash-handling persistence goes: inline in the process-level handlers vs. a shared helper"
+    chosen: >
+      Extract a single `persistWorkerCrash(clusterRepo, clusterId, message)` helper (colocated in
+      cluster-agent-worker.ts, not exported) and call it from all three exit paths that currently
+      diverge: the existing `try/catch` in `runClusterWorker()` (lines 204-213), and the two new
+      call sites inside `uncaughtException`/`unhandledRejection` (lines 218-226). The SIGTERM
+      handler (lines 237-250) already does the same update inline with a fixed message and is left
+      as-is since its message is intentionally different ("received SIGTERM") and it already
+      correctly awaits before exit.
+    rejected:
+      - "Duplicate the try/catch-wrapped clusterRepo.update() block three times inline in each handler — this is exactly the 'two instances is a coincidence, three is a pattern' case the No Duplication rule calls out, and it is the literal bug class LESSONS.md already documents for the SIGTERM/try-catch divergence in this same file."
+      - "Route uncaughtException/unhandledRejection through the LangGraph handle-error node instead of a direct repo write — rejected because these handlers fire specifically when an error has escaped the graph invocation entirely (a promise rejection from a bare `await` inside a node's try/catch, or a synchronous throw from a non-graph code path); there is no live graph invocation left to route an error 'into' at that point, so the direct persistence path used by the existing catch block is the only one that still works."
+    rationale: >
+      The graph's `handle-error` node (nodes/error.ts) is the correct terminal for errors the
+      graph itself observes via `state.error`, but `uncaughtException`/`unhandledRejection` are by
+      definition errors LangGraph never saw — an unhandled rejection from `k3dService`/
+      `kubectlService`/`argoCdService` inside a `.then()` chain or missed `await`, or a bug in
+      cluster-agent-worker.ts itself. A tiny local helper keeps FR-1 (both handlers must persist
+      status+errorMessage before exit) satisfied without inventing a second error-reporting
+      mechanism, and keeps the diff minimal since `runClusterWorker`'s catch block already has the
+      exact shape needed (try/catch around clusterRepo.update, log-on-failure, non-throwing).
+
+  - title: "Persisting workerPid: at spawn time in the use case vs. inside the process service"
+    chosen: >
+      `ProvisionClusterUseCase.execute()` persists the PID via `clusterRepo.update(id, { workerPid: pid })`
+      immediately after `processService.spawn()` returns, in the application layer — mirroring
+      exactly how `IClusterAgentProcessService.spawn()` already returns a `number` (the interface
+      contract already promises this; only the caller was discarding it, per the spec's root-cause
+      finding).
+    rejected:
+      - "Have ClusterAgentProcessService.spawn() itself write the PID to the cluster record — rejected because it would require injecting IClusterRepository into an infrastructure service whose interface (cluster-agent-process-service.interface.ts) has no repository dependency today, and it violates the existing separation where cluster-agent-process.service.ts only manages OS processes (fork/isAlive/kill) with zero persistence concerns, exactly like feature-agent-process.service.ts before it."
+      - "Persist the PID inside the worker process itself (cluster-agent-worker.ts) via process.pid — rejected because the worker doesn't know its own PID is meaningful to the parent until asked, and there is a real race: if the worker crashes in the narrow window between fork() and its own self-report, the PID is never persisted and liveness detection has nothing to check, defeating the exact crash case this feature targets. Persisting at spawn() return time in the use case has no such race — the PID is known the instant fork() succeeds, before the child does anything."
+    rationale: >
+      This follows the same shape as `ShowAgentRunUseCase`, where the PID is a plain field already
+      returned by the spawn call and is simply not being captured today. Doing it in the use case
+      keeps `IClusterAgentProcessService` a pure process-management port (Clean Architecture:
+      infrastructure services should not decide when domain state is written) and satisfies FR-2
+      literally as written.
+
+  - title: "New persisted field for worker PID: name, type, and default"
+    chosen: >
+      Add `workerPid?: int32` to `Cluster` in tsp/domain/entities/cluster.tsp, directly below
+      `lastHealthCheckAt` (same section as the other provisioning-lifecycle fields), regenerate via
+      `pnpm tsp:codegen`, add a migration `142-add-worker-pid-to-clusters.ts` following the
+      `up()`-only idempotent ALTER TABLE pattern of the existing migrations directory, add
+      `worker_pid: number | null` to `ClusterRow` in cluster.mapper.ts with the same
+      nullable-optional round-trip as `k3d_cluster_name`, and add `worker_pid` to every column list
+      (INSERT columns, INSERT @params, UPDATE SET) in sqlite-cluster.repository.ts.
+    rejected:
+      - "Name it `pid` to match AgentRun.pid exactly — rejected because Cluster already has several worker-lifecycle-adjacent fields (`lastHealthCheckAt`, `lastProvisionedAt`) and a bare `pid` reads ambiguously next to `nodeCount`/`k3dClusterName` (could be misread as a k3d/docker container PID); `workerPid` is unambiguous about which process it identifies, matching the spec's own FR-3 naming."
+      - "Store it as a JSON blob inside a generic `metadata` column instead of a first-class column — rejected because it needs to be queried/compared cheaply (liveness checks run on every read of every Provisioning cluster) and every other numeric lifecycle field on Cluster is already a plain column; introducing a metadata blob for one field breaks the 'no magic values / explicit columns' convention this table already follows and reintroduces exactly the class of silent-drop bug LESSONS.md's 'settings column' entry warns about, just moved one level deeper (inside a blob no test greps for)."
+    rationale: >
+      This is a direct instance of the LESSONS.md 'A new Feature column needs FOUR edits, and the
+      mapper test won't catch the missing one' failure pattern (same file, tsp -> codegen ->
+      migration -> mapper -> repository INSERT/UPDATE lists). The plan phase must call out a
+      repository-level round-trip test (create -> read) as the assertion, per that lesson, not a
+      mapper-level test.
+
+  - title: "Where staleness/liveness reconciliation logic lives: new use case vs. extending existing ones directly"
+    chosen: >
+      Introduce one new `ReconcileStuckClusterUseCase` (application layer) that takes a single
+      `Cluster` and, only if `status === Provisioning`, checks `IClusterAgentProcessService.isAlive(workerPid)`
+      (when `workerPid` is set) and compares `lastHealthCheckAt` against the staleness constant; if
+      either signal indicates the worker is gone or hung, it persists `status: Error` +
+      a distinguishing `errorMessage` and returns the updated cluster, otherwise it returns the
+      cluster unchanged. Inject this use case into `ListClustersUseCase` (map over the list),
+      `GetClusterUseCase`, and `GetClusterStatusUseCase` (both single-cluster reads) so all three
+      read paths reconcile identically before returning data to any caller.
+    rejected:
+      - "Put the check only inside GetClusterStatusUseCase, since the spec's question/answer references it by name — rejected after tracing actual call sites: useClusterEvents() (the web UI's only poll, used by both the list page and the detail drawer, which receives cluster data as a prop rather than fetching separately) calls GET /api/clusters -> ListClustersUseCase, not GetClusterStatusUseCase. The CLI's `cluster ls` also calls ListClustersUseCase, while `cluster status`/`show` call GetClusterStatusUseCase/GetClusterUseCase. Fixing only GetClusterStatusUseCase would leave the web UI and `shep cluster ls` never reconciling, directly violating FR-8's CLI/web parity requirement and NFR-1's latency guarantee for whichever surface a user happens to be polling."
+      - "Duplicate the isAlive+staleness check inline in all three use cases — rejected under the No Duplication rule (three call sites is explicitly the threshold) and because it is the exact shape of bug LESSONS.md's 'two paths to the same transition disagreed' lesson describes: two independent copies of the same predicate WILL drift, and the entity that discovers the drift (a user seeing different errorMessage text in the CLI vs. the web UI) finds out late."
+    rationale: >
+      `ReconcileBlockedFeaturesUseCase` is the direct precedent already in this codebase for
+      'self-healing sweep, safe to call on every read, injected into whichever use case triggers a
+      dashboard/CLI load' — same shape, different entity. Injecting one use case into three others
+      via constructor (`@inject(SomeUseCase)`) is an established pattern here (e.g.
+      `BuildSessionTreeUseCase` injects `ListRepositoriesUseCase`/`ListFeaturesUseCase`), so this
+      is not a new architectural idiom, just a new application of an existing one. This design
+      satisfies FR-4 (persist before returning), FR-5 (depends only on `IClusterAgentProcessService`,
+      no child_process import outside infrastructure), FR-8 and NFR-3 (identical behavior reachable
+      from every presentation layer with zero presentation-side logic).
+
+  - title: "Distinguishing 'dead worker' vs 'hung worker' vs 'clean provisioning failure' in errorMessage text"
+    chosen: >
+      `ReconcileStuckClusterUseCase` produces one of two distinct messages depending on which
+      signal fired: if `workerPid` is set and `isAlive(workerPid)` is false, use
+      \"Provisioning worker stopped responding (process no longer running)\"; if the process is
+      alive (or `workerPid` is absent, per NFR-5) but `lastHealthCheckAt` is older than the
+      staleness threshold, use \"Provisioning worker stopped responding (no health check received
+      in over N seconds)\" with the actual elapsed time interpolated. Both are visually and
+      textually distinct from graph-originated messages like health-check.ts's
+      \"Health check timed out after Ns\" or configure-kubectl.ts's \"Failed to configure
+      kubeconfig: <cause>\", satisfying FR-6 without a new status value (per the spec's already-
+      resolved open question 1).
+    rejected:
+      - "Use one generic 'Worker stopped responding' message for both signals — rejected because FR-6 explicitly requires the crash-vs-hang distinction to be visible in the text itself (no new UI surface exists to convey it structurally), and a user debugging 'my cluster died' vs 'my cluster is stuck but the process is fine' needs different next steps (check for OOM/crash logs vs. check what the worker is doing)."
+      - "Include the raw isAlive() boolean or PID in the message — rejected by FR-6's explicit ban on non-human-readable technical dumps in errorMessage; the PID is already visible via workerPid on the entity for anyone who needs it, so surfacing it in prose text lifted from a debug log format is a redundant and colder rewording of the same signal."
+    rationale: >
+      This directly implements the spec's resolved product-question-1 answer (same field, distinct
+      text) using the vocabulary from the feature's own success criteria bullets, so QA/acceptance
+      testing can grep for the literal phrases the spec already promises.
+
+  - title: "Staleness threshold constant: value and placement"
+    chosen: >
+      Define `PROVISIONING_STALENESS_THRESHOLD_MS = 180_000` as a named export in a new
+      `packages/core/src/domain/shared/cluster-liveness.ts` file (pure constant + a
+      `isProvisioningStale(lastHealthCheckAt: Date | undefined, now: Date): boolean` pure function,
+      no I/O), imported by `ReconcileStuckClusterUseCase`.
+    rejected:
+      - "Inline `180_000` (or `180 * 1000`) directly in ReconcileStuckClusterUseCase — rejected by the explicit No Magic Values rule and NFR-2's requirement that this value be a single named constant, not duplicated or inlined across call sites (there are at least two call sites once tests need the same threshold to construct fixtures at the boundary)."
+      - "Put the constant inside the use case file itself as a local `const`, not in domain/shared — rejected because the value is a pure domain concept (how long a heartbeat can go silent before a provisioning attempt is considered dead) independent of any single use case, and domain/shared/worktree-config.ts already establishes the precedent of pure cross-cutting config values living in domain/shared with no external deps, per the domain layer's 'no external deps' rule."
+    rationale: >
+      Matches the spec's resolved question 3 rationale (3x health-check.ts's own 120s budget) and
+      keeps the threshold trivially discoverable and testable as a pure function separate from the
+      use case's DB/process-service side effects — the use case becomes a thin orchestrator that
+      calls `isProvisioningStale()` and `processService.isAlive()`, then decides.
+
+  - title: "Bounding configure-kubectl.ts and install-argocd.ts CLI calls: execFile timeout option vs. a bespoke wrapper"
+    chosen: >
+      Pass `{ timeout: NODE_CLI_TIMEOUT_MS }` as the options object on every `execFile(...)` call
+      inside `K3dService.getKubeconfig()` and every `execFile(...)` call inside
+      `ArgoCDService.install()` (both the namespace-create/apply pipe and the manifest apply).
+      `ExecFunction` is registered in `register-services.ts:163` as `promisify(execFile)` from
+      `node:child_process`, and `execFile`'s native `timeout` option already kills the child
+      process and rejects the promise with an error when exceeded — no new code path needed beyond
+      passing the option, and `parseError()` in both services already funnels any thrown error
+      (including a timeout's `ETIMEDOUT`-shaped error) into a clean `K3dError`/`KubectlError`
+      that the calling graph node already converts into `state.error` and routes to `handle-error`.
+    rejected:
+      - "Wrap each call with the bespoke Promise.race-based withTimeout() helper from supervisor-graph.ts — rejected because that helper is designed for wrapping an arbitrary async operation (an LLM call) that has no built-in cancellation; execFile already has native, OS-level timeout+kill support via its options object, so adding a second timer/race on top would only leave the underlying child process running past the application-level timeout (a real resource leak: an orphaned k3d/kubectl process), which the native option does not have."
+      - "Add timeout handling only at the LangGraph node level (health-check.ts style manual retry loop) rather than at the service layer — rejected because configure-kubectl and install-argocd are each a single CLI invocation, not a poll-until-ready loop; health-check.ts's exponential backoff exists because pod readiness is inherently a multi-attempt condition, whereas 'extract a kubeconfig' or 'apply a manifest' either succeeds, fails, or hangs once — the correct fix is bounding the one call, not manufacturing a retry loop these operations don't need."
+    rationale: >
+      This is the smallest correct fix and stays inside infrastructure (K3dService/ArgoCDService),
+      requiring no change to the node files themselves beyond the timeout constant already being
+      caught by their existing try/catch -> `error: message` return shape. It satisfies FR-7
+      exactly: bound the previously-unbounded calls and let them fail cleanically into
+      `handle-error` with the CLI's actual error text, rather than only being caught later by the
+      180s staleness backstop with a generic message.
+
+openQuestions:
+  - question: "What value should NODE_CLI_TIMEOUT_MS use for configure-kubectl/install-argocd, given install-argocd makes two sequential kubectl calls?"
+    resolved: true
+    options:
+      - option: "A single 60s timeout per individual execFile call"
+        description: "Each execFile call (kubeconfig get, namespace create+apply, manifest apply) gets its own independent 60s budget. Simple to reason about per call, and matches typical CLI responsiveness for these operations (namespace apply and kubeconfig extraction are both near-instant against a local k3d cluster; the ArgoCD manifest apply is the slowest at typically 5-15s to pull and register CRDs)."
+        selected: true
+      - option: "A single 60s timeout shared across install-argocd's whole method via one outer wrapper"
+        description: "Wrap the entire install() method body in one timeout instead of each execFile call. Fewer constants, but conflates 'one CLI call hung' with 'multiple CLI calls were each slow but individually fine' — a cluster that takes 40s+40s across two legitimate calls would incorrectly fail a 60s outer budget even though neither call was actually stuck."
+        selected: false
+      - option: "180s timeout matching the staleness threshold"
+        description: "Reuse PROVISIONING_STALENESS_THRESHOLD_MS as the per-call CLI timeout so there's only one time constant in the feature. Rejected because it defeats the point of FR-7 — a single execFile call hanging for up to 180s before failing cleanly is barely faster than just letting the staleness backstop catch it, undermining the 'specific, actionable cause' benefit this decision exists to provide."
+        selected: false
+    selectionRationale: >
+      Per-call timeouts keep each CLI invocation's failure mode isolated and specific (a timeout on
+      the ArgoCD manifest apply reads clearly as 'installing ArgoCD hung', not 'something in
+      install() hung'), and 60s is generously above the observed normal duration for any single
+      k3d/kubectl operation used here while still resolving well inside the 180s staleness budget,
+      preserving question 3's intent that in-graph nodes get a real chance to fail cleanly before
+      the read-path backstop fires.
+
+  - question: "Should ReconcileStuckClusterUseCase run for every cluster on every list() call, or only when status is Provisioning?"
+    resolved: true
+    options:
+      - option: "Guard on status === Provisioning before touching IClusterAgentProcessService at all"
+        description: "The use case's first line checks `if (cluster.status !== ClusterStatus.Provisioning) return cluster;` and returns immediately for Ready/Stopped/Error/Destroying clusters — zero isAlive() calls, zero Date math, for the common case of a healthy or already-terminal cluster."
+        selected: true
+      - option: "Always call isAlive()/compute staleness regardless of status, and only conditionally persist"
+        description: "Compute the liveness/staleness signals unconditionally for every cluster returned by list(), and only branch on status when deciding whether to persist. Wastes a process.kill(pid, 0) syscall and Date comparison per non-Provisioning cluster on every 3s poll for no benefit, since a Ready/Stopped/Error cluster's workerPid is stale/irrelevant by definition once provisioning has concluded."
+        selected: false
+      - option: "Only check clusters whose workerPid is still set, regardless of status"
+        description: "Use workerPid presence instead of status as the guard. Rejected because workerPid is set once at spawn time and is never cleared on success (no FR requires clearing it after Ready), so this would keep running the liveness check forever on every long-lived healthy cluster, which is both wasted work and a potential false-positive risk if a completed cluster's original worker process ID gets reused by an unrelated OS process later (PID reuse)."
+        selected: false
+    selectionRationale: >
+      `status === Provisioning` is the one field that means 'this record's only avenue to fresh
+      information is the worker process' — every other status either has no active worker
+      (Ready/Stopped) or is itself already the failure terminal (Error) or a distinct in-flight
+      operation with its own lifecycle (Destroying/Stopping are driven by DestroyClusterUseCase,
+      not the provisioning worker). Guarding on status first also makes NFR-1's latency claim
+      trivially true for the overwhelmingly common case (most clusters are Ready) since those
+      calls short-circuit before touching the process-service port at all.
+
+content: |
+  ## Technology Decisions
+
+  ### 1. Crash-handling persistence: shared local helper, not inline duplication
+
+  **Chosen:** A single `persistWorkerCrash()` helper in `cluster-agent-worker.ts`, called from the
+  existing `try/catch` in `runClusterWorker()` and the two new call sites in
+  `process.on('uncaughtException', ...)` / `process.on('unhandledRejection', ...)`.
+
+  **Rejected:**
+  - Inline duplication in all three handlers — three copies of the same try/catch-wrapped
+    `clusterRepo.update()` block is exactly the "two is a coincidence, three is a pattern" case.
+  - Routing through the LangGraph `handle-error` node — these errors by definition happen outside
+    any live graph invocation, so there is nothing to route "into".
+
+  **Rationale:** `runClusterWorker`'s existing catch block already has the right shape
+  (try/catch around the repo update, log-on-failure, never re-throw); extracting it once and
+  calling it from all three exit paths is the minimal fix and prevents the three paths from
+  drifting the way LESSONS.md's "two paths to the same transition disagreed" entry describes.
+
+  ### 2. workerPid persistence: in the use case, at spawn() return time
+
+  **Chosen:** `ProvisionClusterUseCase.execute()` calls `clusterRepo.update(id, { workerPid: pid })`
+  immediately after `this.processService.spawn(...)` returns the PID it already promises via its
+  `number` return type.
+
+  **Rejected:**
+  - Persisting inside `ClusterAgentProcessService.spawn()` — would force a repository dependency
+    into a pure process-management infrastructure service, breaking the same separation
+    `FeatureAgentProcessService` already maintains.
+  - Persisting from inside the worker process via `process.pid` self-report — has a real race
+    window (crash between fork and self-report leaves the PID never persisted).
+
+  **Rationale:** Matches the existing `AgentRun.pid` pattern used by `ShowAgentRunUseCase`; PID is
+  known at `fork()` success time with zero race, before the child does anything.
+
+  ### 3. New Cluster.workerPid field: full column-wiring checklist
+
+  **Chosen:** `workerPid?: int32` in `tsp/domain/entities/cluster.tsp` -> `pnpm tsp:codegen` ->
+  new migration `142-add-worker-pid-to-clusters.ts` -> `worker_pid` in `cluster.mapper.ts` ->
+  `worker_pid` added to INSERT columns, INSERT `@params`, and UPDATE `SET` in
+  `sqlite-cluster.repository.ts`.
+
+  **Rejected:**
+  - Naming it `pid` (ambiguous next to `k3dClusterName`/`nodeCount` — could misread as a container
+    PID).
+  - Storing it inside a generic JSON metadata blob instead of a first-class column (breaks the
+    queryability every other lifecycle field on this table has, and reintroduces the exact
+    "silent drop" risk LESSONS.md's settings-column entry warns about, one level deeper).
+
+  **Rationale:** Direct instance of the LESSONS.md-documented "new column needs FOUR edits, mapper
+  test won't catch the missing one" failure pattern. The plan's test assertion must be a
+  repository-level round-trip (create -> findById), not a mapper unit test.
+
+  ### 4. Reconciliation logic: one new use case, injected into three read paths
+
+  **Chosen:** `ReconcileStuckClusterUseCase` (new), injected via `@inject(ReconcileStuckClusterUseCase)`
+  into `ListClustersUseCase`, `GetClusterUseCase`, and `GetClusterStatusUseCase`.
+
+  **Rejected:**
+  - Only wiring it into `GetClusterStatusUseCase` — tracing actual call sites shows the web UI's
+    only poll (`useClusterEvents()` -> `GET /api/clusters` -> `ListClustersUseCase`) and the CLI's
+    `cluster ls` never touch `GetClusterStatusUseCase` at all, so this would leave FR-8's CLI/web
+    parity requirement unmet for the two most-used read paths.
+  - Inlining the isAlive+staleness check three times — the No Duplication rule's explicit
+    three-instance threshold, and the same "two paths disagree" bug class from LESSONS.md.
+
+  **Rationale:** `ReconcileBlockedFeaturesUseCase` is a direct existing precedent in this exact
+  codebase for "self-healing sweep on read, safe to call every load, injected into the use case(s)
+  that trigger it." Constructor-injecting one use case into another (`@inject(SomeUseCase)`) is
+  already an established idiom here (`BuildSessionTreeUseCase`, `RegisterContributorOnboardingAgentUseCase`,
+  etc.), so this introduces no new architectural pattern.
+
+  ### 5. Timeout hardening for configure-kubectl/install-argocd: native execFile timeout option
+
+  **Chosen:** Pass `{ timeout: NODE_CLI_TIMEOUT_MS }` (60s) on every `execFile(...)` call inside
+  `K3dService.getKubeconfig()` and `ArgoCDService.install()`. `ExecFunction` is
+  `promisify(execFile)` from `node:child_process` (registered in `register-services.ts:163`), and
+  `execFile`'s native `timeout` option already kills the child and rejects on expiry.
+
+  **Rejected:**
+  - The bespoke `Promise.race`-based `withTimeout()` helper from `supervisor-agent/supervisor-graph.ts`
+    — that helper exists because an LLM call has no built-in cancellation; execFile's own child
+    process would keep running past the application-level race, leaking an orphaned k3d/kubectl
+    process, which the native `timeout` option does not.
+  - Manual exponential-backoff retry loop like `health-check.ts` — configure-kubectl and
+    install-argocd are each a single CLI invocation (succeed/fail/hang once), not an
+    inherently-multi-attempt readiness poll; a retry loop these operations don't need would be
+    over-engineering.
+
+  **Rationale:** Smallest correct fix, entirely inside infrastructure, requires no change to the
+  node files (their existing try/catch -> `error: message` shape already handles whatever
+  `parseError()` produces from a timeout-shaped error). Satisfies FR-7 exactly.
+
+  ## Library Analysis
+
+  | Library / API | Purpose | Decision | Reasoning |
+  | -------------- | ------- | -------- | --------- |
+  | `node:child_process` `execFile` native `timeout` option | Bound configure-kubectl/install-argocd CLI calls | Use | Already the underlying primitive behind `ExecFunction`; zero new dependency, kills the orphaned process natively unlike a Promise.race wrapper |
+  | `process.kill(pid, 0)` (already implemented in `ClusterAgentProcessService.isAlive`) | Worker liveness check | Use (already exists, no change needed) | Cross-platform per `packages/CLAUDE.md`; the port and its infra implementation are already correct, only the caller-side wiring (persisting/consuming `workerPid`) is missing |
+  | LangGraph `handle-error` node / `routeOrError` | Clean in-graph failure routing | Use (unchanged) | Existing pattern for errors the graph itself observes; crash-handling and staleness detection are deliberately kept as a *separate* persistence path since, by definition, no live graph invocation exists at the point they fire |
+  | A new scheduler/cron library (e.g. `node-cron`) | Background reconciliation independent of polling | Reject | Explicitly ruled out by the spec's resolved open question 2 and NFR-6 — no new transport/scheduler is introduced; reconciliation piggybacks on the existing 3s `useClusterEvents()` poll and CLI invocations |
+  | A new `ClusterStatus.Stalled` enum value | Distinct UI state for stuck-vs-failed | Reject | Explicitly ruled out by the spec's resolved open question 1 — reuses `status: Error` + distinct `errorMessage` text, avoiding changes to every switch/case over `ClusterStatus` in the UI |
+
+  ## Security Considerations
+
+  - `errorMessage` text produced by crash-handling and staleness detection must not leak raw stack
+    traces, absolute filesystem paths beyond what already appears in existing graph-node error
+    messages (e.g. `configure-kubectl.ts` already includes the kubeconfig path in its error text —
+    this feature does not increase that surface), or environment variable contents. The two new
+    synthesized messages ("stopped responding...") are static/templated with only a PID or elapsed
+    seconds interpolated — no risk of leaking exec output.
+  - `workerPid` is a plain integer identifying a local OS process already spawned by this same
+    application; it carries no more sensitivity than the existing `AgentRun.pid` field already
+    persisted and displayed for feature agent runs, so no new data-classification concerns.
+  - The `timeout` option on `execFile` reduces attack surface rather than adding any: an
+    unbounded CLI call that could be made to hang indefinitely (e.g. a malicious or broken
+    `kubectl` plugin) previously could tie up worker resources indefinitely; bounding it is a
+    hardening change, not a regression.
+  - No new network listeners, no new IPC surface, and no new user-supplied input parsing are
+    introduced by this feature — `workerPid` is only ever written from a trusted internal
+    `spawn()` return value, never accepted from a request body or CLI argument.
+
+  ## Performance Implications
+
+  - `ReconcileStuckClusterUseCase` short-circuits immediately (single `if` on `status`) for any
+    cluster not in `Provisioning`, so the added cost on the hot path (`ListClustersUseCase.execute()`
+    called every 3s by every open browser tab) is zero for the common case of mostly-Ready
+    clusters.
+  - For clusters actually in `Provisioning`, the added cost per read is one `process.kill(pid, 0)`
+    syscall (already proven cheap — the same call `ClusterAgentProcessService.isAlive` already
+    performs elsewhere) plus one `Date` subtraction — negligible relative to the existing
+    `clusterRepo.list()`/`findById()` SQLite query it's layered on top of.
+  - Persisting `status: Error` from the reconciliation use case is a single `UPDATE` by primary
+    key, identical in cost to the update `handle-error` already performs on every clean failure
+    path — no new write amplification pattern introduced.
+  - The 60s per-call `execFile` timeout on `configure-kubectl`/`install-argocd` can only make
+    previously-hanging-forever calls fail *faster*; it cannot slow down any call that was
+    completing normally, since normal completion always finishes well under 60s for both
+    operations against a local k3d cluster.
+
+  ## Architecture Notes
+
+  - All new logic lives in `packages/core/src/application/use-cases/clusters/` (new use case) and
+    `packages/core/src/domain/shared/` (pure staleness constant/predicate) — no infrastructure
+    imports leak into either, per NFR-3. `ReconcileStuckClusterUseCase` depends only on
+    `IClusterRepository` and `IClusterAgentProcessService`, both existing ports.
+  - Presentation layers (CLI `ls`/`show`/`status` commands, the three `/api/clusters*` Next.js
+    routes) require zero code changes beyond what dependency injection already resolves — once
+    `ListClustersUseCase`/`GetClusterUseCase`/`GetClusterStatusUseCase` are extended to inject and
+    call `ReconcileStuckClusterUseCase`, every caller of those three use cases inherits the fix
+    automatically, satisfying the Presentation-Agnostic Core API rule and FR-8 without touching a
+    single CLI command file or API route file.
+  - `docker`/`k3d`/`kubectl` CLI wrapping stays entirely inside `infrastructure/services/{k3d,kubectl,argocd}/`
+    — the `execFile` timeout change touches only `k3d.service.ts` and `argocd.service.ts`, neither
+    of which is imported outside infrastructure.
+  - NFR-5 (backward compatibility for pre-existing clusters with no `workerPid`) is satisfied by
+    construction: `ReconcileStuckClusterUseCase` only calls `isAlive()` when `workerPid` is
+    present, and always evaluates the `lastHealthCheckAt` staleness check regardless — so an
+    old cluster row created before this migration degrades to staleness-only detection exactly as
+    NFR-5 requires, with no explicit "is this an old row" branch needed since the check is already
+    naturally gated on field presence.

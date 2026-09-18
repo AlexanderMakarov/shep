@@ -36,6 +36,7 @@ export interface IClusterRepository {
         | 'nodeCount'
         | 'lastProvisionedAt'
         | 'lastHealthCheckAt'
+        | 'workerPid'
         | 'errorMessage'
       >
     >

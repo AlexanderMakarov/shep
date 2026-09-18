@@ -1,0 +1,405 @@
+name: "cluster-provisioning-error-details"
+summary: >
+  14 tasks across 6 phases. Phase 1 lands the workerPid column and the pure staleness
+  predicate. Phase 2 fixes worker crash handling. Phase 3 captures the PID at spawn
+  time. Phase 4 builds and wires the ReconcileStuckClusterUseCase into all three read
+  paths. Phase 5 hardens the two previously-unbounded CLI nodes with native timeouts.
+  Phase 6 adds the process-lifecycle integration tests the spec requires and runs full
+  local verification.
+
+relatedFeatures: []
+technologies: []
+relatedLinks: []
+
+tasks:
+  - id: task-1
+    phaseId: phase-1
+    title: "Add workerPid field to the Cluster TypeSpec model and regenerate"
+    description: >
+      Add `workerPid?: int32` to the Cluster entity in tsp/domain/entities/cluster.tsp,
+      directly below lastHealthCheckAt, and run pnpm tsp:codegen to regenerate
+      packages/core/src/domain/generated/output.ts. This is the entity-level source of
+      truth every later phase depends on.
+    state: Todo
+    dependencies: []
+    acceptanceCriteria:
+      - "Cluster.workerPid appears as an optional number field in the regenerated output.ts"
+      - "pnpm tsp:compile / pnpm tsp:codegen runs with zero errors"
+      - "No other generated type in output.ts is altered beyond the new field"
+    tdd: null
+    estimatedEffort: "20min"
+
+  - id: task-2
+    phaseId: phase-1
+    title: "Create the 142-add-worker-pid-to-clusters migration"
+    description: >
+      Add a new idempotent migration under
+      packages/core/src/infrastructure/persistence/sqlite/migrations/ that ALTERs the
+      clusters table to add a nullable worker_pid INTEGER column, following the exact
+      up()-only pattern of migration 141.
+    state: Todo
+    dependencies:
+      - task-1
+    acceptanceCriteria:
+      - "Migration file is named 142-add-worker-pid-to-clusters.ts and follows the existing numbering/naming convention"
+      - "Running the migration twice against the same DB does not error (idempotent ALTER TABLE guard)"
+      - "New column is nullable with no default value required, per NFR-5 backward compatibility"
+    tdd:
+      red:
+        - "Write a migration-runner test that asserts the clusters table has no worker_pid column before migration 142 runs"
+      green:
+        - "Implement the migration's up() function adding worker_pid INTEGER NULL, guarded the same way existing ALTER TABLE migrations check for column existence"
+      refactor:
+        - "Confirm the migration reads consistently with neighboring migration files (same header comment style, same guard helper if one exists)"
+    estimatedEffort: "30min"
+
+  - id: task-3
+    phaseId: phase-1
+    title: "Wire worker_pid through cluster.mapper.ts and sqlite-cluster.repository.ts"
+    description: >
+      Add worker_pid to ClusterRow in cluster.mapper.ts with the same nullable-optional
+      round-trip pattern as k3d_cluster_name (toDatabase/fromDatabase), and add
+      worker_pid to every column list in sqlite-cluster.repository.ts: INSERT columns,
+      INSERT @params, and UPDATE SET. This is the exact 4-edit-point failure pattern
+      LESSONS.md documents — a repository-level round-trip test is mandatory, not a
+      mapper unit test alone.
+    state: Todo
+    dependencies:
+      - task-2
+    acceptanceCriteria:
+      - "Creating a cluster with workerPid set, then reading it back via the repository, returns the same workerPid value"
+      - "Updating an existing cluster's workerPid via the repository persists and is readable afterward"
+      - "A cluster created with workerPid omitted round-trips as undefined/null, not throwing or coercing to 0"
+      - "worker_pid appears in all three required repository locations: INSERT column list, INSERT params, UPDATE SET clause"
+    tdd:
+      red:
+        - "Write a repository-level test: create a cluster with workerPid: 12345, call findById, assert result.workerPid === 12345"
+        - "Write a second repository-level test: create a cluster without workerPid, call update() to set workerPid later, call findById, assert it is now set"
+      green:
+        - "Add worker_pid to ClusterRow interface and the mapper's toDatabase/fromDatabase functions"
+        - "Add worker_pid to the repository's INSERT column list, INSERT bound params, and UPDATE SET clause"
+      refactor:
+        - "Verify no other nullable-optional numeric field in the mapper uses a different null-coercion convention than the one just added"
+    estimatedEffort: "45min"
+
+  - id: task-4
+    phaseId: phase-1
+    title: "Create the staleness constant and pure predicate in domain/shared"
+    description: >
+      Create packages/core/src/domain/shared/cluster-liveness.ts exporting
+      PROVISIONING_STALENESS_THRESHOLD_MS = 180_000 and a pure function
+      isProvisioningStale(lastHealthCheckAt: Date | undefined, now: Date): boolean, with
+      zero I/O and zero external deps, matching the domain/shared/worktree-config.ts
+      precedent.
+    state: Todo
+    dependencies: []
+    acceptanceCriteria:
+      - "PROVISIONING_STALENESS_THRESHOLD_MS is the single named constant used everywhere this threshold is needed — no inlined 180000 or 180*1000 elsewhere in the codebase"
+      - "isProvisioningStale returns true when now - lastHealthCheckAt exceeds the threshold, false when within it"
+      - "isProvisioningStale returns true when lastHealthCheckAt is undefined (never received a health check at all counts as stale)"
+      - "The file has no imports outside domain, and no repository/service/I-O calls"
+    tdd:
+      red:
+        - "Write cluster-liveness.test.ts: isProvisioningStale returns false when lastHealthCheckAt is 10s before now"
+        - "Add a case: isProvisioningStale returns true when lastHealthCheckAt is 181s before now"
+        - "Add a boundary case: isProvisioningStale returns true when lastHealthCheckAt is undefined"
+      green:
+        - "Implement PROVISIONING_STALENESS_THRESHOLD_MS and isProvisioningStale to satisfy all three cases"
+      refactor:
+        - "Ensure the function signature takes `now` as an explicit parameter rather than calling Date.now() internally, so callers/tests can inject a fixed clock"
+    estimatedEffort: "30min"
+
+  - id: task-5
+    phaseId: phase-2
+    title: "Extract persistWorkerCrash() helper in cluster-agent-worker.ts"
+    description: >
+      Extract the try/catch-wrapped clusterRepo.update(id, { status: Error, errorMessage })
+      logic already present in runClusterWorker()'s catch block into a local
+      persistWorkerCrash(clusterRepo, clusterId, message) helper, without changing its
+      existing behavior at that call site. This is a pure refactor step that sets up
+      task-6 to reuse it, per the No Duplication rule.
+    state: Todo
+    dependencies:
+      - task-3
+    acceptanceCriteria:
+      - "persistWorkerCrash is a local (non-exported) function colocated in cluster-agent-worker.ts"
+      - "The existing runClusterWorker() catch block now calls persistWorkerCrash instead of inlining the repo update"
+      - "Existing tests for runClusterWorker's catch-path crash handling still pass unmodified"
+      - "persistWorkerCrash itself never throws — internal failures are logged, not propagated"
+    tdd:
+      red:
+        - "Confirm the existing test covering runClusterWorker's try/catch crash path still exercises the same observable behavior (status: Error, errorMessage set) after refactor — no new test needed if one already exists; if none exists, add one asserting the cluster ends in status Error with a non-empty errorMessage after a forced graph-invocation throw"
+      green:
+        - "Extract the helper and call it from the existing catch block; verify no behavior change via the test above"
+      refactor:
+        - "Rename any local variables the extraction obscured for clarity (e.g. message param naming consistent with call sites added in task-6)"
+    estimatedEffort: "30min"
+
+  - id: task-6
+    phaseId: phase-2
+    title: "Call persistWorkerCrash() from uncaughtException and unhandledRejection handlers"
+    description: >
+      Wire the two process-level handlers (currently lines ~218-226 of
+      cluster-agent-worker.ts, which only log and process.exit(1)) to call
+      persistWorkerCrash() with a distinct, human-readable message before exiting,
+      satisfying FR-1.
+    state: Todo
+    dependencies:
+      - task-5
+    acceptanceCriteria:
+      - "A forced uncaughtException in the worker process results in the cluster's status becoming Error with a non-empty, human-readable errorMessage before the process exits"
+      - "A forced unhandledRejection in the worker process results in the same outcome"
+      - "The two messages are distinguishable from each other and from the existing catch-block message, so a developer reading errorMessage can tell which handler fired"
+      - "process.exit(1) still occurs after the persistence attempt completes (or fails), never blocking indefinitely"
+    tdd:
+      red:
+        - "Write an integration test that forks a minimal worker harness (or the real worker with a fault injected) that throws synchronously outside any try/catch, and assert the cluster record ends up status: Error with a specific errorMessage"
+        - "Write a second integration test that triggers an unhandled promise rejection in the worker and assert the same outcome with its own distinct errorMessage"
+      green:
+        - "Add the persistWorkerCrash() calls to both process.on('uncaughtException', ...) and process.on('unhandledRejection', ...) handlers, each with its own message"
+      refactor:
+        - "Ensure both handlers await the persistence call before process.exit(1), matching the SIGTERM handler's existing await-then-exit shape"
+    estimatedEffort: "45min"
+
+  - id: task-7
+    phaseId: phase-3
+    title: "Persist workerPid in ProvisionClusterUseCase after spawn() returns"
+    description: >
+      Modify ProvisionClusterUseCase.execute() to call
+      clusterRepo.update(id, { workerPid: pid }) immediately after
+      this.processService.spawn() returns, satisfying FR-2. No intervening await between
+      spawn() returning and the persistence call, to avoid a crash-before-persist race.
+    state: Todo
+    dependencies:
+      - task-3
+    acceptanceCriteria:
+      - "After ProvisionClusterUseCase.execute() runs, the cluster record's workerPid matches the PID returned by processService.spawn()"
+      - "No behavior change to the use case's existing return value or error handling for spawn() failures"
+      - "workerPid persistence happens before any other post-spawn logic in the use case"
+    tdd:
+      red:
+        - "Write/extend a ProvisionClusterUseCase test with a mocked processService.spawn() returning a fixed PID, and assert clusterRepo.update was called with { workerPid: <that PID> }"
+      green:
+        - "Add the clusterRepo.update(id, { workerPid: pid }) call right after spawn() resolves"
+      refactor:
+        - "Confirm the update call reuses the same repository update method signature as other partial-field updates elsewhere in the use case, no new overload needed"
+    estimatedEffort: "20min"
+
+  - id: task-8
+    phaseId: phase-4
+    title: "Implement ReconcileStuckClusterUseCase"
+    description: >
+      Create packages/core/src/application/use-cases/clusters/reconcile-stuck-cluster.use-case.ts.
+      Given a single Cluster, return it unchanged if status !== Provisioning. Otherwise,
+      check isAlive(workerPid) via IClusterAgentProcessService when workerPid is set, and
+      isProvisioningStale(lastHealthCheckAt, now) unconditionally; if either indicates a
+      dead or hung worker, persist status: Error with the corresponding distinct message
+      via IClusterRepository and return the updated cluster.
+    state: Todo
+    dependencies:
+      - task-4
+      - task-7
+    acceptanceCriteria:
+      - "A Ready/Stopped/Error/Destroying cluster passed in is returned unchanged with zero calls to IClusterAgentProcessService"
+      - "A Provisioning cluster with a dead workerPid (isAlive() false) is persisted as status: Error with message containing 'process no longer running'"
+      - "A Provisioning cluster with a live workerPid but stale lastHealthCheckAt is persisted as status: Error with message containing 'no health check received'"
+      - "A Provisioning cluster with no workerPid set falls back to staleness-only detection per NFR-5, never calling isAlive()"
+      - "A Provisioning cluster that is both alive and not stale is returned unchanged"
+      - "The use case imports only IClusterRepository and IClusterAgentProcessService — no infrastructure imports"
+    tdd:
+      red:
+        - "Write reconcile-stuck-cluster.use-case.test.ts: non-Provisioning cluster returned unchanged, isAlive/repo.update never called"
+        - "Add: Provisioning cluster + workerPid set + isAlive() mocked false -> repo.update called with status Error and the dead-worker message"
+        - "Add: Provisioning cluster + workerPid set + isAlive() mocked true + stale lastHealthCheckAt -> repo.update called with status Error and the stale-heartbeat message"
+        - "Add: Provisioning cluster + no workerPid + stale lastHealthCheckAt -> repo.update called, isAlive() never invoked"
+        - "Add: Provisioning cluster + alive + fresh heartbeat -> repo.update never called, cluster returned unchanged"
+      green:
+        - "Implement the use case's guard-then-branch logic to satisfy each test case in order"
+      refactor:
+        - "Extract the two message-construction branches into small named helpers if the execute() method grows past ~30 lines, per the File Length & Focus rule"
+    estimatedEffort: "1.5h"
+
+  - id: task-9
+    phaseId: phase-4
+    title: "Inject ReconcileStuckClusterUseCase into ListClustersUseCase"
+    description: >
+      Constructor-inject ReconcileStuckClusterUseCase into ListClustersUseCase and map
+      every cluster in the list through it before returning, so the web UI's 3s poll
+      (useClusterEvents -> GET /api/clusters -> ListClustersUseCase) and the CLI's
+      cluster ls both reconcile stuck clusters automatically.
+    state: Todo
+    dependencies:
+      - task-8
+    acceptanceCriteria:
+      - "ListClustersUseCase.execute() returns clusters with any Provisioning+stuck entries already transitioned to Error"
+      - "Existing ListClustersUseCase tests for non-stuck clusters pass unmodified"
+      - "No new constructor parameter breaks existing DI container resolution (register-services.ts wiring updated if needed)"
+    tdd:
+      red:
+        - "Write a ListClustersUseCase test with one Ready cluster and one Provisioning+dead-worker cluster; assert the returned list shows the second as status Error with the expected message"
+      green:
+        - "Inject ReconcileStuckClusterUseCase via @inject and map the returned cluster list through its execute() method"
+      refactor:
+        - "Confirm the map is done with Promise.all (not a sequential loop) so N clusters reconcile concurrently, avoiding a linear latency penalty on the 3s poll"
+    estimatedEffort: "30min"
+
+  - id: task-10
+    phaseId: phase-4
+    title: "Inject ReconcileStuckClusterUseCase into GetClusterUseCase and GetClusterStatusUseCase"
+    description: >
+      Apply the same injection-and-reconcile-before-return pattern from task-9 to the two
+      remaining single-cluster read paths, completing FR-8's CLI/web parity requirement
+      across all three use cases that any presentation layer might call.
+    state: Todo
+    dependencies:
+      - task-8
+    acceptanceCriteria:
+      - "GetClusterUseCase.execute() and GetClusterStatusUseCase.execute() both return an already-reconciled cluster for a stuck Provisioning cluster"
+      - "Existing tests for both use cases covering non-stuck clusters pass unmodified"
+      - "Behavior is identical to ListClustersUseCase's reconciliation for the same cluster state, per the parity requirement"
+    tdd:
+      red:
+        - "Write a GetClusterUseCase test: Provisioning cluster with stale lastHealthCheckAt -> execute() returns status Error with the stale-heartbeat message"
+        - "Write the equivalent test for GetClusterStatusUseCase"
+      green:
+        - "Inject ReconcileStuckClusterUseCase into both use cases and call it on the fetched cluster before returning"
+      refactor:
+        - "If the injection/call pattern is now identical across all three use cases, confirm it isn't complex enough to warrant further extraction — a one-line call site in each is fine and does not violate No Duplication (it's DI composition, not logic duplication)"
+    estimatedEffort: "40min"
+
+  - id: task-11
+    phaseId: phase-5
+    title: "Add NODE_CLI_TIMEOUT_MS and apply to K3dService.getKubeconfig() execFile calls"
+    description: >
+      Define a NODE_CLI_TIMEOUT_MS = 60_000 named constant and pass
+      { timeout: NODE_CLI_TIMEOUT_MS } as the options object on every execFile call
+      inside K3dService.getKubeconfig(), so a hung kubeconfig extraction fails cleanly
+      with a timeout error instead of hanging indefinitely.
+    state: Todo
+    dependencies: []
+    acceptanceCriteria:
+      - "getKubeconfig() rejects within ~60s (not indefinitely) when the underlying execFile call never returns"
+      - "The rejection is converted by the existing parseError()/error-shape logic into the same K3dError type normal failures already produce, requiring no change to calling graph nodes"
+      - "NODE_CLI_TIMEOUT_MS is a single named constant, not inlined at each call site"
+      - "Normal, fast getKubeconfig() calls are unaffected — no behavior change for the success path"
+    tdd:
+      red:
+        - "Write a K3dService test that mocks the injected ExecFunction to never resolve, and assert getKubeconfig() rejects with a timeout-shaped error within a bounded test timeout"
+      green:
+        - "Add the timeout option to the execFile call(s) inside getKubeconfig() and define NODE_CLI_TIMEOUT_MS"
+      refactor:
+        - "Place NODE_CLI_TIMEOUT_MS in a shared location if install-argocd's service (task-12) needs the same constant, avoiding duplication across two files"
+    estimatedEffort: "30min"
+
+  - id: task-12
+    phaseId: phase-5
+    title: "Apply NODE_CLI_TIMEOUT_MS to ArgoCDService.install() execFile calls"
+    description: >
+      Apply the same { timeout: NODE_CLI_TIMEOUT_MS } option to every execFile call
+      inside ArgoCDService.install() (the namespace create/apply pipe and the manifest
+      apply), reusing the constant introduced in task-11 rather than redefining it.
+    state: Todo
+    dependencies:
+      - task-11
+    acceptanceCriteria:
+      - "install() rejects within ~60s per individual CLI call when any single execFile call hangs, rather than hanging indefinitely or waiting for a combined multi-call budget"
+      - "The rejection is converted into the existing KubectlError/ArgoCD error shape already handled by install-argocd.ts's node-level try/catch"
+      - "Normal install() calls (each step completing well under 60s) are unaffected"
+    tdd:
+      red:
+        - "Write an ArgoCDService test that mocks the injected ExecFunction for the manifest-apply step to never resolve, and assert install() rejects within a bounded test timeout"
+      green:
+        - "Add the timeout option to each execFile call inside install(), importing NODE_CLI_TIMEOUT_MS from wherever task-11 defined it"
+      refactor:
+        - "Confirm both services now import the same shared constant rather than each declaring their own copy"
+    estimatedEffort: "30min"
+
+  - id: task-13
+    phaseId: phase-6
+    title: "Integration test: killed worker process is detected and reported"
+    description: >
+      Write an integration test simulating a worker process killed out-of-band
+      (SIGKILL) that never runs any exit handler, and verify that the next call to
+      ListClustersUseCase or GetClusterStatusUseCase against that cluster detects
+      isAlive() === false and transitions it to status: Error with the dead-worker
+      message, satisfying the spec's second success criterion and NFR-4's mandate for
+      real-process (not mocked) coverage.
+    state: Todo
+    dependencies:
+      - task-9
+      - task-10
+    acceptanceCriteria:
+      - "Test spawns a real child process, records its PID as workerPid on a Provisioning cluster, then SIGKILLs it directly (bypassing any graceful shutdown path)"
+      - "A subsequent read via the reconciliation-wired use case transitions the cluster to status: Error with the dead-worker message within the test's assertion window"
+      - "Test does not mock IClusterAgentProcessService.isAlive — it exercises the real process.kill(pid, 0) liveness check against the real killed PID"
+    tdd:
+      red:
+        - "Write the test per the description; it should fail against pre-task-8/9/10 code (no reconciliation exists yet) but by this point in the plan it should already pass immediately since prior tasks are complete — treat this as a regression-proving integration test rather than a new RED-driving-implementation cycle"
+      green:
+        - "No new production code expected; if the test reveals a gap (e.g. PID reuse edge case, timing flakiness), fix it in ReconcileStuckClusterUseCase or the process service"
+      refactor:
+        - "Extract a shared 'spawn and kill a real child process' test helper if this pattern is reused by task-14"
+    estimatedEffort: "45min"
+
+  - id: task-14
+    phaseId: phase-6
+    title: "Integration test for hung worker + full local verification sequence"
+    description: >
+      Write an integration test simulating a worker process that is alive but has
+      stopped advancing lastHealthCheckAt past the staleness threshold, verifying
+      transition to status: Error with the stale-heartbeat message (third success
+      criterion). Then run the complete pre-push verification sequence (lint, format,
+      typecheck, unit+integration tests, build, tsp compile) and confirm zero failures
+      before considering the feature complete.
+    state: Todo
+    dependencies:
+      - task-13
+    acceptanceCriteria:
+      - "Test spawns a real, still-alive child process, sets lastHealthCheckAt to a timestamp older than PROVISIONING_STALENESS_THRESHOLD_MS, and asserts reconciliation transitions the cluster to status: Error with the stale-heartbeat message"
+      - "pnpm lint, pnpm format:check, pnpm typecheck, pnpm test:unit, pnpm test:int, pnpm build, and pnpm tsp:compile all pass with zero errors"
+      - "No existing test in the suite regresses"
+    tdd:
+      red:
+        - "Write the hung-worker integration test per the description"
+      green:
+        - "No new production code expected if phases 1-5 are correctly implemented; fix any gap the test surfaces"
+      refactor:
+        - "Clean up any test-only helpers shared with task-13 into a common integration-test fixture file if duplication emerged"
+    estimatedEffort: "1h"
+
+totalEstimate: "9h"
+openQuestions: []
+
+content: |
+  ## Summary
+
+  The 14 tasks build strictly bottom-up. Phase 1 (tasks 1-4) lands the `workerPid`
+  column across all four required edit points (tsp, migration, mapper, repository) with
+  a mandatory repository-level round-trip test, plus the pure staleness constant and
+  predicate in `domain/shared` — both are load-bearing for every later phase and are
+  built first specifically because LESSONS.md documents this exact column-wiring step
+  as the highest-risk part of the feature.
+
+  Phase 2 (tasks 5-6) fixes the highest-severity gap first: worker crash handlers that
+  currently exit silently. It extracts a shared `persistWorkerCrash()` helper before
+  wiring it into both process-level handlers, avoiding the three-copies duplication
+  LESSONS.md already flags in this file.
+
+  Phase 3 (task 7) is a small, isolated fix — persist the PID the spawn call already
+  returns — that unblocks phase 4's liveness checks from having anything to check for
+  newly-provisioned clusters.
+
+  Phase 4 (tasks 8-10) is the centerpiece: one `ReconcileStuckClusterUseCase` built and
+  fully tested in isolation (task 8), then injected into all three read paths
+  (`ListClustersUseCase`, `GetClusterUseCase`, `GetClusterStatusUseCase`) so the web UI's
+  poll and every CLI command reconcile identically, closing the CLI/web parity
+  requirement.
+
+  Phase 5 (tasks 11-12) is independent of phases 2-4 and hardens the two previously
+  unbounded CLI call sites with native `execFile` timeouts, sharing one constant across
+  both services.
+
+  Phase 6 (tasks 13-14) closes with the process-lifecycle integration tests the spec's
+  success criteria and NFR-4 explicitly require — a real killed process and a real
+  hung-but-alive process, not mocks — followed by the full local verification sequence
+  before the feature is considered done.

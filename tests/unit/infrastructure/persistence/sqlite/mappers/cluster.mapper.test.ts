@@ -35,6 +35,7 @@ function createTestRow(overrides: Partial<ClusterRow> = {}): ClusterRow {
     node_count: 1,
     last_provisioned_at: null,
     last_health_check_at: null,
+    worker_pid: null,
     error_message: null,
     created_at: new Date('2026-03-22T10:00:00Z').getTime(),
     updated_at: new Date('2026-03-22T12:00:00Z').getTime(),
@@ -61,6 +62,7 @@ describe('Cluster Mapper', () => {
       expect(row.node_count).toBe(1);
       expect(row.last_provisioned_at).toBeNull();
       expect(row.last_health_check_at).toBeNull();
+      expect(row.worker_pid).toBeNull();
       expect(row.error_message).toBeNull();
       expect(row.created_at).toBe(new Date('2026-03-22T10:00:00Z').getTime());
       expect(row.updated_at).toBe(new Date('2026-03-22T12:00:00Z').getTime());
@@ -121,6 +123,18 @@ describe('Cluster Mapper', () => {
       expect(row.error_message).toBeNull();
     });
 
+    it('should map workerPid to its value when set', () => {
+      const cluster = createTestCluster({ workerPid: 12345 });
+      const row = toDatabase(cluster);
+      expect(row.worker_pid).toBe(12345);
+    });
+
+    it('should map undefined workerPid to null', () => {
+      const cluster = createTestCluster();
+      const row = toDatabase(cluster);
+      expect(row.worker_pid).toBeNull();
+    });
+
     it('should map deletedAt Date to unix milliseconds', () => {
       const deletedAt = new Date('2026-06-02T09:00:00Z');
       const cluster = createTestCluster({ deletedAt });
@@ -152,6 +166,7 @@ describe('Cluster Mapper', () => {
       expect(cluster.nodeCount).toBe(1);
       expect(cluster.lastProvisionedAt).toBeUndefined();
       expect(cluster.lastHealthCheckAt).toBeUndefined();
+      expect(cluster.workerPid).toBeUndefined();
       expect(cluster.errorMessage).toBeUndefined();
       expect(cluster.createdAt).toBeInstanceOf(Date);
       expect(cluster.updatedAt).toBeInstanceOf(Date);
@@ -222,6 +237,18 @@ describe('Cluster Mapper', () => {
       expect(cluster.errorMessage).toBeUndefined();
     });
 
+    it('should map worker_pid to its value when set', () => {
+      const row = createTestRow({ worker_pid: 12345 });
+      const cluster = fromDatabase(row);
+      expect(cluster.workerPid).toBe(12345);
+    });
+
+    it('should map null worker_pid to undefined', () => {
+      const row = createTestRow({ worker_pid: null });
+      const cluster = fromDatabase(row);
+      expect(cluster.workerPid).toBeUndefined();
+    });
+
     it('should cast status string to ClusterStatus enum', () => {
       const row = createTestRow({ status: 'Provisioning' });
       const cluster = fromDatabase(row);
@@ -253,6 +280,7 @@ describe('Cluster Mapper', () => {
         nodeCount: 1,
         lastProvisionedAt: new Date('2026-03-20T10:00:00Z'),
         lastHealthCheckAt: new Date('2026-03-22T08:00:00Z'),
+        workerPid: 12345,
         errorMessage: 'Previous error',
         status: ClusterStatus.Ready,
       });
@@ -271,6 +299,7 @@ describe('Cluster Mapper', () => {
       expect(restored.nodeCount).toBe(original.nodeCount);
       expect(restored.lastProvisionedAt).toEqual(original.lastProvisionedAt);
       expect(restored.lastHealthCheckAt).toEqual(original.lastHealthCheckAt);
+      expect(restored.workerPid).toBe(original.workerPid);
       expect(restored.errorMessage).toBe(original.errorMessage);
       expect(restored.createdAt).toEqual(original.createdAt);
       expect(restored.updatedAt).toEqual(original.updatedAt);
@@ -294,6 +323,7 @@ describe('Cluster Mapper', () => {
       expect(restored.kubeconfigPath).toBeUndefined();
       expect(restored.lastProvisionedAt).toBeUndefined();
       expect(restored.lastHealthCheckAt).toBeUndefined();
+      expect(restored.workerPid).toBeUndefined();
       expect(restored.errorMessage).toBeUndefined();
       expect(restored.deletedAt).toBeUndefined();
     });

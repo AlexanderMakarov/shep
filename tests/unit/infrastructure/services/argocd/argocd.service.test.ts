@@ -9,6 +9,7 @@ import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ArgoCDService } from '@/infrastructure/services/argocd/argocd.service.js';
 import { KubectlError, KubectlErrorCode } from '@/infrastructure/errors/kubectl-error.js';
+import { NODE_CLI_TIMEOUT_MS } from '@/infrastructure/services/cli-exec.constants.js';
 
 type ExecFileFn = (
   cmd: string,
@@ -40,28 +41,46 @@ describe('ArgoCDService', () => {
 
       await service.install(kubeconfigPath);
 
-      // Verify namespace creation (dry-run)
-      expect(mockExecFile).toHaveBeenCalledWith('kubectl', [
-        'create',
-        'namespace',
-        'argocd',
-        '--kubeconfig',
-        kubeconfigPath,
-        '--dry-run=client',
-        '-o',
-        'yaml',
-      ]);
+      // Verify namespace creation (dry-run) is bounded by the shared CLI timeout
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'kubectl',
+        [
+          'create',
+          'namespace',
+          'argocd',
+          '--kubeconfig',
+          kubeconfigPath,
+          '--dry-run=client',
+          '-o',
+          'yaml',
+        ],
+        { timeout: NODE_CLI_TIMEOUT_MS }
+      );
 
-      // Verify ArgoCD manifest apply
-      expect(mockExecFile).toHaveBeenCalledWith('kubectl', [
-        'apply',
-        '-n',
-        'argocd',
-        '-f',
-        'https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml',
-        '--kubeconfig',
-        kubeconfigPath,
-      ]);
+      // Verify piped namespace apply is bounded by the shared CLI timeout
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'kubectl',
+        ['apply', '-f', '-', '--kubeconfig', kubeconfigPath],
+        {
+          input: 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: argocd',
+          timeout: NODE_CLI_TIMEOUT_MS,
+        }
+      );
+
+      // Verify ArgoCD manifest apply is bounded by the shared CLI timeout
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'kubectl',
+        [
+          'apply',
+          '-n',
+          'argocd',
+          '-f',
+          'https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml',
+          '--kubeconfig',
+          kubeconfigPath,
+        ],
+        { timeout: NODE_CLI_TIMEOUT_MS }
+      );
     });
 
     it('should use custom namespace when specified', async () => {
@@ -73,7 +92,8 @@ describe('ArgoCDService', () => {
 
       expect(mockExecFile).toHaveBeenCalledWith(
         'kubectl',
-        expect.arrayContaining(['create', 'namespace', 'custom-ns'])
+        expect.arrayContaining(['create', 'namespace', 'custom-ns']),
+        expect.objectContaining({ timeout: NODE_CLI_TIMEOUT_MS })
       );
     });
 
@@ -92,6 +112,25 @@ describe('ArgoCDService', () => {
       await expect(service.install(kubeconfigPath)).rejects.toMatchObject({
         code: KubectlErrorCode.BINARY_NOT_FOUND,
       });
+    });
+
+    it('should bound each install() call with NODE_CLI_TIMEOUT_MS so a hung kubectl call fails cleanly', async () => {
+      mockExecFile.mockResolvedValueOnce({ stdout: 'ns yaml', stderr: '' });
+      mockExecFile.mockResolvedValueOnce({ stdout: '', stderr: '' });
+      // Simulate what Node's execFile produces when its native `timeout` option
+      // kills the child process on the manifest-apply step: killed=true, a
+      // signal, no exit code.
+      const timeoutError = new Error('Command failed: kubectl apply') as Error & {
+        killed: boolean;
+        signal: string;
+        code: null;
+      };
+      timeoutError.killed = true;
+      timeoutError.signal = 'SIGTERM';
+      timeoutError.code = null;
+      mockExecFile.mockRejectedValueOnce(timeoutError);
+
+      await expect(service.install(kubeconfigPath)).rejects.toThrow(KubectlError);
     });
   });
 

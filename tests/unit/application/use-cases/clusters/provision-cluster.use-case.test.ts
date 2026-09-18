@@ -114,6 +114,16 @@ describe('ProvisionClusterUseCase', () => {
     expect(result.error).toBe('Cluster not found: "non-existent"');
   });
 
+  it('should persist workerPid returned by spawn()', async () => {
+    vi.mocked(mockRepo.findById).mockResolvedValue(makeCluster());
+    vi.mocked(mockProcess.spawn).mockReturnValue(54321);
+
+    const result = await useCase.execute('cluster-1');
+
+    expect(result.ok).toBe(true);
+    expect(mockRepo.update).toHaveBeenCalledWith('cluster-1', { workerPid: 54321 });
+  });
+
   it('should pass ArgoCD options to worker', async () => {
     vi.mocked(mockRepo.findById).mockResolvedValue(
       makeCluster({ argoCdEnabled: true, argoCdNamespace: 'custom-ns' })

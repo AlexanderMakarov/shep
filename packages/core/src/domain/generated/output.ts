@@ -4491,6 +4491,10 @@ export type Cluster = SoftDeletableEntity & {
    */
   lastHealthCheckAt?: any;
   /**
+   * OS process ID of the spawned cluster-agent worker (set at provisioning time)
+   */
+  workerPid?: number;
+  /**
    * Error message from the last failed operation (set when status = Error)
    */
   errorMessage?: string;

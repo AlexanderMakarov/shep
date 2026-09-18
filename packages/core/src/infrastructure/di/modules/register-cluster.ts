@@ -27,6 +27,7 @@ import { UnlinkApplicationUseCase } from '../../../application/use-cases/cluster
 import { ProvisionClusterUseCase } from '../../../application/use-cases/clusters/provision-cluster.use-case.js';
 import { DestroyClusterUseCase } from '../../../application/use-cases/clusters/destroy-cluster.use-case.js';
 import { GetClusterStatusUseCase } from '../../../application/use-cases/clusters/get-cluster-status.use-case.js';
+import { ReconcileStuckClusterUseCase } from '../../../application/use-cases/clusters/reconcile-stuck-cluster.use-case.js';
 
 /**
  * Register all cluster-related components: repository, infrastructure services,
@@ -52,6 +53,7 @@ export function registerCluster(container: DependencyContainer): void {
   });
 
   // ─── Use cases ────────────────────────────────────────────────────────────
+  container.registerSingleton(ReconcileStuckClusterUseCase);
   container.registerSingleton(CreateClusterUseCase);
   container.registerSingleton(GetClusterUseCase);
   container.registerSingleton(ListClustersUseCase);

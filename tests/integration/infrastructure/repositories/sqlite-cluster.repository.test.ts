@@ -135,6 +135,7 @@ describe('SQLiteClusterRepository', () => {
       expect(columnNames).toContain('node_count');
       expect(columnNames).toContain('last_provisioned_at');
       expect(columnNames).toContain('last_health_check_at');
+      expect(columnNames).toContain('worker_pid');
       expect(columnNames).toContain('error_message');
       expect(columnNames).toContain('created_at');
       expect(columnNames).toContain('updated_at');
@@ -234,6 +235,22 @@ describe('SQLiteClusterRepository', () => {
         new Date('2026-03-22T08:00:00Z').getTime()
       );
       expect(found!.errorMessage).toBe('Previous error');
+    });
+
+    it('round-trips workerPid through create -> findById', async () => {
+      const cluster = createTestCluster({ workerPid: 12345 });
+      await repository.create(cluster);
+
+      const found = await repository.findById('cluster-001');
+      expect(found!.workerPid).toBe(12345);
+    });
+
+    it('round-trips a cluster created without workerPid as undefined', async () => {
+      const cluster = createTestCluster();
+      await repository.create(cluster);
+
+      const found = await repository.findById('cluster-001');
+      expect(found!.workerPid).toBeUndefined();
     });
   });
 
@@ -392,6 +409,14 @@ describe('SQLiteClusterRepository', () => {
       const found = await repository.findById('cluster-001');
       expect((found!.lastProvisionedAt as Date).getTime()).toBe(provisioned.getTime());
       expect((found!.lastHealthCheckAt as Date).getTime()).toBe(healthCheck.getTime());
+    });
+
+    it('sets workerPid on an existing cluster created without one', async () => {
+      await repository.create(createTestCluster());
+      await repository.update('cluster-001', { workerPid: 54321 });
+
+      const found = await repository.findById('cluster-001');
+      expect(found!.workerPid).toBe(54321);
     });
 
     it('updating one field does not zero others', async () => {

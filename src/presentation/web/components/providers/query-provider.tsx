@@ -18,7 +18,12 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
             // Keep cached data around for 5 minutes so navigating
             // between tabs doesn't re-fetch cold.
             gcTime: 5 * 60_000,
-            refetchOnWindowFocus: false,
+            // Views without their own SSE subscription (e.g. the
+            // applications list) otherwise never see data changed by
+            // another tab or a background agent until a manual reload.
+            // Refetching stale data when the window regains focus closes
+            // that gap without adding per-page polling everywhere.
+            refetchOnWindowFocus: true,
           },
         },
       })

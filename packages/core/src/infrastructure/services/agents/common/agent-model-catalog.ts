@@ -16,6 +16,7 @@ export const CLAUDE_CODE_MODELS: string[] = [
   'claude-sonnet-5',
   'claude-sonnet-4-6',
   'claude-haiku-4-5',
+  'z-ai/glm-5.3',
   'glm-5.2',
   'glm-5.1',
 ];

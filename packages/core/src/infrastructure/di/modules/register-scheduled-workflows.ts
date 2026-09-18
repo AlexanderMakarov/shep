@@ -53,4 +53,35 @@ export function registerScheduledWorkflows(c: DependencyContainer): void {
   c.registerSingleton(ScheduleScheduledWorkflowUseCase);
   c.registerSingleton(GetScheduledWorkflowHistoryUseCase);
   c.registerSingleton(ToggleScheduledWorkflowUseCase);
+
+  // ─── String-token aliases for web routes ─────────────────────────────────
+  // Turbopack can't resolve .js→.ts imports inside @shepai/core, so routes use
+  // string tokens instead of class refs.
+  c.register('CreateWorkflowUseCase', {
+    useFactory: (container) => container.resolve(CreateScheduledWorkflowUseCase),
+  });
+  c.register('UpdateWorkflowUseCase', {
+    useFactory: (container) => container.resolve(UpdateScheduledWorkflowUseCase),
+  });
+  c.register('DeleteWorkflowUseCase', {
+    useFactory: (container) => container.resolve(DeleteScheduledWorkflowUseCase),
+  });
+  c.register('ListWorkflowsUseCase', {
+    useFactory: (container) => container.resolve(ListScheduledWorkflowsUseCase),
+  });
+  c.register('GetWorkflowUseCase', {
+    useFactory: (container) => container.resolve(GetScheduledWorkflowUseCase),
+  });
+  c.register('RunWorkflowUseCase', {
+    useFactory: (container) => container.resolve(RunScheduledWorkflowUseCase),
+  });
+  c.register('ScheduleWorkflowUseCase', {
+    useFactory: (container) => container.resolve(ScheduleScheduledWorkflowUseCase),
+  });
+  c.register('GetWorkflowHistoryUseCase', {
+    useFactory: (container) => container.resolve(GetScheduledWorkflowHistoryUseCase),
+  });
+  c.register('ToggleWorkflowUseCase', {
+    useFactory: (container) => container.resolve(ToggleScheduledWorkflowUseCase),
+  });
 }

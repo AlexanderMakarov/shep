@@ -54,6 +54,10 @@ const MODEL_METADATA: Record<string, ModelMeta> = {
   'grok-code': { displayName: 'Grok Code', description: 'xAI code model' },
 
   // Z.ai models
+  'z-ai/glm-5.3': {
+    displayName: 'GLM-5.3 (OpenRouter API)',
+    description: 'Z.ai 1M-context coding flagship (OpenRouter API)',
+  },
   'glm-5.2': { displayName: 'GLM-5.2', description: 'Z.ai 1M-context coding flagship' },
   'glm-5.1': { displayName: 'GLM-5.1', description: 'Z.ai open-weights coding model' },
 

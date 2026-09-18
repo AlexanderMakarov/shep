@@ -9,6 +9,7 @@ import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { K3dService } from '@/infrastructure/services/k3d/k3d.service.js';
 import { K3dError, K3dErrorCode } from '@/infrastructure/errors/k3d-error.js';
+import { NODE_CLI_TIMEOUT_MS } from '@/infrastructure/services/cli-exec.constants.js';
 
 type ExecFileFn = (
   cmd: string,
@@ -184,13 +185,31 @@ describe('K3dService', () => {
       const result = await service.getKubeconfig('test-cluster');
 
       expect(result).toBe(kubeconfig);
-      expect(mockExecFile).toHaveBeenCalledWith('k3d', ['kubeconfig', 'get', 'test-cluster']);
+      expect(mockExecFile).toHaveBeenCalledWith('k3d', ['kubeconfig', 'get', 'test-cluster'], {
+        timeout: NODE_CLI_TIMEOUT_MS,
+      });
     });
 
     it('should throw K3dError on failure', async () => {
       mockExecFile.mockRejectedValueOnce(new Error('cluster not found'));
 
       await expect(service.getKubeconfig('missing')).rejects.toThrow(K3dError);
+    });
+
+    it('should bound the call with NODE_CLI_TIMEOUT_MS so a hung k3d binary fails cleanly', async () => {
+      // Simulate what Node's execFile produces when its native `timeout` option
+      // kills the child process: killed=true, a signal, no exit code.
+      const timeoutError = new Error('Command failed: k3d kubeconfig get test-cluster') as Error & {
+        killed: boolean;
+        signal: string;
+        code: null;
+      };
+      timeoutError.killed = true;
+      timeoutError.signal = 'SIGTERM';
+      timeoutError.code = null;
+      mockExecFile.mockRejectedValueOnce(timeoutError);
+
+      await expect(service.getKubeconfig('test-cluster')).rejects.toThrow(K3dError);
     });
   });
 });

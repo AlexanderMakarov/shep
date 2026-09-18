@@ -1,0 +1,43 @@
+feature:
+  id: "113-cluster-provisioning-error-details"
+  name: "cluster-provisioning-error-details"
+  number: 113
+  branch: "feat/113-cluster-provisioning-error-details"
+  lifecycle: "research"
+  createdAt: "2026-08-26T07:46:23Z"
+status:
+  phase: "implementation-complete"
+  progress:
+    completed: 14
+    total: 14
+    percentage: 100
+  currentTask: null
+  lastUpdated: "2026-08-27T01:54:27.005Z"
+  lastUpdatedBy: "feature-agent:implement"
+  completedPhases:
+    - "analyze"
+    - "requirements"
+    - "research"
+    - "plan"
+    - "phase-1"
+    - "phase-2"
+    - "phase-3"
+    - "phase-4"
+    - "phase-5"
+    - "phase-6"
+    - "evidence"
+validation:
+  lastRun: null
+  gatesPassed: []
+  autoFixesApplied: []
+tasks:
+  current: null
+  blocked: []
+  failed: []
+checkpoints:
+  - phase: "feature-created"
+    completedAt: "2026-08-26T07:46:23Z"
+    completedBy: "feature-agent"
+errors:
+  current: null
+  history: []

@@ -43,13 +43,13 @@ export class SQLiteClusterRepository implements IClusterRepository {
         id, name, slug, description, status,
         k3d_cluster_name, kubeconfig_path,
         argocd_enabled, argocd_namespace, node_count,
-        last_provisioned_at, last_health_check_at, error_message,
+        last_provisioned_at, last_health_check_at, worker_pid, error_message,
         created_at, updated_at, deleted_at
       ) VALUES (
         @id, @name, @slug, @description, @status,
         @k3d_cluster_name, @kubeconfig_path,
         @argocd_enabled, @argocd_namespace, @node_count,
-        @last_provisioned_at, @last_health_check_at, @error_message,
+        @last_provisioned_at, @last_health_check_at, @worker_pid, @error_message,
         @created_at, @updated_at, @deleted_at
       )
     `);
@@ -100,6 +100,7 @@ export class SQLiteClusterRepository implements IClusterRepository {
         | 'nodeCount'
         | 'lastProvisionedAt'
         | 'lastHealthCheckAt'
+        | 'workerPid'
         | 'errorMessage'
       >
     >
@@ -159,6 +160,10 @@ export class SQLiteClusterRepository implements IClusterRepository {
           ? fields.lastHealthCheckAt.getTime()
           : fields.lastHealthCheckAt
       );
+    }
+    if (fields.workerPid !== undefined) {
+      setClauses.push('worker_pid = ?');
+      values.push(fields.workerPid);
     }
     if (fields.errorMessage !== undefined) {
       setClauses.push('error_message = ?');

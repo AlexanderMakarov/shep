@@ -1,5 +1,69 @@
-import { describe, it, expect } from 'vitest';
-import { parseClusterWorkerArgs } from '@/infrastructure/services/agents/cluster-agent/cluster-agent-worker.js';
+import 'reflect-metadata';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ClusterStatus } from '@/domain/generated/output.js';
+import type { Cluster } from '@/domain/generated/output.js';
+
+// Use vi.hoisted so mock fns are available when vi.mock factories run
+const { mockInitializeContainer, mockResolve, mockGraphInvoke, mockCreateClusterAgentGraph } =
+  vi.hoisted(() => ({
+    mockInitializeContainer: vi.fn(),
+    mockResolve: vi.fn(),
+    mockGraphInvoke: vi.fn(),
+    mockCreateClusterAgentGraph: vi.fn(),
+  }));
+
+vi.mock('@/infrastructure/di/container.js', () => ({
+  initializeContainer: () => mockInitializeContainer(),
+  container: { resolve: (...args: unknown[]) => mockResolve(...args) },
+}));
+
+vi.mock('@/infrastructure/services/agents/cluster-agent/cluster-agent-graph.js', () => ({
+  createClusterAgentGraph: (...args: unknown[]) => mockCreateClusterAgentGraph(...args),
+}));
+
+vi.mock('@/infrastructure/services/agents/common/checkpointer.js', () => ({
+  createCheckpointer: vi.fn().mockReturnValue({}),
+}));
+
+vi.mock('@/infrastructure/services/settings.service.js', () => ({
+  getSettings: () => ({
+    agent: { type: 'claude-code', authMethod: 'token', token: 'test' },
+  }),
+  initializeSettings: vi.fn(),
+}));
+
+import {
+  parseClusterWorkerArgs,
+  runClusterWorker,
+  handleUncaughtWorkerException,
+  handleUnhandledWorkerRejection,
+} from '@/infrastructure/services/agents/cluster-agent/cluster-agent-worker.js';
+
+function makeMockCluster(overrides: Partial<Cluster> = {}): Cluster {
+  return {
+    id: 'cluster-1',
+    name: 'test-cluster',
+    slug: 'test-cluster',
+    status: ClusterStatus.Provisioning,
+    nodeCount: 1,
+    argoCdEnabled: false,
+    argoCdNamespace: 'argocd',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  } as Cluster;
+}
+
+function makeMockClusterRepository(cluster: Cluster) {
+  return {
+    create: vi.fn().mockResolvedValue(undefined),
+    findById: vi.fn().mockResolvedValue(cluster),
+    findBySlug: vi.fn().mockResolvedValue(cluster),
+    list: vi.fn().mockResolvedValue([cluster]),
+    update: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 describe('parseClusterWorkerArgs', () => {
   it('should parse required --cluster-id and --run-id', () => {
@@ -111,5 +175,162 @@ describe('parseClusterWorkerArgs', () => {
       resume: true,
       threadId: 'thread-1',
     });
+  });
+});
+
+describe('runClusterWorker crash handling', () => {
+  let mockClusterRepo: ReturnType<typeof makeMockClusterRepository>;
+  let cluster: Cluster;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cluster = makeMockCluster();
+    mockClusterRepo = makeMockClusterRepository(cluster);
+    mockInitializeContainer.mockResolvedValue(undefined);
+    mockResolve.mockImplementation((token: unknown) => {
+      const key = typeof token === 'string' ? token : (token as { name?: string })?.name;
+      if (key === 'IClusterRepository') return mockClusterRepo;
+      if (key === 'InitializeSettingsUseCase') {
+        return {
+          execute: vi.fn().mockResolvedValue({
+            agent: { type: 'claude-code', authMethod: 'token', token: 'test' },
+          }),
+        };
+      }
+      // IK3dService, IKubectlService, IArgoCDService, IDockerHealthService
+      return {};
+    });
+    mockGraphInvoke.mockResolvedValue({ error: null });
+    mockCreateClusterAgentGraph.mockReturnValue({ invoke: mockGraphInvoke });
+  });
+
+  it('should persist status Error with the graph error message when the graph invocation throws (existing catch-block behavior)', async () => {
+    mockGraphInvoke.mockRejectedValue(new Error('k3d create failed: docker not running'));
+
+    await runClusterWorker({
+      clusterId: 'cluster-1',
+      runId: 'run-1',
+      argoCdEnabled: false,
+      argoCdNamespace: 'argocd',
+      resume: false,
+    });
+
+    expect(mockClusterRepo.update).toHaveBeenCalledWith('cluster-1', {
+      status: ClusterStatus.Error,
+      errorMessage: 'k3d create failed: docker not running',
+    });
+  });
+
+  it('should not persist any status change when the graph invocation succeeds', async () => {
+    await runClusterWorker({
+      clusterId: 'cluster-1',
+      runId: 'run-1',
+      argoCdEnabled: false,
+      argoCdNamespace: 'argocd',
+      resume: false,
+    });
+
+    expect(mockClusterRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('should not throw when persisting the crash status itself fails', async () => {
+    mockGraphInvoke.mockRejectedValue(new Error('graph blew up'));
+    mockClusterRepo.update.mockRejectedValueOnce(new Error('db unavailable'));
+
+    await expect(
+      runClusterWorker({
+        clusterId: 'cluster-1',
+        runId: 'run-1',
+        argoCdEnabled: false,
+        argoCdNamespace: 'argocd',
+        resume: false,
+      })
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('cluster-agent-worker process-level crash handlers', () => {
+  let mockClusterRepo: ReturnType<typeof makeMockClusterRepository>;
+  let cluster: Cluster;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    cluster = makeMockCluster();
+    mockClusterRepo = makeMockClusterRepository(cluster);
+    mockInitializeContainer.mockResolvedValue(undefined);
+    mockResolve.mockImplementation((token: unknown) => {
+      const key = typeof token === 'string' ? token : (token as { name?: string })?.name;
+      if (key === 'IClusterRepository') return mockClusterRepo;
+      if (key === 'InitializeSettingsUseCase') {
+        return {
+          execute: vi.fn().mockResolvedValue({
+            agent: { type: 'claude-code', authMethod: 'token', token: 'test' },
+          }),
+        };
+      }
+      return {};
+    });
+    mockGraphInvoke.mockResolvedValue({ error: null });
+    mockCreateClusterAgentGraph.mockReturnValue({ invoke: mockGraphInvoke });
+
+    // Populate the module's signal-handling context (clusterIdForSignal/clusterRepoForSignal)
+    // the same way production code does — by running the worker once.
+    await runClusterWorker({
+      clusterId: 'cluster-1',
+      runId: 'run-1',
+      argoCdEnabled: false,
+      argoCdNamespace: 'argocd',
+      resume: false,
+    });
+    mockClusterRepo.update.mockClear();
+  });
+
+  it('should persist a distinguishing errorMessage on an uncaught exception', async () => {
+    await handleUncaughtWorkerException(new Error('segfault in native binding'));
+
+    expect(mockClusterRepo.update).toHaveBeenCalledWith('cluster-1', {
+      status: ClusterStatus.Error,
+      errorMessage:
+        'Provisioning worker crashed with an uncaught exception: segfault in native binding',
+    });
+  });
+
+  it('should persist a distinguishing errorMessage on an unhandled promise rejection', async () => {
+    await handleUnhandledWorkerRejection(new Error('ECONNREFUSED'));
+
+    expect(mockClusterRepo.update).toHaveBeenCalledWith('cluster-1', {
+      status: ClusterStatus.Error,
+      errorMessage: 'Provisioning worker crashed with an unhandled promise rejection: ECONNREFUSED',
+    });
+  });
+
+  it('should stringify a non-Error unhandled rejection reason', async () => {
+    await handleUnhandledWorkerRejection('plain string rejection');
+
+    expect(mockClusterRepo.update).toHaveBeenCalledWith('cluster-1', {
+      status: ClusterStatus.Error,
+      errorMessage:
+        'Provisioning worker crashed with an unhandled promise rejection: plain string rejection',
+    });
+  });
+
+  it('should produce distinguishable messages for uncaughtException vs unhandledRejection', async () => {
+    await handleUncaughtWorkerException(new Error('boom-a'));
+    const uncaughtMessage = mockClusterRepo.update.mock.calls[0][1].errorMessage;
+
+    mockClusterRepo.update.mockClear();
+
+    await handleUnhandledWorkerRejection(new Error('boom-b'));
+    const rejectionMessage = mockClusterRepo.update.mock.calls[0][1].errorMessage;
+
+    expect(uncaughtMessage).not.toBe(rejectionMessage);
+    expect(uncaughtMessage).toContain('uncaught exception');
+    expect(rejectionMessage).toContain('unhandled promise rejection');
+  });
+
+  it('should not throw when persisting the crash itself fails', async () => {
+    mockClusterRepo.update.mockRejectedValueOnce(new Error('db unavailable'));
+
+    await expect(handleUncaughtWorkerException(new Error('boom'))).resolves.toBeUndefined();
   });
 });

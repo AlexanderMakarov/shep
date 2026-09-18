@@ -110,3 +110,6 @@ storybook-static/
 # Marketing screenshot factory output (generated assets, not source)
 # =============================================================================
 scripts/marketing/output/
+.agents/
+.claude/skills/frontend-design/
+.claude/skills/remotion-best-practices/

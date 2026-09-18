@@ -131,6 +131,16 @@ model Cluster extends SoftDeletableEntity {
   lastHealthCheckAt?: utcDateTime;
 
   /**
+   * OS process ID of the spawned cluster-agent worker.
+   * Set when ProvisionClusterUseCase spawns the worker process. Used to check
+   * worker liveness (IClusterAgentProcessService.isAlive) so a dead or hung
+   * worker can be detected on read and reported via errorMessage instead of
+   * leaving the cluster stuck in Provisioning indefinitely.
+   */
+  @doc("OS process ID of the spawned cluster-agent worker (set at provisioning time)")
+  workerPid?: int32;
+
+  /**
    * Error message from the last failed operation.
    * Set when status transitions to Error. Cleared when status leaves Error state.
    * Displayed in cluster detail views and error notifications.

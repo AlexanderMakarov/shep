@@ -4,20 +4,24 @@ import type { IClusterRepository } from '../../ports/output/repositories/cluster
 import type { IKubectlService } from '../../ports/output/services/kubectl-service.interface.js';
 import type { IArgoCDService } from '../../ports/output/services/argocd-service.interface.js';
 import type { GetClusterStatusResult, ClusterStatusResult } from './types.js';
+import { ReconcileStuckClusterUseCase } from './reconcile-stuck-cluster.use-case.js';
 
 @injectable()
 export class GetClusterStatusUseCase {
   constructor(
     @inject('IClusterRepository') private readonly clusterRepo: IClusterRepository,
     @inject('IKubectlService') private readonly kubectlService: IKubectlService,
-    @inject('IArgoCDService') private readonly argoCdService: IArgoCDService
+    @inject('IArgoCDService') private readonly argoCdService: IArgoCDService,
+    @inject(ReconcileStuckClusterUseCase)
+    private readonly reconcileStuckCluster: ReconcileStuckClusterUseCase
   ) {}
 
   async execute(id: string): Promise<GetClusterStatusResult> {
-    const cluster = await this.clusterRepo.findById(id);
-    if (!cluster) {
+    const found = await this.clusterRepo.findById(id);
+    if (!found) {
       return { ok: false, error: `Cluster not found: "${id}"` };
     }
+    const cluster = await this.reconcileStuckCluster.execute(found);
 
     const result: ClusterStatusResult = { cluster };
 

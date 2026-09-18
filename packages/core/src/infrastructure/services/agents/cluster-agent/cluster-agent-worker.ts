@@ -96,6 +96,29 @@ function startHeartbeat(clusterId: string, clusterRepo: IClusterRepository): () 
 }
 
 /**
+ * Persist a terminal Error status + message for the cluster, without ever throwing.
+ * Shared by every crash-exit path (the graph invocation's own catch block, plus the
+ * uncaughtException/unhandledRejection handlers below) so a worker crash always leaves
+ * the cluster in a state the UI can explain instead of stuck in Provisioning.
+ */
+async function persistWorkerCrash(
+  clusterRepo: IClusterRepository,
+  clusterId: string,
+  message: string
+): Promise<void> {
+  try {
+    await clusterRepo.update(clusterId, {
+      status: ClusterStatus.Error,
+      errorMessage: message,
+    });
+  } catch (updateErr) {
+    log(
+      `Failed to update cluster status to Error: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}`
+    );
+  }
+}
+
+/**
  * Run the cluster agent worker with the given arguments.
  * Initializes DI, creates the graph, and executes it.
  */
@@ -201,28 +224,59 @@ export async function runClusterWorker(args: ClusterWorkerArgs): Promise<void> {
     log(`Graph invocation error: ${message}`);
 
     // Update cluster status to Error
-    try {
-      await clusterRepo.update(args.clusterId, {
-        status: ClusterStatus.Error,
-        errorMessage: message,
-      });
-    } catch (updateErr) {
-      log(
-        `Failed to update cluster status to Error: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}`
-      );
-    }
+    await persistWorkerCrash(clusterRepo, args.clusterId, message);
   }
 }
 
-// Catch unhandled errors globally so they always appear in the log file
-process.on('uncaughtException', (err) => {
+// Track signal-handling context so process-level crash handlers (uncaughtException,
+// unhandledRejection, SIGTERM) can persist a terminal cluster status even though they
+// fire outside any live graph invocation.
+let clusterIdForSignal: string | undefined;
+let clusterRepoForSignal: IClusterRepository | undefined;
+
+/**
+ * Persist a distinguishing crash status for an uncaught exception that escaped the graph
+ * invocation entirely. Exported so it can be exercised directly in tests without emitting
+ * a real process-level 'uncaughtException' event, which would also reach the test runner's
+ * own global handlers.
+ */
+export async function handleUncaughtWorkerException(err: Error): Promise<void> {
   log(`UNCAUGHT EXCEPTION: ${err.message}\n${err.stack}`);
-  process.exit(1);
-});
-process.on('unhandledRejection', (reason) => {
+  if (clusterIdForSignal && clusterRepoForSignal) {
+    await persistWorkerCrash(
+      clusterRepoForSignal,
+      clusterIdForSignal,
+      `Provisioning worker crashed with an uncaught exception: ${err.message}`
+    );
+  }
+}
+
+/**
+ * Persist a distinguishing crash status for an unhandled promise rejection that escaped the
+ * graph invocation entirely. Exported for the same testability reason as
+ * {@link handleUncaughtWorkerException}.
+ */
+export async function handleUnhandledWorkerRejection(reason: unknown): Promise<void> {
   const msg = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
   log(`UNHANDLED REJECTION: ${msg}`);
-  process.exit(1);
+  if (clusterIdForSignal && clusterRepoForSignal) {
+    const detail = reason instanceof Error ? reason.message : String(reason);
+    await persistWorkerCrash(
+      clusterRepoForSignal,
+      clusterIdForSignal,
+      `Provisioning worker crashed with an unhandled promise rejection: ${detail}`
+    );
+  }
+}
+
+// Catch unhandled errors globally so they always appear in the log file, and — per FR-1 —
+// so the cluster never stays silently stuck in Provisioning when an error escapes the
+// graph invocation entirely (e.g. a missed await inside a shelled-out CLI call).
+process.on('uncaughtException', (err) => {
+  void handleUncaughtWorkerException(err).finally(() => process.exit(1));
+});
+process.on('unhandledRejection', (reason) => {
+  void handleUnhandledWorkerRejection(reason).finally(() => process.exit(1));
 });
 
 // Handle IPC disconnect (parent exited) gracefully — this is expected for detached workers
@@ -231,9 +285,6 @@ process.on('disconnect', () => {
 });
 
 // Handle SIGTERM for graceful shutdown
-let clusterIdForSignal: string | undefined;
-let clusterRepoForSignal: IClusterRepository | undefined;
-
 process.on('SIGTERM', async () => {
   log('Received SIGTERM, shutting down...');
   if (clusterIdForSignal && clusterRepoForSignal) {

@@ -1,0 +1,34 @@
+feature:
+  id: "111-fix-failed-to-load-workflows-attempted-to-resolve"
+  name: "fix-failed-to-load-workflows-attempted-to-resolve"
+  number: 111
+  branch: "feat/111-fix-failed-to-load-workflows-attempted-to-resolve"
+  lifecycle: "research"
+  createdAt: "2026-08-25T09:27:56Z"
+status:
+  phase: "research"
+  progress:
+    completed: 0
+    total: 0
+    percentage: 0
+  currentTask: null
+  lastUpdated: "2026-08-25T09:27:56Z"
+  lastUpdatedBy: "feature-agent"
+  completedPhases:
+    - "evidence"
+    - "fast-implement"
+validation:
+  lastRun: null
+  gatesPassed: []
+  autoFixesApplied: []
+tasks:
+  current: null
+  blocked: []
+  failed: []
+checkpoints:
+  - phase: "feature-created"
+    completedAt: "2026-08-25T09:27:56Z"
+    completedBy: "feature-agent"
+errors:
+  current: null
+  history: []

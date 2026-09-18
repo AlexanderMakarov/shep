@@ -34,6 +34,10 @@ export function ApplicationsPageClient({ className }: ApplicationsPageClientProp
       return res.json();
     },
     staleTime: 30_000,
+    // This list has no SSE subscription (unlike the control-center canvas),
+    // so a user watching the tab while an app is created/updated in the
+    // background would otherwise only see it after a manual reload.
+    refetchInterval: 15_000,
   });
 
   // Live dev-server deployments — seeds the DeploymentStatusProvider so the

@@ -340,9 +340,9 @@ export function FeatureNode({
             <Tooltip>
               <TooltipTrigger asChild>
                 <span data-testid="feature-node-mode-badge" className="shrink-0">
-                  {data.buildMode === BuildMode.Exploration ? (
+                  {data.mode === BuildMode.Exploration ? (
                     <FlaskConical className="h-3.5 w-3.5 text-amber-500" />
-                  ) : data.buildMode === BuildMode.Fast || data.fastMode ? (
+                  ) : data.mode === BuildMode.Fast || data.fastMode ? (
                     <Zap className="h-3.5 w-3.5 text-amber-500" />
                   ) : (
                     <ClipboardList className="h-3.5 w-3.5 text-indigo-500" />
@@ -350,9 +350,9 @@ export function FeatureNode({
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top">
-                {data.buildMode === BuildMode.Exploration
+                {data.mode === BuildMode.Exploration
                   ? t('featureNode.explorationMode')
-                  : data.buildMode === BuildMode.Fast || data.fastMode
+                  : data.mode === BuildMode.Fast || data.fastMode
                     ? t('featureNode.fastMode')
                     : t('featureNode.specDriven')}
               </TooltipContent>

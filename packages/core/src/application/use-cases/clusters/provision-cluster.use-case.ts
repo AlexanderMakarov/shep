@@ -37,10 +37,11 @@ export class ProvisionClusterUseCase {
 
     // Spawn background worker (non-blocking)
     const runId = randomUUID();
-    this.processService.spawn(id, runId, {
+    const pid = this.processService.spawn(id, runId, {
       argoCdEnabled: cluster.argoCdEnabled,
       argoCdNamespace: cluster.argoCdNamespace,
     });
+    await this.clusterRepo.update(id, { workerPid: pid });
 
     return { ok: true };
   }

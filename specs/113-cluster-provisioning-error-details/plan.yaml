@@ -1,0 +1,232 @@
+name: "cluster-provisioning-error-details"
+summary: >
+  Close every gap where a cluster provisioning failure never reaches the existing
+  `status: Error` + `errorMessage` terminal. The domain/UI plumbing for displaying
+  `errorMessage` already works; this plan wires four independent failure paths into it:
+  (1) worker-level uncaughtException/unhandledRejection handlers that today log and exit
+  without persisting state, (2) a new `workerPid` column so worker liveness becomes
+  checkable at all, (3) one `ReconcileStuckClusterUseCase` injected into the three
+  cluster read paths (list/get/status) that detects a dead or hung worker on read and
+  persists a distinguishing error message, and (4) native `execFile` timeouts on the two
+  previously-unbounded CLI nodes (configure-kubectl, install-argocd) so hangs fail
+  cleanly through the existing `handle-error` graph node instead of only being caught by
+  the staleness backstop. All work follows Clean Architecture layering already
+  established by the `AgentRun.pid`/`ShowAgentRunUseCase` and
+  `ReconcileBlockedFeaturesUseCase` precedents identified in research — no new
+  architectural idiom, transport, or `ClusterStatus` value is introduced.
+
+relatedFeatures: []
+technologies:
+  - "TypeScript"
+  - "TypeSpec (tsp) domain modeling"
+  - "LangGraph (StateGraph) for the cluster-agent provisioning graph"
+  - "Node.js child_process.fork()/execFile() for the cluster-agent worker and CLI wrappers"
+  - "SQLite (better-sqlite3) persistence"
+  - "Next.js App Router (API routes)"
+  - "tsyringe (dependency injection)"
+relatedLinks: []
+
+phases:
+  - id: phase-1
+    name: "Domain & Persistence Foundation"
+    description: >
+      Add the `workerPid` field end-to-end (tsp -> codegen -> migration -> mapper ->
+      repository INSERT/UPDATE lists) and the pure staleness constant/predicate in
+      domain/shared. This unblocks every later phase since crash-handling, spawn-time
+      persistence, and reconciliation all depend on `workerPid` existing on the entity
+      and on a single source of truth for the staleness threshold. Comes first per
+      LESSONS.md's "new column needs FOUR edits" pattern — get the column wiring right
+      and verified with a repository round-trip test before any behavior is layered on
+      top of it.
+    parallel: false
+
+  - id: phase-2
+    name: "Worker Crash Handling"
+    description: >
+      Extract `persistWorkerCrash()` in cluster-agent-worker.ts and wire it into the
+      `uncaughtException`/`unhandledRejection` process handlers (which currently log and
+      `process.exit(1)` without ever updating the cluster record). Depends on phase 1
+      only insofar as it reuses the same repository; it does not depend on `workerPid`
+      itself, so it can proceed as soon as the entity/mapper/repository compile.
+    parallel: false
+
+  - id: phase-3
+    name: "Worker PID Capture"
+    description: >
+      Persist the PID returned by `IClusterAgentProcessService.spawn()` onto the cluster
+      record inside `ProvisionClusterUseCase.execute()`, immediately after spawn returns
+      and with no intervening await that could race a crash. Depends on phase 1's
+      `workerPid` column existing on the entity and repository.
+    parallel: false
+
+  - id: phase-4
+    name: "Stuck-Cluster Reconciliation"
+    description: >
+      Introduce `ReconcileStuckClusterUseCase` and inject it into `ListClustersUseCase`,
+      `GetClusterUseCase`, and `GetClusterStatusUseCase` so all three read paths
+      (covering both the web UI's 3s poll and every CLI subcommand) reconcile identically
+      before returning data. Depends on phase 1 (workerPid + staleness predicate) and
+      benefits from phase 3 being in place so newly-provisioned clusters actually have a
+      PID to check, though it must also handle pre-existing rows where `workerPid` is
+      absent (NFR-5).
+    parallel: false
+
+  - id: phase-5
+    name: "CLI Timeout Hardening"
+    description: >
+      Add `{ timeout: NODE_CLI_TIMEOUT_MS }` to every `execFile` call inside
+      `K3dService.getKubeconfig()` and `ArgoCDService.install()`, so a hang inside
+      configure-kubectl/install-argocd fails cleanly into `handle-error` with the CLI's
+      real error text instead of only being caught later by the 180s staleness backstop.
+      Independent of phases 2-4 (touches only infrastructure/services/{k3d,argocd}), so
+      it could run in parallel with phase 4, but is sequenced last here to keep the task
+      list linear and because it shares no files with the reconciliation work.
+    parallel: false
+
+  - id: phase-6
+    name: "Integration Verification"
+    description: >
+      Write the integration tests the spec's success criteria explicitly require (forced
+      unhandled exception/rejection, killed worker process, hung-but-alive worker
+      process) per NFR-4's mandate that these be integration tests against real process
+      lifecycle behavior, not mocks. Run the full local verification sequence
+      (lint, format, typecheck, unit+integration tests, build, tsp) before considering
+      the feature complete.
+    parallel: false
+
+filesToCreate:
+  - "packages/core/src/domain/shared/cluster-liveness.ts"
+  - "packages/core/src/domain/shared/cluster-liveness.test.ts"
+  - "packages/core/src/infrastructure/persistence/sqlite/migrations/142-add-worker-pid-to-clusters.ts"
+  - "packages/core/src/application/use-cases/clusters/reconcile-stuck-cluster.use-case.ts"
+  - "packages/core/src/application/use-cases/clusters/reconcile-stuck-cluster.use-case.test.ts"
+
+filesToModify:
+  - "tsp/domain/entities/cluster.tsp"
+  - "packages/core/src/domain/generated/output.ts"
+  - "packages/core/src/infrastructure/persistence/sqlite/mappers/cluster.mapper.ts"
+  - "packages/core/src/infrastructure/repositories/sqlite-cluster.repository.ts"
+  - "packages/core/src/infrastructure/services/agents/cluster-agent/cluster-agent-worker.ts"
+  - "packages/core/src/application/use-cases/clusters/provision-cluster.use-case.ts"
+  - "packages/core/src/application/use-cases/clusters/list-clusters.use-case.ts"
+  - "packages/core/src/application/use-cases/clusters/get-cluster.use-case.ts"
+  - "packages/core/src/application/use-cases/clusters/get-cluster-status.use-case.ts"
+  - "packages/core/src/infrastructure/services/k3d/k3d.service.ts"
+  - "packages/core/src/infrastructure/services/argocd/argocd.service.ts"
+
+openQuestions: []
+
+content: |
+  ## Architecture Overview
+
+  This feature touches three of the four Clean Architecture layers and deliberately
+  avoids the presentation layer entirely (per FR-8/NFR-3 — every render site and CLI
+  command inherits the fix once the use-case layer is correct):
+
+  - **Domain** (`domain/shared/cluster-liveness.ts`): a pure constant
+    (`PROVISIONING_STALENESS_THRESHOLD_MS`) and a pure predicate (`isProvisioningStale`),
+    with zero I/O, following the existing `domain/shared/worktree-config.ts` precedent for
+    cross-cutting pure config.
+  - **Domain model** (`tsp/domain/entities/cluster.tsp`): one new optional field,
+    `workerPid?: int32`, regenerated into `output.ts` via `pnpm tsp:codegen`.
+  - **Infrastructure** (migrations, mapper, repository, worker process, k3d/argocd
+    services): the mechanical column-wiring plus the crash-handling and timeout fixes.
+    None of this leaks into application or presentation.
+  - **Application** (`ReconcileStuckClusterUseCase`, updated
+    `ProvisionClusterUseCase`/`ListClustersUseCase`/`GetClusterUseCase`/
+    `GetClusterStatusUseCase`): the only layer with new business logic — deciding when a
+    cluster is stuck and what message to persist. Depends only on
+    `IClusterRepository` and the existing `IClusterAgentProcessService` port.
+  - **Presentation**: zero changes. Every CLI command and Next.js API route already
+    calls one of the three use cases being extended, so DI wiring alone propagates the
+    fix everywhere per the Presentation-Agnostic Core API rule.
+
+  This mirrors two precedents already in the codebase identified during research:
+  `AgentRun.pid` + `ShowAgentRunUseCase` (liveness check via a persisted PID) and
+  `ReconcileBlockedFeaturesUseCase` (self-healing sweep injected into read paths). No new
+  architectural idiom is introduced.
+
+  ## Key Design Decisions
+
+  1. **Crash-handling via a shared local helper, not three inline copies.**
+     `persistWorkerCrash()` is extracted once in `cluster-agent-worker.ts` and called from
+     the existing `try/catch` in `runClusterWorker()` plus the two new
+     `uncaughtException`/`unhandledRejection` call sites. Rejected: inline duplication
+     (violates No Duplication's three-instance threshold) and routing through the
+     LangGraph `handle-error` node (there is no live graph invocation left once these
+     handlers fire).
+
+  2. **`workerPid` persisted in the use case, at `spawn()` return time.**
+     `ProvisionClusterUseCase.execute()` writes `workerPid` to the cluster record the
+     instant `processService.spawn()` returns — before the child process does anything,
+     eliminating the race a self-reporting approach would have. Rejected: persisting
+     inside `ClusterAgentProcessService.spawn()` (would force a repository dependency
+     into a pure process-management port) and worker self-report via `process.pid`
+     (race window between fork and self-report).
+
+  3. **`workerPid` as a first-class nullable column, named to avoid ambiguity.**
+     Named `workerPid` (not bare `pid`) because Cluster already has
+     `k3dClusterName`/`nodeCount`-style fields where a bare `pid` could misread as a
+     container PID. Stored as a plain column, not a JSON blob, to stay queryable on
+     every read of every `Provisioning` cluster and to avoid reintroducing the
+     "silent drop inside a blob no test greps for" variant of the settings-column bug.
+
+  4. **One `ReconcileStuckClusterUseCase`, injected into three read paths.**
+     Tracing actual call sites showed `useClusterEvents()` and `cluster ls` both go
+     through `ListClustersUseCase`, never `GetClusterStatusUseCase` — so wiring the
+     check into only one use case (as a naive reading of the spec's open question might
+     suggest) would leave FR-8's CLI/web parity requirement unmet for the two
+     most-used paths. The use case guards on `status === Provisioning` first, so the
+     common case (a Ready cluster) short-circuits before touching
+     `IClusterAgentProcessService` at all — zero added cost on the hot 3s poll for the
+     overwhelmingly common case.
+
+  5. **Two distinct, templated error messages, no new `ClusterStatus` value.**
+     "Provisioning worker stopped responding (process no longer running)" for a dead
+     PID vs. "...( no health check received in over N seconds)" for a hung-but-alive
+     worker, per the spec's already-resolved decision to reuse `errorMessage` rather
+     than add a `Stalled` status. Both avoid raw stack traces / exec output per FR-6.
+
+  6. **CLI timeout hardening via native `execFile` `timeout` option, not a bespoke
+     `Promise.race` wrapper.** `ExecFunction` is already `promisify(execFile)`; passing
+     `{ timeout: NODE_CLI_TIMEOUT_MS }` (60s) lets Node kill the child process natively
+     on expiry. The `supervisor-graph.ts` `withTimeout()` helper is rejected here because
+     it would leave an orphaned k3d/kubectl process running past the application-level
+     race — a real resource leak the native option doesn't have.
+
+  ## Implementation Strategy
+
+  Phases are ordered strictly by dependency, not by spec section:
+
+  1. **Foundation first** (phase 1): the `workerPid` column and staleness predicate are
+     load-bearing for phases 3 and 4, and the column-wiring is the highest-risk,
+     most mechanical part of this feature per LESSONS.md — get it right and verified
+     with a repository round-trip test before anything depends on it.
+  2. **Crash handling next** (phase 2): independent of `workerPid`, addresses the
+     highest-severity gap (a cluster that silently hangs forever with zero signal),
+     and is a small, self-contained diff to one file.
+  3. **PID capture** (phase 3): a two-line change now that the column exists, and a
+     prerequisite for phase 4 actually having a PID to check for newly-provisioned
+     clusters.
+  4. **Reconciliation** (phase 4): the centerpiece use case, built last among the
+     "core fix" phases so it can rely on both the column (phase 1) and real PIDs
+     (phase 3) existing, while still explicitly handling the NFR-5 case where
+     `workerPid` is absent (pre-existing rows).
+  5. **Timeout hardening** (phase 5): fully independent of phases 2-4; sequenced after
+     them only to keep the task list linear, since it touches entirely different files
+     (`k3d.service.ts`, `argocd.service.ts`).
+  6. **Verification** (phase 6): the integration tests NFR-4 mandates (real killed/hung
+     processes, not mocks) can only be meaningfully written once all prior phases exist,
+     since they exercise the full crash -> persist -> reconcile -> read pipeline.
+
+  ## Risk Mitigation
+
+  | Risk | Mitigation |
+  | ---- | ---------- |
+  | New `workerPid` column silently dropped in one of the 4 required edit points (tsp, migration, mapper, repository INSERT/UPDATE lists) — the exact LESSONS.md "settings column" failure mode | Phase 1's acceptance criteria requires a repository-level round-trip test (create with `workerPid` set -> `findById` -> assert equality), not a mapper-level unit test, per the plan's own key decision #3 |
+  | `uncaughtException`/`unhandledRejection` handler itself throws while trying to persist status (e.g. DB is the thing that's broken) | `persistWorkerCrash()` wraps its own repository call in try/catch and only logs on failure, mirroring the existing non-throwing shape of `runClusterWorker`'s catch block — never blocks `process.exit(1)` |
+  | Reconciliation use case races with a legitimate in-flight graph failure (e.g. health-check.ts is mid-backoff when staleness fires) | 180s threshold is already sized at 3x health-check's own 120s budget (spec decision, unchanged here) so the in-graph node gets a full opportunity to fail cleanly first |
+  | Injecting `ReconcileStuckClusterUseCase` into 3 existing use cases regresses their current behavior for non-Provisioning clusters | Guard on `status === Provisioning` as the very first check, returning the cluster unchanged otherwise — existing tests for Ready/Stopped/Error/Destroying clusters continue to exercise the unchanged path |
+  | `execFile` timeout accidentally fires on a legitimately slow-but-healthy k3d/ArgoCD call, producing a false-failure regression | 60s per-call threshold chosen well above observed normal duration (documented in research: namespace/kubeconfig calls near-instant, ArgoCD manifest apply typically 5-15s) and validated via existing test fixtures for these services |
+  | Pre-existing clusters created before this migration have `workerPid IS NULL`, breaking `isAlive()` calls | `ReconcileStuckClusterUseCase` only calls `isAlive()` when `workerPid` is present; staleness-only detection via `lastHealthCheckAt` still applies unconditionally, satisfying NFR-5 by construction |
+  | Integration tests that spawn/kill real processes are flaky or slow in CI | Scope them narrowly to the crash-handling and liveness modules only (per NFR-4), reuse existing test helpers for spawning a minimal child process, and assert on bounded polling rather than fixed sleeps |

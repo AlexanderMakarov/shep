@@ -13,6 +13,7 @@ import type {
 } from '../../../application/ports/output/services/k3d-service.interface.js';
 import { K3dError, K3dErrorCode } from '../../errors/k3d-error.js';
 import type { ExecFunction } from '../git/worktree.service.js';
+import { NODE_CLI_TIMEOUT_MS } from '../cli-exec.constants.js';
 
 @injectable()
 export class K3dService implements IK3dService {
@@ -92,7 +93,9 @@ export class K3dService implements IK3dService {
 
   async getKubeconfig(name: string): Promise<string> {
     try {
-      const { stdout } = await this.execFile('k3d', ['kubeconfig', 'get', name]);
+      const { stdout } = await this.execFile('k3d', ['kubeconfig', 'get', name], {
+        timeout: NODE_CLI_TIMEOUT_MS,
+      });
       return stdout;
     } catch (error) {
       throw this.parseError(error, name);

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GetClusterStatusUseCase } from '@/application/use-cases/clusters/get-cluster-status.use-case.js';
+import { ReconcileStuckClusterUseCase } from '@/application/use-cases/clusters/reconcile-stuck-cluster.use-case.js';
 import type { IClusterRepository } from '@/application/ports/output/repositories/cluster-repository.interface.js';
 import type {
   IKubectlService,
@@ -8,8 +9,10 @@ import type {
   KubeService,
 } from '@/application/ports/output/services/kubectl-service.interface.js';
 import type { IArgoCDService } from '@/application/ports/output/services/argocd-service.interface.js';
+import type { IClusterAgentProcessService } from '@/application/ports/output/services/cluster-agent-process-service.interface.js';
 import type { Cluster } from '@/domain/generated/output.js';
 import { ClusterStatus } from '@/domain/generated/output.js';
+import { PROVISIONING_STALENESS_THRESHOLD_MS } from '@/domain/shared/cluster-liveness.js';
 
 function createMockClusterRepo(): IClusterRepository {
   return {
@@ -69,12 +72,20 @@ describe('GetClusterStatusUseCase', () => {
   let mockRepo: IClusterRepository;
   let mockKubectl: IKubectlService;
   let mockArgoCD: IArgoCDService;
+  let mockProcessService: IClusterAgentProcessService;
+  let reconcileStuckCluster: ReconcileStuckClusterUseCase;
 
   beforeEach(() => {
     mockRepo = createMockClusterRepo();
     mockKubectl = createMockKubectl();
     mockArgoCD = createMockArgoCD();
-    useCase = new GetClusterStatusUseCase(mockRepo, mockKubectl, mockArgoCD);
+    mockProcessService = {
+      spawn: vi.fn(),
+      isAlive: vi.fn().mockReturnValue(true),
+      kill: vi.fn(),
+    };
+    reconcileStuckCluster = new ReconcileStuckClusterUseCase(mockRepo, mockProcessService);
+    useCase = new GetClusterStatusUseCase(mockRepo, mockKubectl, mockArgoCD, reconcileStuckCluster);
   });
 
   it('should return status with live pod/service counts for Ready cluster', async () => {
@@ -160,5 +171,21 @@ describe('GetClusterStatusUseCase', () => {
     if (result.ok) return;
 
     expect(result.error).toBe('Cluster not found: "non-existent"');
+  });
+
+  it('should return a stuck Provisioning cluster as Error with a stale-heartbeat message', async () => {
+    const staleTimestamp = new Date(Date.now() - PROVISIONING_STALENESS_THRESHOLD_MS - 1_000);
+    vi.mocked(mockRepo.findById).mockResolvedValue(
+      makeCluster({ status: ClusterStatus.Provisioning, lastHealthCheckAt: staleTimestamp })
+    );
+
+    const result = await useCase.execute('cluster-1');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.status.cluster.status).toBe(ClusterStatus.Error);
+    expect(result.status.cluster.errorMessage).toContain('no health check received');
+    expect(mockKubectl.getPods).not.toHaveBeenCalled();
   });
 });

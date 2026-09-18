@@ -43,6 +43,11 @@ properties:
     type: string
     format: date-time
     description: Timestamp of the most recent health check
+  workerPid:
+    type: integer
+    minimum: -2147483648
+    maximum: 2147483647
+    description: OS process ID of the spawned cluster-agent worker (set at provisioning time)
   errorMessage:
     type: string
     description: Error message from the last failed operation (set when status = Error)

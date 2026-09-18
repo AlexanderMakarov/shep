@@ -27,6 +27,7 @@ export interface ClusterRow {
   node_count: number;
   last_provisioned_at: number | null;
   last_health_check_at: number | null;
+  worker_pid: number | null;
   error_message: string | null;
   created_at: number;
   updated_at: number;
@@ -62,6 +63,7 @@ export function toDatabase(cluster: Cluster): ClusterRow {
       cluster.lastHealthCheckAt !== undefined && cluster.lastHealthCheckAt !== null
         ? dateOrNumberToMs(cluster.lastHealthCheckAt)
         : null,
+    worker_pid: cluster.workerPid ?? null,
     error_message: cluster.errorMessage ?? null,
     created_at: dateOrNumberToMs(cluster.createdAt),
     updated_at: dateOrNumberToMs(cluster.updatedAt),
@@ -92,6 +94,7 @@ export function fromDatabase(row: ClusterRow): Cluster {
       row.last_health_check_at !== null && row.last_health_check_at !== undefined
         ? new Date(row.last_health_check_at)
         : undefined,
+    workerPid: row.worker_pid ?? undefined,
     errorMessage: row.error_message ?? undefined,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
