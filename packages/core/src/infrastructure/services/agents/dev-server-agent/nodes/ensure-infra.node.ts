@@ -13,13 +13,11 @@
  * `failureReason` state update (never an unhandled rejection), so the graph
  * can route to its terminal failure edge instead of crashing.
  */
-import { execFile, type ExecFileException } from 'node:child_process';
-import { IS_WINDOWS } from '@/infrastructure/platform.js';
+import { checkBinaryExists } from '@/infrastructure/services/tool-installer/binary-exists.js';
 import type { IAgentExecutor } from '@/application/ports/output/agents/agent-executor.interface.js';
 import type { DevServerRunPlan } from '@/domain/generated/output.js';
 import type { DevServerAgentNodeFn } from '../types.js';
 
-const PROBE_TIMEOUT_MS = 3_000;
 const DEFAULT_REMEDIATION_TIMEOUT_MS = 120_000;
 
 /** Binary names are restricted to this shape — anything else is rejected as unavailable to avoid shell injection. */
@@ -30,12 +28,48 @@ const SHELL_BUILTINS = new Set(['cd', 'sh', 'bash', 'env', 'exec', 'source', '.'
 
 const NO_RUN_PLAN_REASON = 'No run plan available for infrastructure check';
 
-/** Suggested install command per well-known binary; anything else falls back to a generic PATH hint. */
+/**
+ * Suggested install command per well-known binary; anything else falls back
+ * to a generic PATH hint.
+ *
+ * Grouped by ecosystem, covering every runtime the detector registry can
+ * emit a command for (FR-8). This is deliberately a DATA table rather than a
+ * per-ecosystem required-binary table: `deriveBinaryFromCommand` already
+ * derives what to probe from the command that will actually be spawned, so a
+ * second keyed-by-detector source of truth could only ever disagree with it.
+ *
+ * Every hint is user-space and non-interactive — no `sudo`, no system
+ * package manager — matching the constraint the remediation prompt puts on
+ * the agent. A hint the user cannot run without root is not a hint.
+ */
 export const SUGGESTED_INSTALL: Record<string, string> = {
+  // Node
   pnpm: 'npm install -g pnpm',
   yarn: 'npm install -g yarn',
   bun: 'npm install -g bun',
   node: 'install Node.js from https://nodejs.org',
+  // Deno
+  deno: 'npm install -g deno (or see https://docs.deno.com/runtime/getting_started/installation/)',
+  // Task runner / containers
+  make: 'install GNU Make — macOS: `xcode-select --install`, Windows: `winget install GnuWin32.Make`',
+  docker: 'install Docker Desktop from https://docs.docker.com/get-docker/',
+  // Go
+  go: 'install Go from https://go.dev/dl/',
+  // Rust
+  cargo: 'install Rust with rustup from https://rustup.rs',
+  rustup: 'install rustup from https://rustup.rs',
+  // Python
+  python: 'install Python from https://www.python.org/downloads/ (or `uv python install`)',
+  python3: 'install Python from https://www.python.org/downloads/ (or `uv python install`)',
+  uv: 'install uv from https://docs.astral.sh/uv/getting-started/installation/',
+  poetry: 'pipx install poetry (see https://python-poetry.org/docs/#installation)',
+  pipenv: 'pipx install pipenv',
+  // Ruby
+  ruby: 'install Ruby from https://www.ruby-lang.org/en/documentation/installation/',
+  bundle: 'gem install bundler',
+  // Elixir
+  mix: 'install Elixir (which ships mix) from https://elixir-lang.org/install.html',
+  elixir: 'install Elixir from https://elixir-lang.org/install.html',
 };
 
 function suggestedInstallCommand(binary: string): string {
@@ -43,32 +77,25 @@ function suggestedInstallCommand(binary: string): string {
 }
 
 /**
- * Cross-platform, non-throwing availability probe for a single binary, with
- * a short bound so a hung shell can never stall the graph.
+ * Cross-platform, non-throwing availability probe for a single binary.
  *
- * win32: `where <binary>`. Everything else: `sh -c "command -v -- <binary>"`.
- * The binary name is validated against {@link VALID_BINARY_NAME} first —
- * anything else is treated as unavailable without ever reaching a shell.
+ * Delegates to the shared {@link checkBinaryExists} PATH lookup, which
+ * resolves in-process (including Windows PATHEXT) and so cannot be starved
+ * by a slow process spawn: a subprocess probe under a time bound reported
+ * present binaries as missing on loaded Windows runners, which sent the
+ * graph into pointless agent remediation.
+ *
+ * The binary name is validated against {@link VALID_BINARY_NAME} first, so
+ * a derived token that is not a plain binary name is treated as unavailable
+ * rather than looked up.
  */
-export function probeBinaryDefault(binary: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (!VALID_BINARY_NAME.test(binary)) {
-      resolve(false);
-      return;
-    }
+export async function probeBinaryDefault(binary: string): Promise<boolean> {
+  if (!VALID_BINARY_NAME.test(binary)) {
+    return false;
+  }
 
-    const callback = (error: ExecFileException | null): void => resolve(!error);
-
-    try {
-      if (IS_WINDOWS) {
-        execFile('where', [binary], { timeout: PROBE_TIMEOUT_MS }, callback);
-      } else {
-        execFile('sh', ['-c', `command -v -- ${binary}`], { timeout: PROBE_TIMEOUT_MS }, callback);
-      }
-    } catch {
-      resolve(false);
-    }
-  });
+  const { found } = await checkBinaryExists(binary);
+  return found;
 }
 
 /**
