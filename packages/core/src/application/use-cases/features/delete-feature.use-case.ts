@@ -14,14 +14,12 @@
  */
 
 import { injectable, inject } from 'tsyringe';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { unlink } from 'node:fs/promises';
 import type { Feature } from '../../../domain/generated/output.js';
 import { AgentRunStatus, PrStatus, SdlcLifecycle } from '../../../domain/generated/output.js';
 import type { IFeatureRepository } from '../../ports/output/repositories/feature-repository.interface.js';
 import type { IWorktreeService } from '../../ports/output/services/worktree-service.interface.js';
 import type { IFeatureAgentProcessService } from '../../ports/output/agents/feature-agent-process.interface.js';
+import type { IAgentCheckpointService } from '../../ports/output/agents/agent-checkpoint-service.interface.js';
 import type { IAgentRunRepository } from '../../ports/output/agents/agent-run-repository.interface.js';
 import type { IGitPrService } from '../../ports/output/services/git-pr-service.interface.js';
 import { AdmitQueuedFeaturesUseCase } from './capacity/admit-queued-features.use-case.js';
@@ -39,6 +37,8 @@ export class DeleteFeatureUseCase {
     @inject('IWorktreeService') private readonly worktreeService: IWorktreeService,
     @inject('IFeatureAgentProcessService')
     private readonly processService: IFeatureAgentProcessService,
+    @inject('IAgentCheckpointService')
+    private readonly checkpointService: IAgentCheckpointService,
     @inject('IAgentRunRepository') private readonly runRepo: IAgentRunRepository,
     @inject('IGitPrService') private readonly gitPrService: IGitPrService,
     @inject(AdmitQueuedFeaturesUseCase)
@@ -155,9 +155,8 @@ export class DeleteFeatureUseCase {
 
       // Clean up checkpoint database file (used by LangGraph for state persistence)
       if (run?.threadId) {
-        const checkpointPath = join(homedir(), '.shep', 'checkpoints', `${run.threadId}.db`);
         try {
-          await unlink(checkpointPath);
+          await this.checkpointService.removeFeatureCheckpoint(run.threadId);
         } catch {
           // Checkpoint file may not exist or already be removed
         }

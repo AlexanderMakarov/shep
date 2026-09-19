@@ -446,6 +446,12 @@ describe('runWorker', () => {
       if (key === 'IAgentExecutorProvider') return mockExecutorProvider;
       if (key === 'FeatureAgentLifecyclePublisher') return mockLifecyclePublisher;
       if (key === 'FeatureAgentGateQuestionPublisher') return mockGateQuestionPublisher;
+      if (key === 'IAgentCheckpointService') {
+        return {
+          getFeatureCheckpointPath: (checkpointId: string) =>
+            `/tmp/agents/feature-${checkpointId}.sqlite`,
+        };
+      }
       // InitializeSettingsUseCase — return a mock with execute()
       if (key === 'InitializeSettingsUseCase') {
         return {

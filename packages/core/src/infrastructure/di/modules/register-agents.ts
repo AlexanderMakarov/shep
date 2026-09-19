@@ -9,6 +9,7 @@ import type { IAgentRunner } from '../../../application/ports/output/agents/agen
 import type { IAgentRunRepository } from '../../../application/ports/output/agents/agent-run-repository.interface.js';
 import type { IPhaseTimingContext } from '../../../application/ports/output/services/phase-timing-context.interface.js';
 import type { IFeatureAgentProcessService } from '../../../application/ports/output/agents/feature-agent-process.interface.js';
+import type { IAgentCheckpointService } from '../../../application/ports/output/agents/agent-checkpoint-service.interface.js';
 import type { ISpecInitializerService } from '../../../application/ports/output/services/spec-initializer.interface.js';
 import type { ISpecArtifactParser } from '../../../application/ports/output/services/spec-artifact-parser.interface.js';
 import type { ISettingsRepository } from '../../../application/ports/output/repositories/settings.repository.interface.js';
@@ -24,6 +25,7 @@ import { AgentRegistryService } from '../../services/agents/common/agent-registr
 import { AgentRunnerService } from '../../services/agents/common/agent-runner.service.js';
 import { PhaseTimingContextAdapter } from '../../services/agents/feature-agent/phase-timing-context.adapter.js';
 import { FeatureAgentProcessService } from '../../services/agents/feature-agent/feature-agent-process.service.js';
+import { AgentCheckpointService } from '../../services/agents/common/agent-checkpoint.service.js';
 import { SpecInitializerService } from '../../services/spec/spec-initializer.service.js';
 import { SpecYamlParserService } from '../../services/spec/spec-yaml-parser.service.js';
 import { ClaudeCodeSessionRepository } from '../../services/agents/sessions/claude-code-session.repository.js';
@@ -101,6 +103,11 @@ export function registerAgents(container: DependencyContainer): void {
       return new AgentRunnerService(registry, executorProvider, runRepository);
     },
   });
+
+  container.registerSingleton<IAgentCheckpointService>(
+    'IAgentCheckpointService',
+    AgentCheckpointService
+  );
 
   container.register<IFeatureAgentProcessService>('IFeatureAgentProcessService', {
     useFactory: (c) => {
