@@ -22,7 +22,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, existsSync, readdirSync } from 'node:fs';
+import { removeDirWithRetry } from '@tests/helpers/remove-dir.helper.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -78,14 +79,14 @@ describe('CLI: feat', { timeout: MULTI_STEP_TEST_TIMEOUT_MS }, () => {
     // results aren't masked by cleanup failures)
     try {
       if (existsSync(shepHome)) {
-        rmSync(shepHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        removeDirWithRetry(shepHome);
       }
     } catch {
       // OS will clean /tmp eventually
     }
     try {
       if (existsSync(tempRepo)) {
-        rmSync(tempRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        removeDirWithRetry(tempRepo);
       }
     } catch {
       // OS will clean /tmp eventually
