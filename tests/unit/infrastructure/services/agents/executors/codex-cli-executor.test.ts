@@ -453,7 +453,7 @@ describe('CodexCliExecutorService', () => {
       expect(spawnArgs).toContain('thread-abc-123');
     });
 
-    it('should pass prompt as positional arg for resume, not stdin', async () => {
+    it('should pipe resume prompt via stdin instead of putting it in CLI args', async () => {
       const mockProc = createMockChildProcess();
       vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
 
@@ -472,11 +472,10 @@ describe('CodexCliExecutorService', () => {
 
       await executePromise;
 
-      // Prompt is in args, not stdin
       const spawnArgs = vi.mocked(mockSpawn).mock.calls[0][1] as string[];
-      expect(spawnArgs).toContain('Follow-up prompt');
-      // stdin should NOT have the prompt written
-      expect(stdinWriteSpy).not.toHaveBeenCalledWith('Follow-up prompt');
+      expect(spawnArgs).not.toContain('Follow-up prompt');
+      expect(spawnArgs.slice(-3)).toEqual(['resume', 'thread-abc', '-']);
+      expect(stdinWriteSpy).toHaveBeenCalledWith('Follow-up prompt');
     });
 
     it('should still use stdin for non-resume executions', async () => {
@@ -501,12 +500,15 @@ describe('CodexCliExecutorService', () => {
       expect(spawnArgs).not.toContain('resume');
     });
 
-    it('should include all base flags in resume mode', async () => {
+    it('should place exec-level flags before the resume subcommand', async () => {
       const mockProc = createMockChildProcess();
       vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
 
       const executePromise = executor.execute('More work', {
         resumeSession: 'thread-xyz',
+        model: 'gpt-5.6-sol',
+        cwd: '/some/project',
+        outputSchema: { type: 'object' },
         silent: true,
       });
       emitJsonlLines(
@@ -519,12 +521,24 @@ describe('CodexCliExecutorService', () => {
       await executePromise;
 
       const spawnArgs = vi.mocked(mockSpawn).mock.calls[0][1] as string[];
-      expect(spawnArgs).toContain('--json');
-      expect(spawnArgs).toContain('--sandbox');
-      expect(spawnArgs).toContain('danger-full-access');
-      expect(spawnArgs).toContain('--skip-git-repo-check');
-      expect(spawnArgs).toContain('--color');
-      expect(spawnArgs).toContain('never');
+      const resumeIndex = spawnArgs.indexOf('resume');
+      expect(resumeIndex).toBeGreaterThan(0);
+
+      const execFlags = spawnArgs.slice(0, resumeIndex);
+      expect(execFlags[0]).toBe('exec');
+      expect(execFlags).toContain('--json');
+      expect(execFlags).toContain('--sandbox');
+      expect(execFlags).toContain('danger-full-access');
+      expect(execFlags).toContain('--skip-git-repo-check');
+      expect(execFlags).toContain('--color');
+      expect(execFlags).toContain('never');
+      expect(execFlags).toContain('--model');
+      expect(execFlags).toContain('gpt-5.6-sol');
+      expect(execFlags).toContain('--cd');
+      expect(execFlags).toContain('/some/project');
+      expect(execFlags).toContain('--output-schema');
+
+      expect(spawnArgs.slice(resumeIndex)).toEqual(['resume', 'thread-xyz', '-']);
     });
 
     // --- Task 7: Error handling ---
@@ -892,14 +906,42 @@ describe('CodexCliExecutorService', () => {
       );
     });
 
-    it('should include resume args in streaming mode', async () => {
-      await streamWith(executor, {
-        lines: [threadStarted('t-abc'), agentMessageCompleted('OK'), turnCompleted()],
-        execOpts: { resumeSession: 'thread-abc' },
+    it('should use stdin-backed resume syntax in streaming mode', async () => {
+      const mockWrite = vi.fn();
+      const originalReturn = vi.mocked(mockSpawn).getMockImplementation();
+
+      vi.mocked(mockSpawn).mockImplementation(() => {
+        const proc = createMockChildProcess();
+        vi.spyOn(proc.stdin, 'write').mockImplementation(((chunk: any) => {
+          mockWrite(chunk);
+          return true;
+        }) as any);
+        process.nextTick(() => {
+          proc.stdout.write(`${threadStarted('t-abc')}\n`);
+          proc.stdout.write(`${agentMessageCompleted('OK')}\n`);
+          proc.stdout.write(`${turnCompleted()}\n`);
+          proc.stdout.end();
+          proc.stderr.end();
+          proc.emit('close', 0);
+        });
+        return proc as any;
       });
+
+      const events: { type: string; content: string }[] = [];
+      for await (const e of executor.executeStream('stream follow-up', {
+        resumeSession: 'thread-abc',
+        silent: true,
+      })) {
+        events.push({ type: e.type, content: e.content });
+      }
+
       const spawnArgs = vi.mocked(mockSpawn).mock.calls[0][1] as string[];
-      expect(spawnArgs).toContain('resume');
-      expect(spawnArgs).toContain('thread-abc');
+      expect(spawnArgs.slice(-3)).toEqual(['resume', 'thread-abc', '-']);
+      expect(spawnArgs).not.toContain('stream follow-up');
+      expect(mockWrite).toHaveBeenCalledWith('stream follow-up');
+      expect(events).toContainEqual({ type: 'result', content: 'OK' });
+
+      if (originalReturn) vi.mocked(mockSpawn).mockImplementation(originalReturn);
     });
 
     it('should set CODEX_API_KEY when using token auth in streaming mode', async () => {
