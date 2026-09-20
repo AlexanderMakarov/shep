@@ -4,6 +4,43 @@
   </a>
 </p>
 
+# 🚀 Shep [v1.228.1](/compare/v1.228.0...v1.228.1) · _2026-09-20_
+
+> Your organization does not have access to Claude. Please login again or contact your administrator.
+
+
+
+### 🐛 Bug Fixes
+
+* **web:** green main — checkpoint-service stub and PRD questionnaire timer leak ([#870](https://github.com/shep-ai/shep/issues/870)) ([a4dde3e](https://github.com/shep-ai/shep/commit/a4dde3e0af683438a318c5a8eb623431c7d6fe35))
+
+* **agents:** respect SHEP_HOME for checkpoints ([#863](https://github.com/shep-ai/shep/issues/863)) ([b086eb2](https://github.com/shep-ai/shep/commit/b086eb2f4e969b215fcc8a1bdeb71f0fcf0c81ea)), closes [#1](https://github.com/shep-ai/shep/issues/1)
+
+
+## 📦 Install or update
+
+```bash
+# upgrade an existing install
+npm i -g @shepai/cli@1.228.1
+
+# or run instantly without installing
+npx @shepai/cli@latest
+```
+
+## 💬 Join the community
+
+[💬 **Discord**](https://discord.gg/ES6tdVFfur) · [📖 **Docs**](https://github.com/shep-ai/shep#readme) · [⭐ **Star on GitHub**](https://github.com/shep-ai/shep) · [🐛 **Report an issue**](https://github.com/shep-ai/shep/issues)
+
+---
+
+<sub>🤖 Released autonomously by Shep — built by parallel AI agents working in isolated git worktrees. Try it: `npx @shepai/cli`</sub>
+
+<p align="center">
+  <a href="https://github.com/shep-ai/shep">
+    <img src="https://raw.githubusercontent.com/shep-ai/shep/main/docs/screenshots/shep-card.jpg" alt="Shep — run multiple AI agents in parallel" width="720" />
+  </a>
+</p>
+
 # 🚀 Shep [v1.228.0](/compare/v1.227.0...v1.228.0) · _2026-09-18_
 
 > Your organization does not have access to Claude. Please login again or contact your administrator.
