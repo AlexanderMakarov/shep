@@ -42,7 +42,7 @@ describe('GitPrService — Rebase & Sync', () => {
 
       await service.syncMain('/repo', 'main');
 
-      expect(mockExec).toHaveBeenCalledWith('git', ['fetch', 'origin', 'main'], {
+      expect(mockExec).toHaveBeenCalledWith('git', ['fetch', 'origin', '--', 'main'], {
         cwd: '/repo',
       });
     });
@@ -236,7 +236,9 @@ describe('GitPrService — Rebase & Sync', () => {
 
       await service.rebaseOnMain('/repo', 'feat/my-feature', 'main');
 
-      expect(mockExec).toHaveBeenCalledWith('git', ['rebase', 'origin/main'], { cwd: '/repo' });
+      expect(mockExec).toHaveBeenCalledWith('git', ['rebase', '--', 'origin/main'], {
+        cwd: '/repo',
+      });
     });
 
     it('should still throw REBASE_CONFLICT even if getConflictedFiles fails', async () => {

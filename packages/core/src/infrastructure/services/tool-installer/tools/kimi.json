@@ -1,0 +1,32 @@
+{
+  "name": "Kimi Code CLI",
+  "summary": "Terminal coding agent from Moonshot AI",
+  "description": "Kimi Code CLI is Moonshot AI's terminal coding agent. It reads and edits code, runs shell commands, searches the web, and plans autonomously, backed by the Kimi K-series models.",
+  "tags": ["cli-agent"],
+  "author": "Moonshot AI",
+  "website": "https://www.kimi.com/code",
+  "platforms": ["linux", "darwin", "win32"],
+  "iconUrl": "https://cdn.simpleicons.org/kimi",
+  "binary": "kimi",
+  "packageManager": "curl",
+  "commands": {
+    "linux": "curl -fsSL https://code.kimi.com/install.sh | bash",
+    "darwin": "curl -fsSL https://code.kimi.com/install.sh | bash",
+    "win32": "powershell -Command \"irm https://code.kimi.com/install.ps1 | iex\""
+  },
+  "timeout": 300000,
+  "documentationUrl": "https://moonshotai.github.io/kimi-cli/en/",
+  "verifyCommand": "kimi --version",
+  "autoInstall": true,
+  "openDirectory": "cd {dir} && exec kimi",
+  "spawnOptions": {
+    "shell": true,
+    "stdio": "inherit",
+    "detached": false
+  },
+  "terminalCommand": {
+    "linux": "x-terminal-emulator -e bash -c 'cd {dir} && exec kimi'",
+    "darwin": "open -a Terminal.app bash -c 'cd {dir} && exec kimi'",
+    "win32": "start pwsh.exe 'cd {dir} && kimi'"
+  }
+}

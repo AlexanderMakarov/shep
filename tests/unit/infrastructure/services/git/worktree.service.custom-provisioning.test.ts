@@ -67,9 +67,10 @@ describe('WorktreeService custom provisioning', () => {
       expect(gitCalls()[0]).toEqual([
         'worktree',
         'add',
-        WORKTREE_PATH,
         '-b',
         BRANCH,
+        '--',
+        WORKTREE_PATH,
         DEFAULT_BRANCH,
       ]);
       expect(hookRunner.runCreateHook).not.toHaveBeenCalled();
@@ -126,7 +127,7 @@ describe('WorktreeService custom provisioning', () => {
       await serviceUnderTest().create(REPO_PATH, BRANCH, WORKTREE_PATH, DEFAULT_BRANCH);
 
       expect(order).toEqual([
-        `git worktree add ${WORKTREE_PATH} -b ${BRANCH} ${DEFAULT_BRANCH}`,
+        `git worktree add -b ${BRANCH} -- ${WORKTREE_PATH} ${DEFAULT_BRANCH}`,
         'git worktree list --porcelain',
         'post-create',
       ]);
@@ -166,7 +167,7 @@ describe('WorktreeService custom provisioning', () => {
 
       await serviceUnderTest().addExisting(REPO_PATH, BRANCH, WORKTREE_PATH);
 
-      expect(gitCalls()[0]).toEqual(['worktree', 'add', WORKTREE_PATH, BRANCH]);
+      expect(gitCalls()[0]).toEqual(['worktree', 'add', '--', WORKTREE_PATH, BRANCH]);
       expect(hookRunner.runPostCreateHook).toHaveBeenCalledWith({
         repoPath: REPO_PATH,
         worktreePath: WORKTREE_PATH,

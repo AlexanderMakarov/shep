@@ -223,6 +223,12 @@ describe('FeatureAgentProcessService', () => {
         AgentRunStatus.interrupted,
         expect.objectContaining({
           error: expect.stringContaining('crashed'),
+        }),
+        // The write is state-guarded: the worker's normal exit writes
+        // `completed` inside the window between the read above and isAlive(),
+        // and an unguarded write would report that success as a crash.
+        expect.objectContaining({
+          allowedFrom: expect.not.arrayContaining([AgentRunStatus.completed]),
         })
       );
     });

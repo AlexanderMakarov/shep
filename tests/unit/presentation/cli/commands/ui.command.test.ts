@@ -60,6 +60,11 @@ vi.mock('@/infrastructure/di/container.js', () => ({
       ) {
         return {};
       }
+      // The daemon-resident watchers now take the container's logger
+      // instead of writing straight to console.*.
+      if (token === 'ILogger') {
+        return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      }
       // Class-token resolution (container.resolve(SomeClass))
       if (typeof token === 'function') {
         return { execute: vi.fn().mockResolvedValue({}) };

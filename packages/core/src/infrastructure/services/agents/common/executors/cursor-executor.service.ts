@@ -10,7 +10,6 @@
  */
 
 import { writeFileSync, unlinkSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentType, AgentFeature } from '../../../../../domain/generated/output.js';
@@ -21,9 +20,35 @@ import type {
   AgentExecutionStreamEvent,
 } from '../../../../../application/ports/output/agents/agent-executor.interface.js';
 import type { SpawnFunction } from '../types.js';
-import { getCurrentPhase, getLogPrefix } from '../../feature-agent/log-context.js';
 import { IS_WINDOWS } from '../../../../platform.js';
+import { EventChannel } from '../../streaming/event-channel.js';
+import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
 import { describeSubprocessFailure } from './subprocess-failure-message.js';
+import {
+  buildSpawnOptions,
+  classifySpawnError,
+  createLineAccumulator,
+  createStderrTail,
+  signalTerminationMessage,
+  terminateWithEscalation,
+} from './process-stream.js';
+import {
+  validateSecurityConstraints,
+  type ExecutorCapabilities,
+} from './security-constraint-validator.js';
+
+/** Binary name on PATH (POSIX) and the command PowerShell invokes on Windows. */
+const CURSOR_BINARY = 'cursor-agent';
+
+/** Shown when the binary is missing, so the user knows how to fix it. */
+const CURSOR_NOT_FOUND_MESSAGE =
+  'Cursor agent CLI not found. Please install Cursor and ensure the "cursor" command is available on PATH.';
+
+/**
+ * stderr fragment Cursor prints when the requested model is unavailable.
+ * Retrying cannot help, so the run is failed as soon as it appears.
+ */
+const UNUSABLE_MODEL_MARKER = 'Cannot use this model';
 
 /**
  * Map canonical model IDs (used across shep) to Cursor CLI model names.
@@ -48,6 +73,48 @@ function toCursorModelName(model: string): string {
 /** Features supported by Cursor CLI */
 const SUPPORTED_FEATURES = new Set<string>(['session-resume', 'streaming']);
 
+/** Cursor NDJSON event types. */
+const EVENT_TYPE_ASSISTANT = 'assistant';
+const EVENT_TYPE_RESULT = 'result';
+const EVENT_TYPE_TOOL_CALL = 'tool_call';
+const EVENT_TYPE_USER = 'user';
+const EVENT_TYPE_ERROR = 'error';
+
+/** Render a value that should have been text but may be a structured payload. */
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  return JSON.stringify(value);
+}
+
+/**
+ * Quote a value as a PowerShell single-quoted literal.
+ *
+ * Inside single quotes PowerShell performs no expansion at all, and a literal
+ * quote is written by doubling it. Without this, `--model` — a free-form
+ * settings string — could close the invocation and start a command of its own.
+ */
+function psQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** Text blocks of a Cursor assistant message, concatenated. */
+function assistantText(parsed: Record<string, unknown>): string {
+  const message = parsed.message as { content?: unknown } | undefined;
+  if (!Array.isArray(message?.content)) return '';
+  return message.content
+    .filter((block: { type?: string; text?: unknown }) => block.type === 'text' && block.text)
+    .map((block: { text?: unknown }) => asText(block.text))
+    .join('');
+}
+
+/** Name of the tool a `tool_call` event refers to. */
+function toolCallName(parsed: Record<string, unknown>, fallback: string): string {
+  return (
+    Object.keys(parsed).find((k) => k.endsWith('ToolCall') || k.endsWith('toolCall')) ?? fallback
+  );
+}
+
 /**
  * Executor service for Cursor agent.
  * Uses subprocess spawning to interact with the `cursor-agent` CLI.
@@ -55,150 +122,134 @@ const SUPPORTED_FEATURES = new Set<string>(['session-resume', 'streaming']);
 export class CursorExecutorService implements IAgentExecutor {
   readonly agentType: AgentType = 'cursor' as AgentType;
 
-  /** When true, suppresses debug logging (set per-call via options.silent) */
-  private silent = false;
-
   constructor(private readonly spawn: SpawnFunction) {}
 
-  /** Debug logging — writes to stdout so it appears in the worker log file */
-  private log(message: string): void {
-    if (this.silent) return;
-    const ts = new Date().toISOString();
-    process.stdout.write(`[${ts}] ${getCurrentPhase()}${getLogPrefix()}${message}\n`);
-  }
+  /** Executor capabilities for security constraint validation */
+  private static readonly CAPABILITIES: ExecutorCapabilities = {
+    requiresPermissiveMode: true, // uses --yolo (approves every tool call)
+    executorName: 'cursor',
+  };
 
   supportsFeature(feature: AgentFeature): boolean {
     return SUPPORTED_FEATURES.has(feature as string);
   }
 
   async execute(prompt: string, options?: AgentExecutionOptions): Promise<AgentExecutionResult> {
-    this.silent = options?.silent ?? false;
+    const log = this.startRun(options);
     // Use json (not stream-json) for execute() — outputs a single JSON result line.
-    // stream-json is unreliable on Windows where shell: true can mangle args.
-    const args = this.buildArgs(prompt, options);
-
-    const { proc, tmpFile } = this.spawnAgent(prompt, args, options);
+    const { proc, tmpFile } = this.spawnAgent(
+      prompt,
+      this.buildFlags(options, 'json'),
+      options,
+      log
+    );
 
     return new Promise<AgentExecutionResult>((resolve, reject) => {
-      let lineBuffer = '';
-      let stderr = '';
-      let timedOut = false;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-      // Accumulated from JSON events or raw text fallback
+      const stderr = createStderrTail();
       let resultText = '';
       let rawText = '';
       let sessionId: string | undefined;
       let metadata: Record<string, unknown> | undefined;
+      let timedOut = false;
+      let settled = false;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let cancelEscalation: (() => void) | undefined;
+
+      const settle = (outcome: () => void): void => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        cancelEscalation?.();
+        removeTempFile(tmpFile);
+        outcome();
+      };
 
       if (options?.timeout) {
         timeoutId = setTimeout(() => {
           timedOut = true;
-          // On Windows, proc.kill() may not kill the entire process tree
-          // (PowerShell + child agent process). Use taskkill /T for tree kill.
-          if (process.platform === 'win32' && proc.pid) {
-            try {
-              execFileSync('taskkill', ['/F', '/T', '/PID', String(proc.pid)], {
-                stdio: 'ignore',
-              });
-            } catch {
-              proc.kill();
-            }
-          } else {
-            proc.kill();
-          }
+          log(`Timeout after ${options.timeout}ms — terminating agent`);
+          cancelEscalation = terminateWithEscalation(proc);
         }, options.timeout);
       }
 
-      const processLine = (line: string) => {
-        this.logStreamEvent(line);
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.type === 'assistant' && Array.isArray(parsed.message?.content)) {
-            for (const block of parsed.message.content) {
-              if (block.type === 'text' && block.text) resultText += block.text;
-            }
-          } else if (parsed.type === 'result') {
+      const accumulator = createLineAccumulator(
+        (line) => {
+          this.logStreamEvent(line, log);
+          const parsed = parseJsonLine(line);
+          if (parsed === null) {
+            // Non-JSON output — kept only as a fallback answer.
+            rawText += `${line}\n`;
+            return;
+          }
+          if (parsed.type === EVENT_TYPE_ASSISTANT) {
+            resultText += assistantText(parsed);
+          } else if (parsed.type === EVENT_TYPE_RESULT) {
             // json format puts the full result text in parsed.result
             if (typeof parsed.result === 'string' && parsed.result) resultText = parsed.result;
-            if (parsed.session_id) sessionId = parsed.session_id;
+            if (typeof parsed.session_id === 'string') sessionId = parsed.session_id;
             if (parsed.duration_ms !== undefined) {
               metadata = { ...metadata, duration_ms: parsed.duration_ms };
             }
           }
-          // user, system, thinking events: logged but don't affect result
-        } catch {
-          // Non-JSON output — accumulate as raw text fallback
-          if (line.length > 0) rawText += `${line}\n`;
+        },
+        {
+          onOverflow: (dropped) => log(`[warn] discarded ${dropped} bytes of un-terminated output`),
         }
-      };
+      );
 
-      proc.stdout?.on('data', (chunk: Buffer | string) => {
-        lineBuffer += chunk.toString();
-        const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) processLine(trimmed);
-        }
-      });
+      proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
 
       proc.stderr?.on('data', (chunk: Buffer | string) => {
         const data = chunk.toString();
-        stderr += data;
-        this.log(`stderr: ${data.trimEnd()}`);
+        stderr.push(chunk);
+        log(`stderr: ${data.trimEnd()}`);
 
         // Detect fatal errors early so callers don't waste time retrying
-        if (data.includes('Cannot use this model')) {
-          if (timeoutId) clearTimeout(timeoutId);
-          proc.kill();
-          reject(new Error(data.trim()));
+        if (data.includes(UNUSABLE_MODEL_MARKER)) {
+          const detail = data.trim();
+          cancelEscalation = terminateWithEscalation(proc);
+          settle(() => reject(new Error(detail)));
         }
       });
 
       proc.on('error', (error: Error & { code?: string }) => {
-        this.log(`Process error event: ${error.message}`);
-        if (timeoutId) clearTimeout(timeoutId);
-        if (error.code === 'ENOENT') {
-          reject(
-            new Error(
-              'Cursor agent CLI not found. Please install Cursor and ensure the "cursor" command is available on PATH.'
-            )
-          );
-        } else {
-          reject(error);
-        }
+        log(`Process error event: ${error.message}`);
+        settle(() => reject(classifySpawnError(error, CURSOR_NOT_FOUND_MESSAGE)));
       });
 
-      proc.on('close', (code: number | null) => {
-        // Clean up temp file on Windows
-        if (tmpFile) {
-          try {
-            unlinkSync(tmpFile);
-          } catch {
-            /* already removed or inaccessible */
-          }
-        }
-        if (lineBuffer.trim()) processLine(lineBuffer.trim());
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        accumulator.flush();
         // Use raw text as fallback when no JSON result was captured
         const finalText = resultText || rawText.trim();
-        this.log(`Process closed with code ${code}, result=${finalText.length} chars`);
-        if (timeoutId) clearTimeout(timeoutId);
+        log(`Process closed with code ${code}, result=${finalText.length} chars`);
 
-        if (timedOut) {
-          reject(new Error('Agent execution timed out'));
-          return;
-        }
+        settle(() => {
+          if (timedOut) {
+            reject(new Error('Agent execution timed out'));
+            return;
+          }
 
-        if (code !== 0 && code !== null) {
-          reject(new Error(describeSubprocessFailure({ code, resultText: finalText, stderr })));
-          return;
-        }
+          if (code !== 0 && code !== null) {
+            // Cursor reports its own reason in the result text; stderr is
+            // secondary detail, not the cause.
+            reject(
+              new Error(
+                describeSubprocessFailure({ code, resultText: finalText, stderr: stderr.text() })
+              )
+            );
+            return;
+          }
 
-        const result: AgentExecutionResult = { result: finalText };
-        if (sessionId) result.sessionId = sessionId;
-        if (metadata) result.metadata = metadata;
-        resolve(result);
+          if (code === null && !finalText) {
+            reject(new Error(signalTerminationMessage(signal, stderr.text())));
+            return;
+          }
+
+          const result: AgentExecutionResult = { result: finalText };
+          if (sessionId) result.sessionId = sessionId;
+          if (metadata) result.metadata = metadata;
+          resolve(result);
+        });
       });
     });
   }
@@ -207,138 +258,165 @@ export class CursorExecutorService implements IAgentExecutor {
     prompt: string,
     options?: AgentExecutionOptions
   ): AsyncIterable<AgentExecutionStreamEvent> {
-    const args = this.buildStreamArgs(prompt, options);
-    const { proc, tmpFile } = this.spawnAgent(prompt, args, options);
+    const log = this.startRun(options);
+    const { proc, tmpFile } = this.spawnAgent(
+      prompt,
+      this.buildFlags(options, 'stream-json'),
+      options,
+      log
+    );
 
-    let lineBuffer = '';
-    let stderr = '';
+    const channel = new EventChannel<AgentExecutionStreamEvent>();
+    const stderr = createStderrTail();
+    /** Assistant text seen so far — the answer the `result` event announces. */
+    let resultText = '';
+    let processClosed = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    const queue: (AgentExecutionStreamEvent | null)[] = [];
-    let resolve: (() => void) | null = null;
-    let error: Error | null = null;
-
-    function enqueue(event: AgentExecutionStreamEvent | null) {
-      queue.push(event);
-      if (resolve) {
-        resolve();
-        resolve = null;
-      }
+    if (options?.timeout) {
+      timeoutId = setTimeout(() => {
+        log(`Timeout after ${options.timeout}ms — terminating agent`);
+        terminateWithEscalation(proc);
+        channel.push({
+          type: 'error',
+          content: 'Agent execution timed out',
+          timestamp: new Date(),
+        });
+        channel.close();
+      }, options.timeout);
     }
 
-    function waitForItem(): Promise<void> {
-      if (queue.length > 0) return Promise.resolve();
-      return new Promise<void>((r) => {
-        resolve = r;
-      });
-    }
-
-    proc.stdout?.on('data', (chunk: Buffer | string) => {
-      lineBuffer += chunk.toString();
-      const lines = lineBuffer.split('\n');
-      lineBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const event = this.parseStreamLine(trimmed);
-        if (event) enqueue(event);
+    const accumulator = createLineAccumulator((line) => {
+      const parsed = parseJsonLine(line);
+      if (parsed === null) {
+        channel.push({ type: 'progress', content: line, timestamp: new Date() });
+        return;
       }
-    });
 
-    proc.stderr?.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    proc.on('error', (err: Error) => {
-      error = err;
-      enqueue(null);
-    });
-
-    proc.on('close', (code: number | null) => {
-      if (tmpFile) {
-        try {
-          unlinkSync(tmpFile);
-        } catch {
-          /* already removed */
-        }
-      }
-      if (lineBuffer.trim()) {
-        const event = this.parseStreamLine(lineBuffer.trim());
-        if (event) enqueue(event);
-      }
-      if (code !== 0 && code !== null && stderr.trim()) {
-        enqueue({ type: 'error', content: stderr.trim(), timestamp: new Date() });
-      }
-      enqueue(null);
-    });
-
-    while (true) {
-      await waitForItem();
-      const item = queue.shift();
-      if (item === null || item === undefined) {
-        if (error !== null) {
-          yield {
-            type: 'error' as const,
-            content: (error as Error).message,
-            timestamp: new Date(),
-          };
+      if (parsed.type === EVENT_TYPE_ASSISTANT) {
+        const text = assistantText(parsed);
+        if (text) {
+          resultText += text;
+          channel.push({ type: 'progress', content: text, timestamp: new Date() });
         }
         return;
       }
-      yield item;
+
+      if (parsed.type === EVENT_TYPE_RESULT) {
+        // The session id identifies the conversation; it is NOT the answer.
+        // Returning it as `content` handed every downstream graph node a UUID.
+        const content =
+          typeof parsed.result === 'string' && parsed.result ? parsed.result : resultText;
+        const event: AgentExecutionStreamEvent = {
+          type: 'result',
+          content,
+          timestamp: new Date(),
+        };
+        if (typeof parsed.session_id === 'string') event.sessionId = parsed.session_id;
+        channel.push(event);
+        return;
+      }
+
+      const event = toStreamEvent(parsed);
+      if (event) channel.push(event);
+    });
+
+    proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
+    proc.stderr?.on('data', (chunk: Buffer | string) => stderr.push(chunk));
+
+    proc.on('error', (error: Error & { code?: string }) => {
+      processClosed = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      channel.push({
+        type: 'error',
+        content: classifySpawnError(error, CURSOR_NOT_FOUND_MESSAGE).message,
+        timestamp: new Date(),
+      });
+      channel.close();
+    });
+
+    proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      processClosed = true;
+      accumulator.flush();
+      if (timeoutId) clearTimeout(timeoutId);
+
+      if (code !== 0 && code !== null && stderr.text().trim()) {
+        channel.push({ type: 'error', content: stderr.text().trim(), timestamp: new Date() });
+      } else if (code === null && !resultText) {
+        channel.push({
+          type: 'error',
+          content: signalTerminationMessage(signal, stderr.text()),
+          timestamp: new Date(),
+        });
+      }
+      channel.close();
+    });
+
+    try {
+      yield* channel;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      // A consumer that breaks out of the loop would otherwise leave the agent
+      // running until it finished on its own.
+      if (!processClosed) terminateWithEscalation(proc);
+      removeTempFile(tmpFile);
     }
+  }
+
+  /** Validate policy and build the per-call logger shared by both entry points. */
+  private startRun(options?: AgentExecutionOptions): ExecutorLogger {
+    const log = createExecutorLogger(options?.silent);
+    const warning = validateSecurityConstraints(
+      options?.securityConstraints,
+      CursorExecutorService.CAPABILITIES
+    );
+    if (warning) log(warning);
+    return log;
   }
 
   /**
    * Log a stream-json line as a human-readable event in the worker log.
    */
-  private logStreamEvent(line: string): void {
-    try {
-      const parsed = JSON.parse(line);
+  private logStreamEvent(line: string, log: ExecutorLogger): void {
+    const parsed = parseJsonLine(line);
+    if (parsed === null) {
+      log(`[raw] ${line}`);
+      return;
+    }
 
-      if (parsed.type === 'assistant' && Array.isArray(parsed.message?.content)) {
-        for (const block of parsed.message.content) {
-          if (block.type === 'text' && block.text?.trim()) {
-            this.log(`[text] ${block.text.trim().replace(/\n/g, ' ')}`);
-          }
-        }
-        return;
-      }
+    if (parsed.type === EVENT_TYPE_ASSISTANT) {
+      const text = assistantText(parsed).trim();
+      if (text) log(`[text] ${text.replace(/\n/g, ' ')}`);
+      return;
+    }
 
-      if (parsed.type === 'tool_call') {
-        const toolName =
-          Object.keys(parsed).find((k) => k.endsWith('ToolCall') || k.endsWith('toolCall')) ??
-          'unknown';
-        this.log(`[tool] ${parsed.subtype ?? 'call'}: ${toolName}`);
-        return;
-      }
+    if (parsed.type === EVENT_TYPE_TOOL_CALL) {
+      log(`[tool] ${asText(parsed.subtype) || 'call'}: ${toolCallName(parsed, 'unknown')}`);
+      return;
+    }
 
-      if (parsed.type === 'result') {
-        this.log(
-          `[result] session=${parsed.session_id ?? 'none'}, duration=${parsed.duration_ms ?? 'unknown'}ms`
-        );
-        return;
-      }
-
-      if (parsed.type === 'user') return; // Skip echoed input
-    } catch {
-      if (line.length > 0) this.log(`[raw] ${line}`);
+    if (parsed.type === EVENT_TYPE_RESULT) {
+      log(
+        `[result] session=${asText(parsed.session_id) || 'none'}, duration=${
+          asText(parsed.duration_ms) || 'unknown'
+        }ms`
+      );
     }
   }
 
-  private buildArgs(prompt: string, options?: AgentExecutionOptions): string[] {
-    const args = ['--yolo', '-p', prompt, '--output-format', 'json'];
-    if (options?.resumeSession) args.push('--resume', options.resumeSession);
-    if (options?.model) args.push('--model', toCursorModelName(options.model));
+  /**
+   * Build the cursor-agent flags, WITHOUT the prompt.
+   *
+   * The prompt is appended as `-p <prompt>` on POSIX and delivered through a
+   * temp file on Windows, so it never belongs in the shared flag list.
+   */
+  private buildFlags(options: AgentExecutionOptions | undefined, outputFormat: string): string[] {
+    const flags = ['--yolo', '--output-format', outputFormat];
+    if (options?.resumeSession) flags.push('--resume', options.resumeSession);
+    if (options?.model) flags.push('--model', toCursorModelName(options.model));
     // Unsupported options silently omitted: systemPrompt, allowedTools, maxTurns, outputSchema
     // No auth flags — binary handles its own auth
-    return args;
-  }
-
-  private buildStreamArgs(prompt: string, options?: AgentExecutionOptions): string[] {
-    const args = this.buildArgs(prompt, options);
-    const fmtIdx = args.indexOf('--output-format');
-    if (fmtIdx !== -1) args[fmtIdx + 1] = 'stream-json';
-    return args;
+    return flags;
   }
 
   /**
@@ -350,15 +428,18 @@ export class CursorExecutorService implements IAgentExecutor {
    * reads the file and passes the content as `-p`. PowerShell handles long
    * strings natively (32K limit) and doesn't mangle arguments.
    *
+   * Every interpolated value is quoted with {@link psQuote}: PowerShell parses
+   * the command string itself, so an unquoted flag value is executable text.
+   *
    * On Linux/macOS, spawn `cursor-agent` directly — no shell needed.
    */
   private spawnAgent(
     prompt: string,
-    args: string[],
-    options?: AgentExecutionOptions
+    flags: string[],
+    options: AgentExecutionOptions | undefined,
+    log: ExecutorLogger
   ): { proc: ReturnType<SpawnFunction>; tmpFile: string | undefined } {
-    const { CLAUDECODE: _, ...cleanEnv } = process.env;
-    const cwd = options?.cwd;
+    const spawnOpts = buildSpawnOptions({ cwd: options?.cwd });
 
     if (IS_WINDOWS) {
       // Write prompt to temp file to bypass cmd.exe argument mangling
@@ -368,95 +449,85 @@ export class CursorExecutorService implements IAgentExecutor {
       );
       writeFileSync(tmpFile, prompt, 'utf8');
 
-      // Build the agent args WITHOUT -p and the prompt (they go via temp file)
-      const agentFlags = args.filter((a) => a !== '-p' && a !== prompt).join(' ');
-      const safePath = tmpFile.replace(/'/g, "''");
-      const psCmd = `$p = Get-Content -Raw '${safePath}'; & cursor-agent ${agentFlags} -p $p`;
+      const psCmd = `$p = Get-Content -Raw ${psQuote(tmpFile)}; & ${CURSOR_BINARY} ${flags
+        .map(psQuote)
+        .join(' ')} -p $p`;
 
-      this.log(`Windows PowerShell mode: wrote ${prompt.length} chars to ${tmpFile}`);
-      this.log(`PS command: ${psCmd.replace(prompt, `<${prompt.length} chars>`)}`);
+      log(`Windows PowerShell mode: wrote ${prompt.length} chars to ${tmpFile}`);
+      log(`PS command: ${psCmd}`);
 
       const proc = this.spawn(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', psCmd],
-        {
-          cwd,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          windowsHide: true,
-          env: cleanEnv,
-        }
+        spawnOpts
       );
-      this.log(`PowerShell PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
+      log(`PowerShell PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
       if (proc.stdin) proc.stdin.end();
 
       return { proc, tmpFile };
     }
 
-    // Linux/macOS: spawn agent directly, no shell needed
-    const spawnOpts: Record<string, unknown> = {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: cleanEnv,
-    };
-    if (cwd) spawnOpts.cwd = cwd;
-
-    this.log(
-      `Spawning: cursor-agent ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
+    // Linux/macOS: spawn agent directly with a plain argv array — no shell,
+    // so no quoting question arises at all.
+    const args = [...flags, '-p', prompt];
+    log(
+      `Spawning: ${CURSOR_BINARY} ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
     );
-    this.log(`Spawn cwd: ${(cwd as string) ?? '(inherited)'}`);
+    log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
 
-    const proc = this.spawn('cursor-agent', args, spawnOpts);
-    this.log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
+    const proc = this.spawn(CURSOR_BINARY, args, spawnOpts);
+    log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
     if (proc.stdin) proc.stdin.end();
 
     return { proc, tmpFile: undefined };
   }
+}
 
-  private parseStreamLine(line: string): AgentExecutionStreamEvent | null {
-    try {
-      const parsed = JSON.parse(line);
-
-      if (parsed.type === 'assistant' && Array.isArray(parsed.message?.content)) {
-        const textParts: string[] = [];
-        for (const block of parsed.message.content) {
-          if (block.type === 'text' && block.text) textParts.push(block.text);
-        }
-        if (textParts.length > 0) {
-          return { type: 'progress', content: textParts.join(''), timestamp: new Date() };
-        }
-        return null;
-      }
-
-      if (parsed.type === 'tool_call' && parsed.subtype === 'completed') {
-        const toolName =
-          Object.keys(parsed).find((k) => k.endsWith('ToolCall') || k.endsWith('toolCall')) ??
-          'tool';
-        return { type: 'progress', content: `Tool completed: ${toolName}`, timestamp: new Date() };
-      }
-
-      if (parsed.type === 'tool_call' && parsed.subtype === 'started') {
-        const toolName =
-          Object.keys(parsed).find((k) => k.endsWith('ToolCall') || k.endsWith('toolCall')) ??
-          'tool';
-        return { type: 'progress', content: `Tool started: ${toolName}`, timestamp: new Date() };
-      }
-
-      if (parsed.type === 'result') {
-        return { type: 'result', content: parsed.session_id ?? '', timestamp: new Date() };
-      }
-
-      if (parsed.type === 'user') return null; // Skip echoed input
-
-      if (parsed.type === 'error') {
-        return {
-          type: 'error',
-          content: parsed.error ?? parsed.message ?? '',
-          timestamp: new Date(),
-        };
-      }
-
-      return null;
-    } catch {
-      return { type: 'progress', content: line, timestamp: new Date() };
-    }
+/** Remove the Windows prompt file; missing is the expected case. */
+function removeTempFile(tmpFile: string | undefined): void {
+  if (!tmpFile) return;
+  try {
+    unlinkSync(tmpFile);
+  } catch {
+    /* already removed or inaccessible */
   }
+}
+
+/** Parse one NDJSON line, or null when the line is not JSON at all. */
+function parseJsonLine(line: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (parsed === null || typeof parsed !== 'object') return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** Map a non-assistant, non-result Cursor event to a stream event. */
+function toStreamEvent(parsed: Record<string, unknown>): AgentExecutionStreamEvent | null {
+  if (parsed.type === EVENT_TYPE_TOOL_CALL) {
+    const name = toolCallName(parsed, 'tool');
+    if (parsed.subtype === 'completed') {
+      return { type: 'progress', content: `Tool completed: ${name}`, timestamp: new Date() };
+    }
+    if (parsed.subtype === 'started') {
+      return { type: 'progress', content: `Tool started: ${name}`, timestamp: new Date() };
+    }
+    return null;
+  }
+
+  if (parsed.type === EVENT_TYPE_USER) return null; // Skip echoed input
+
+  if (parsed.type === EVENT_TYPE_ERROR) {
+    // Either field may carry a structured payload; `${object}` would render it
+    // as "[object Object]" and throw away the only diagnostic there was.
+    return {
+      type: 'error',
+      content: asText(parsed.error ?? parsed.message),
+      timestamp: new Date(),
+    };
+  }
+
+  return null;
 }

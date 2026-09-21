@@ -94,4 +94,19 @@ describe('buildCiWatchPrompt', () => {
     expect(prompt).not.toContain('shep');
     expect(prompt).not.toMatch(/our repo|this repo/i);
   });
+
+  // ── A 403 is not a green CI ─────────────────────────────────────────────
+  it('does NOT instruct the agent to report PASSED when rate-limited', () => {
+    const prompt = buildCiWatchPrompt('feat/test');
+
+    expect(prompt).not.toMatch(/rate-limited[^\n]*CI_STATUS: PASSED/);
+    expect(prompt).not.toMatch(/403[^\n]*CI_STATUS: PASSED/);
+  });
+
+  it('instructs the agent to report CI_STATUS: INDETERMINATE when it cannot read CI', () => {
+    const prompt = buildCiWatchPrompt('feat/test');
+
+    expect(prompt).toContain('CI_STATUS: INDETERMINATE');
+    expect(prompt).toMatch(/403/);
+  });
 });

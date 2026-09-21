@@ -24,7 +24,41 @@ import type {
   AgentExecutionStreamEvent,
 } from '../../../../../application/ports/output/agents/agent-executor.interface.js';
 import type { SpawnFunction } from '../types.js';
-import { getCurrentPhase, getLogPrefix } from '../../feature-agent/log-context.js';
+import { EventChannel } from '../../streaming/event-channel.js';
+import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
+import { describeSubprocessFailure } from './subprocess-failure-message.js';
+import {
+  buildSpawnOptions,
+  classifySpawnError,
+  createLineAccumulator,
+  createStderrTail,
+  signalTerminationMessage,
+  terminateWithEscalation,
+  writePromptToStdin,
+} from './process-stream.js';
+import {
+  validateSecurityConstraints,
+  type ExecutorCapabilities,
+} from './security-constraint-validator.js';
+
+/** Binary name on PATH. */
+const CODEX_BINARY = 'codex';
+
+/** Shown when the binary is missing, so the user knows how to fix it. */
+const CODEX_NOT_FOUND_MESSAGE =
+  'Codex CLI ("codex") not found. Please install it: npm i -g @openai/codex';
+
+/** Environment variable carrying the API key for token auth. */
+const CODEX_API_KEY_ENV = 'CODEX_API_KEY';
+
+/** Longest agent text logged verbatim before truncation. */
+const LOG_PREVIEW_CHARS = 200;
+
+/** Longest stderr summary carried into an error message. */
+const STDERR_SUMMARY_CHARS = 300;
+
+/** Number of stderr lines summarised in an error message. */
+const STDERR_SUMMARY_LINES = 3;
 
 /** Features supported by Codex CLI */
 const SUPPORTED_FEATURES = new Set<string>([
@@ -34,17 +68,69 @@ const SUPPORTED_FEATURES = new Set<string>([
   'session-listing',
 ]);
 
+/** Codex JSONL event types. */
+const EVENT_TYPE_THREAD_STARTED = 'thread.started';
+const EVENT_TYPE_ITEM_STARTED = 'item.started';
+const EVENT_TYPE_ITEM_UPDATED = 'item.updated';
+const EVENT_TYPE_ITEM_COMPLETED = 'item.completed';
+const EVENT_TYPE_TURN_COMPLETED = 'turn.completed';
+const EVENT_TYPE_TURN_FAILED = 'turn.failed';
+const EVENT_TYPE_ERROR = 'error';
+
+/** Codex item types. */
+const ITEM_TYPE_COMMAND = 'command_execution';
+const ITEM_TYPE_FILE_CHANGE = 'file_change';
+const ITEM_TYPE_REASONING = 'reasoning';
+const ITEM_TYPE_FUNCTION_CALL = 'function_call';
+const ITEM_TYPE_FUNCTION_CALL_OUTPUT = 'function_call_output';
+
 /**
- * Fatal stderr patterns indicating API-level failures even when exit code is 0.
- * Codex CLI may exit 0 after encountering auth or rate-limit errors.
+ * Stderr patterns that explain why a run produced nothing.
+ *
+ * They are *diagnostic*, not fail-closed: the CLI also warns on stderr while
+ * succeeding ("[warn] approaching rate limit"), and a plain `/rate.?limit/`
+ * rejected completed runs over a warning. Exhaustion is matched, never the
+ * attempt, and these are consulted only when there is no result to return.
  */
-const FATAL_STDERR_PATTERNS = [
+const DIAGNOSTIC_STDERR_PATTERNS = [
   /authentication.*failed/i,
-  /rate.?limit/i,
+  /rate.?limit.{0,20}(exceeded|reached)/i,
   /quota.*exceeded/i,
   /invalid.*api.?key/i,
   /RESOURCE_EXHAUSTED/i,
 ];
+
+/** Item types that represent assistant text messages */
+const MESSAGE_ITEM_TYPES = new Set(['agent_message', 'message']);
+
+/** Render a value that should have been text but may be a structured payload. */
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  return JSON.stringify(value);
+}
+
+/** Parse one JSONL line, or null when the line is not JSON at all. */
+function parseJsonLine(line: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (parsed === null || typeof parsed !== 'object') return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** The `item` payload of a Codex event, if any. */
+function itemOf(parsed: Record<string, unknown>): Record<string, unknown> | undefined {
+  return parsed.item as Record<string, unknown> | undefined;
+}
+
+/** True when the event describes an assistant text message. */
+function isMessageItem(parsed: Record<string, unknown>): boolean {
+  const type = itemOf(parsed)?.type;
+  return typeof type === 'string' && MESSAGE_ITEM_TYPES.has(type);
+}
 
 /**
  * Executor service for OpenAI Codex CLI agent.
@@ -53,177 +139,147 @@ const FATAL_STDERR_PATTERNS = [
 export class CodexCliExecutorService implements IAgentExecutor {
   readonly agentType: AgentType = 'codex-cli' as AgentType;
 
-  /** When true, suppresses debug logging (set per-call via options.silent) */
-  private silent = false;
-
   constructor(
     private readonly spawn: SpawnFunction,
     private readonly authConfig?: AgentConfig
   ) {}
 
-  /** Debug logging — writes to stdout so it appears in the worker log file */
-  private log(message: string): void {
-    if (this.silent) return;
-    const ts = new Date().toISOString();
-    process.stdout.write(`[${ts}] ${getCurrentPhase()}${getLogPrefix()}${message}\n`);
-  }
+  /** Executor capabilities for security constraint validation */
+  private static readonly CAPABILITIES: ExecutorCapabilities = {
+    requiresPermissiveMode: true, // uses --sandbox danger-full-access
+    executorName: 'codex-cli',
+  };
 
   supportsFeature(feature: AgentFeature): boolean {
     return SUPPORTED_FEATURES.has(feature as string);
   }
 
   async execute(prompt: string, options?: AgentExecutionOptions): Promise<AgentExecutionResult> {
-    this.silent = options?.silent ?? false;
+    const log = this.startRun(options);
+
     let tempSchemaPath: string | undefined;
     try {
-      if (options?.outputSchema) {
-        tempSchemaPath = path.join(
-          os.tmpdir(),
-          `codex-schema-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
-        );
-        fs.writeFileSync(tempSchemaPath, JSON.stringify(options.outputSchema));
-      }
-
-      const args = this.buildArgs(prompt, options, tempSchemaPath);
-      const spawnOpts = this.buildSpawnOptions(options);
-
-      this.log(
-        `Spawning: codex ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
-      );
-      this.log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
-
-      const proc = this.spawn('codex', args, spawnOpts);
-      this.log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
-      this.log(`Prompt length: ${prompt.length} chars (piped via stdin)`);
-      // Log the actual prompt for debugging (truncate very long prompts)
-      const promptPreview = prompt.length > 500 ? `${prompt.slice(0, 497)}...` : prompt;
-      this.log(`[text] Prompt: ${promptPreview.replace(/\n/g, ' ')}`);
-
-      // Codex accepts "-" for both initial and resumed prompts, so keep
-      // user input out of CLI arguments and pipe it through stdin.
-      if (proc.stdin) {
-        proc.stdin.write(prompt);
-        proc.stdin.end();
-      }
+      tempSchemaPath = writeSchemaFile(options);
+      const proc = this.spawnCodex(prompt, options, tempSchemaPath, log);
 
       return await new Promise<AgentExecutionResult>((resolve, reject) => {
-        let lineBuffer = '';
-        let stderr = '';
-        let timedOut = false;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-        // State accumulated from JSONL events
+        const stderr = createStderrTail();
         let resultText = '';
         let sessionId: string | undefined;
         let usage: AgentExecutionUsage | undefined;
+        let timedOut = false;
+        let settled = false;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        let cancelEscalation: (() => void) | undefined;
+
+        const settle = (outcome: () => void): void => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          cancelEscalation?.();
+          outcome();
+        };
 
         if (options?.timeout) {
           timeoutId = setTimeout(() => {
             timedOut = true;
-            proc.kill();
+            log(`Timeout after ${options.timeout}ms — terminating agent`);
+            cancelEscalation = terminateWithEscalation(proc);
           }, options.timeout);
         }
 
-        const processLine = (line: string) => {
-          this.logStreamEvent(line);
-          try {
-            const parsed = JSON.parse(line);
-            const type = parsed.type as string;
+        const accumulator = createLineAccumulator(
+          (line) => {
+            this.logStreamEvent(line, log);
+            const parsed = parseJsonLine(line);
+            if (!parsed) return; // Malformed JSON line — skip gracefully
 
-            if (type === 'thread.started' && parsed.thread_id) {
-              sessionId = parsed.thread_id;
-            } else if (
-              type === 'item.completed' &&
-              CodexCliExecutorService.MESSAGE_ITEM_TYPES.has(parsed.item?.type)
-            ) {
+            if (parsed.type === EVENT_TYPE_THREAD_STARTED && parsed.thread_id) {
+              sessionId = asText(parsed.thread_id);
+            } else if (parsed.type === EVENT_TYPE_ITEM_COMPLETED && isMessageItem(parsed)) {
               // Accumulate response text from completed agent messages
-              // Codex CLI uses item.text directly; fallback to content blocks
-              const text = this.extractItemText(parsed);
+              const text = extractItemText(parsed);
               if (text) resultText += text;
-            } else if (type === 'turn.completed' && parsed.usage) {
-              usage = this.extractUsage(parsed.usage);
+            } else if (parsed.type === EVENT_TYPE_TURN_COMPLETED && parsed.usage) {
+              usage = extractUsage(parsed.usage as Record<string, number>);
             }
-          } catch {
-            // Malformed JSON line — skip gracefully
+          },
+          {
+            onOverflow: (dropped) =>
+              log(`[warn] discarded ${dropped} bytes of un-terminated output`),
           }
-        };
+        );
 
-        proc.stdout?.on('data', (chunk: Buffer | string) => {
-          lineBuffer += chunk.toString();
-          const lines = lineBuffer.split('\n');
-          lineBuffer = lines.pop() ?? '';
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed) processLine(trimmed);
-          }
-        });
+        proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
 
         proc.stderr?.on('data', (chunk: Buffer | string) => {
-          const data = chunk.toString();
-          stderr += data;
-          this.log(`stderr: ${data.trimEnd()}`);
+          stderr.push(chunk);
+          log(`stderr: ${chunk.toString().trimEnd()}`);
         });
 
         proc.on('error', (error: Error & { code?: string }) => {
-          this.log(`Process error event: ${error.message}`);
-          if (timeoutId) clearTimeout(timeoutId);
-          if (error.code === 'ENOENT') {
-            reject(
-              new Error('Codex CLI ("codex") not found. Please install it: npm i -g @openai/codex')
-            );
-          } else {
-            reject(error);
-          }
+          log(`Process error event: ${error.message}`);
+          settle(() => reject(classifySpawnError(error, CODEX_NOT_FOUND_MESSAGE)));
         });
 
-        proc.on('close', (code: number | null) => {
-          // Flush remaining buffer
-          if (lineBuffer.trim()) processLine(lineBuffer.trim());
+        proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+          accumulator.flush();
+          log(`Process closed with code ${code}, result=${resultText.length} chars`);
 
-          this.log(`Process closed with code ${code}, result=${resultText.length} chars`);
-          if (timeoutId) clearTimeout(timeoutId);
+          settle(() => {
+            if (timedOut) {
+              reject(new Error('Agent execution timed out'));
+              return;
+            }
 
-          if (timedOut) {
-            reject(new Error('Agent execution timed out'));
-            return;
-          }
+            if (code !== 0 && code !== null) {
+              // The CLI names its own reason in the result text; stderr is
+              // setup diagnostics that healthy runs emit too.
+              reject(
+                new Error(describeSubprocessFailure({ code, resultText, stderr: stderr.text() }))
+              );
+              return;
+            }
 
-          if (code !== 0 && code !== null) {
-            const message = stderr.trim()
-              ? `Process exited with code ${code}: ${stderr.trim()}`
-              : `Process exited with code ${code}`;
-            reject(new Error(message));
-            return;
-          }
+            // A complete message IS the run's outcome. stderr noise from a
+            // sub-request the CLI recovered from must not discard it.
+            if (resultText) {
+              const result: AgentExecutionResult = { result: resultText };
+              if (sessionId) result.sessionId = sessionId;
+              if (usage) result.usage = usage;
+              resolve(result);
+              return;
+            }
 
-          // Codex CLI may exit 0 despite fatal API errors.
-          // Check stderr for known fatal patterns before trusting the output.
-          const fatalError = this.detectFatalStderrError(stderr);
-          if (fatalError) {
-            reject(new Error(fatalError));
-            return;
-          }
+            // No answer: stderr is the only diagnosis available.
+            const diagnosis = diagnoseStderr(stderr.text());
+            if (diagnosis) {
+              reject(new Error(diagnosis));
+              return;
+            }
 
-          if (!resultText && !sessionId) {
-            reject(new Error(`Empty response from Codex CLI. stderr: ${stderr.slice(0, 300)}`));
-            return;
-          }
+            if (code === null) {
+              reject(new Error(signalTerminationMessage(signal, stderr.text())));
+              return;
+            }
 
-          const result: AgentExecutionResult = { result: resultText };
-          if (sessionId) result.sessionId = sessionId;
-          if (usage) result.usage = usage;
-          resolve(result);
+            if (!sessionId) {
+              reject(
+                new Error(
+                  `Empty response from Codex CLI. stderr: ${stderr.text().slice(0, STDERR_SUMMARY_CHARS)}`
+                )
+              );
+              return;
+            }
+
+            const result: AgentExecutionResult = { result: resultText, sessionId };
+            if (usage) result.usage = usage;
+            resolve(result);
+          });
         });
       });
     } finally {
-      // Clean up temp schema file
-      if (tempSchemaPath) {
-        try {
-          fs.unlinkSync(tempSchemaPath);
-        } catch {
-          // Best effort cleanup
-        }
-      }
+      removeSchemaFile(tempSchemaPath);
     }
   }
 
@@ -231,226 +287,242 @@ export class CodexCliExecutorService implements IAgentExecutor {
     prompt: string,
     options?: AgentExecutionOptions
   ): AsyncIterable<AgentExecutionStreamEvent> {
-    this.silent = options?.silent ?? false;
+    const log = this.startRun(options);
+
     let tempSchemaPath: string | undefined;
     try {
-      if (options?.outputSchema) {
-        tempSchemaPath = path.join(
-          os.tmpdir(),
-          `codex-schema-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
-        );
-        fs.writeFileSync(tempSchemaPath, JSON.stringify(options.outputSchema));
-      }
+      tempSchemaPath = writeSchemaFile(options);
+      const proc = this.spawnCodex(prompt, options, tempSchemaPath, log);
 
-      const args = this.buildArgs(prompt, options, tempSchemaPath);
-      const spawnOpts = this.buildSpawnOptions(options);
-      const proc = this.spawn('codex', args, spawnOpts);
-
-      // Codex accepts "-" for both initial and resumed prompts, so keep
-      // user input out of CLI arguments and pipe it through stdin.
-      if (proc.stdin) {
-        proc.stdin.write(prompt);
-        proc.stdin.end();
-      }
-
-      let lineBuffer = '';
-      let stderr = '';
+      const channel = new EventChannel<AgentExecutionStreamEvent>();
+      const stderr = createStderrTail();
+      let resultText = '';
+      let sessionId: string | undefined;
+      /** Text already emitted for the message item in flight. */
+      let emittedText = '';
+      let processClosed = false;
       let timedOut = false;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-      // State accumulated across events
-      let resultText = '';
-
-      const queue: (AgentExecutionStreamEvent | null)[] = [];
-      let resolve: (() => void) | null = null;
-      let spawnError: Error | null = null;
-
-      function enqueue(event: AgentExecutionStreamEvent | null) {
-        queue.push(event);
-        if (resolve) {
-          resolve();
-          resolve = null;
-        }
-      }
-
-      function waitForItem(): Promise<void> {
-        if (queue.length > 0) return Promise.resolve();
-        return new Promise<void>((r) => {
-          resolve = r;
-        });
-      }
 
       if (options?.timeout) {
         timeoutId = setTimeout(() => {
           timedOut = true;
-          proc.kill();
-          enqueue({ type: 'error', content: 'Agent execution timed out', timestamp: new Date() });
-          enqueue(null);
+          log(`Timeout after ${options.timeout}ms — terminating agent`);
+          terminateWithEscalation(proc);
+          channel.push({
+            type: 'error',
+            content: 'Agent execution timed out',
+            timestamp: new Date(),
+          });
+          channel.close();
         }, options.timeout);
       }
 
-      const processStreamLine = (line: string) => {
-        this.logStreamEvent(line);
-        try {
-          const parsed = JSON.parse(line);
-          const type = parsed.type as string;
-
-          if (type === 'thread.started') {
-            // Internal state — no event yielded (thread_id tracked for logging)
-            return;
-          }
-
-          const isMessage = CodexCliExecutorService.MESSAGE_ITEM_TYPES.has(parsed.item?.type);
-
-          if (type === 'item.started' && isMessage) {
-            enqueue({ type: 'progress', content: '', timestamp: new Date() });
-            return;
-          }
-
-          if (type === 'item.updated' && isMessage) {
-            const delta = this.extractDeltaText(parsed);
-            if (delta) {
-              enqueue({ type: 'progress', content: delta, timestamp: new Date() });
-            }
-            return;
-          }
-
-          if (type === 'item.completed' && isMessage) {
-            const text = this.extractItemText(parsed);
-            if (text) resultText += text;
-            return;
-          }
-
-          if (type === 'item.started' && parsed.item?.type === 'command_execution') {
-            const cmd = parsed.item.command ?? parsed.item.name ?? 'command';
-            enqueue({ type: 'progress', content: `Running: ${cmd}`, timestamp: new Date() });
-            return;
-          }
-
-          if (type === 'item.completed' && parsed.item?.type === 'command_execution') {
-            const exitCode = parsed.item.exit_code ?? '';
-            enqueue({
-              type: 'progress',
-              content: `Command completed (exit ${exitCode})`,
-              timestamp: new Date(),
-            });
-            return;
-          }
-
-          if (type === 'item.started' && parsed.item?.type === 'file_change') {
-            enqueue({ type: 'progress', content: 'Modifying files', timestamp: new Date() });
-            return;
-          }
-
-          if (type === 'item.completed' && parsed.item?.type === 'file_change') {
-            const file = parsed.item.file ?? parsed.item.path ?? '';
-            enqueue({
-              type: 'progress',
-              content: file ? `Modified: ${file}` : 'File change completed',
-              timestamp: new Date(),
-            });
-            return;
-          }
-
-          if (type === 'turn.completed') {
-            // Yield final result event
-            enqueue({
-              type: 'result',
-              content: resultText,
-              timestamp: new Date(),
-            });
-            return;
-          }
-
-          if (type === 'turn.failed') {
-            const msg = parsed.error?.message ?? parsed.message ?? 'Turn failed';
-            enqueue({ type: 'error', content: msg, timestamp: new Date() });
-            return;
-          }
-
-          if (type === 'error') {
-            const msg = parsed.message ?? parsed.error ?? 'Unknown error';
-            enqueue({ type: 'error', content: msg, timestamp: new Date() });
-            return;
-          }
-
-          // Unknown event type — skip gracefully
-        } catch {
+      const accumulator = createLineAccumulator((line) => {
+        this.logStreamEvent(line, log);
+        const parsed = parseJsonLine(line);
+        if (!parsed) {
           // Non-JSON line — emit as raw progress
-          enqueue({ type: 'progress', content: line, timestamp: new Date() });
-        }
-      };
-
-      proc.stdout?.on('data', (chunk: Buffer | string) => {
-        lineBuffer += chunk.toString();
-        const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          processStreamLine(trimmed);
-        }
-      });
-
-      proc.stderr?.on('data', (chunk: Buffer | string) => {
-        stderr += chunk.toString();
-      });
-
-      proc.on('error', (err: Error) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        spawnError = err;
-        enqueue(null);
-      });
-
-      proc.on('close', (code: number | null) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        if (timedOut) return; // already handled by timeout callback
-
-        if (lineBuffer.trim()) {
-          processStreamLine(lineBuffer.trim());
-        }
-
-        if (code !== 0 && code !== null) {
-          const msg = stderr.trim()
-            ? `Process exited with code ${code}: ${stderr.trim()}`
-            : `Process exited with code ${code}`;
-          enqueue({ type: 'error', content: msg, timestamp: new Date() });
-        } else {
-          // Check for fatal stderr patterns on exit 0
-          const fatalError = this.detectFatalStderrError(stderr);
-          if (fatalError) {
-            enqueue({ type: 'error', content: fatalError, timestamp: new Date() });
-          }
-        }
-        enqueue(null);
-      });
-
-      // Yield events as they arrive
-      while (true) {
-        await waitForItem();
-        const item = queue.shift();
-        if (item === null || item === undefined) {
-          if (spawnError !== null) {
-            yield {
-              type: 'error' as const,
-              content: (spawnError as Error).message,
-              timestamp: new Date(),
-            };
-          }
+          channel.push({ type: 'progress', content: line, timestamp: new Date() });
           return;
         }
-        yield item;
+
+        const type = parsed.type as string;
+        const item = itemOf(parsed);
+        const isMessage = isMessageItem(parsed);
+
+        if (type === EVENT_TYPE_THREAD_STARTED) {
+          if (parsed.thread_id) sessionId = asText(parsed.thread_id);
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_STARTED && isMessage) {
+          emittedText = '';
+          channel.push({ type: 'progress', content: '', timestamp: new Date() });
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_UPDATED && isMessage) {
+          const text = extractDeltaText(parsed);
+          if (text === undefined) return;
+          // `item.text` is the message SO FAR, not the new fragment. Emitting
+          // it whole made a live consumer render "HelHelloHello world".
+          const delta = text.startsWith(emittedText) ? text.slice(emittedText.length) : text;
+          emittedText = text;
+          if (delta) channel.push({ type: 'progress', content: delta, timestamp: new Date() });
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_COMPLETED && isMessage) {
+          const text = extractItemText(parsed);
+          if (text) resultText += text;
+          emittedText = '';
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_STARTED && item?.type === ITEM_TYPE_COMMAND) {
+          const cmd = asText(item.command ?? item.name) || 'command';
+          channel.push({ type: 'progress', content: `Running: ${cmd}`, timestamp: new Date() });
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_COMPLETED && item?.type === ITEM_TYPE_COMMAND) {
+          channel.push({
+            type: 'progress',
+            content: `Command completed (exit ${asText(item.exit_code)})`,
+            timestamp: new Date(),
+          });
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_STARTED && item?.type === ITEM_TYPE_FILE_CHANGE) {
+          channel.push({ type: 'progress', content: 'Modifying files', timestamp: new Date() });
+          return;
+        }
+
+        if (type === EVENT_TYPE_ITEM_COMPLETED && item?.type === ITEM_TYPE_FILE_CHANGE) {
+          const file = asText(item.file ?? item.path);
+          channel.push({
+            type: 'progress',
+            content: file ? `Modified: ${file}` : 'File change completed',
+            timestamp: new Date(),
+          });
+          return;
+        }
+
+        if (type === EVENT_TYPE_TURN_COMPLETED) {
+          const event: AgentExecutionStreamEvent = {
+            type: 'result',
+            content: resultText,
+            timestamp: new Date(),
+          };
+          if (sessionId) event.sessionId = sessionId;
+          channel.push(event);
+          return;
+        }
+
+        if (type === EVENT_TYPE_TURN_FAILED) {
+          const error = parsed.error as { message?: unknown } | undefined;
+          channel.push({
+            type: 'error',
+            content: asText(error?.message ?? parsed.message) || 'Turn failed',
+            timestamp: new Date(),
+          });
+          return;
+        }
+
+        if (type === EVENT_TYPE_ERROR) {
+          // Either field may carry a structured payload; `${object}` would
+          // render it as "[object Object]" and lose the only diagnostic.
+          channel.push({
+            type: 'error',
+            content: asText(parsed.message ?? parsed.error) || 'Unknown error',
+            timestamp: new Date(),
+          });
+        }
+
+        // Unknown event type — skip gracefully
+      });
+
+      proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
+      proc.stderr?.on('data', (chunk: Buffer | string) => stderr.push(chunk));
+
+      proc.on('error', (error: Error & { code?: string }) => {
+        processClosed = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        channel.push({
+          type: 'error',
+          content: classifySpawnError(error, CODEX_NOT_FOUND_MESSAGE).message,
+          timestamp: new Date(),
+        });
+        channel.close();
+      });
+
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        processClosed = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        if (timedOut) return; // already reported by the timeout callback
+
+        accumulator.flush();
+
+        if (code !== 0 && code !== null) {
+          channel.push({
+            type: 'error',
+            content: describeSubprocessFailure({ code, resultText, stderr: stderr.text() }),
+            timestamp: new Date(),
+          });
+        } else if (!resultText) {
+          // Same rule as execute(): stderr only gets to fail the run when the
+          // agent produced nothing of its own.
+          const diagnosis = diagnoseStderr(stderr.text());
+          if (diagnosis) {
+            channel.push({ type: 'error', content: diagnosis, timestamp: new Date() });
+          } else if (code === null) {
+            channel.push({
+              type: 'error',
+              content: signalTerminationMessage(signal, stderr.text()),
+              timestamp: new Date(),
+            });
+          }
+        }
+        channel.close();
+      });
+
+      try {
+        yield* channel;
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        // A consumer that breaks out of the loop would otherwise leave the
+        // agent running until it finished on its own.
+        if (!processClosed) terminateWithEscalation(proc);
       }
     } finally {
-      // Clean up temp schema file
-      if (tempSchemaPath) {
-        try {
-          fs.unlinkSync(tempSchemaPath);
-        } catch {
-          // Best effort cleanup
-        }
-      }
+      removeSchemaFile(tempSchemaPath);
     }
+  }
+
+  /** Validate policy and build the per-call logger shared by both entry points. */
+  private startRun(options?: AgentExecutionOptions): ExecutorLogger {
+    const log = createExecutorLogger(options?.silent);
+    const warning = validateSecurityConstraints(
+      options?.securityConstraints,
+      CodexCliExecutorService.CAPABILITIES
+    );
+    if (warning) log(warning);
+    return log;
+  }
+
+  private spawnCodex(
+    prompt: string,
+    options: AgentExecutionOptions | undefined,
+    tempSchemaPath: string | undefined,
+    log: ExecutorLogger
+  ): ReturnType<SpawnFunction> {
+    const args = this.buildArgs(prompt, options, tempSchemaPath);
+    const spawnOpts = this.buildSpawnOptions();
+
+    log(
+      `Spawning: ${CODEX_BINARY} ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
+    );
+    log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
+
+    const proc = this.spawn(CODEX_BINARY, args, spawnOpts);
+    log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
+    log(`Prompt length: ${prompt.length} chars (piped via stdin)`);
+    // Log the actual prompt for debugging (truncate very long prompts)
+    const promptPreview = prompt.length > 500 ? `${prompt.slice(0, 497)}...` : prompt;
+    log(`[text] Prompt: ${promptPreview.replace(/\n/g, ' ')}`);
+
+    // Codex accepts `-` for both initial and resumed prompts, so user input is
+    // piped on every path and never reaches argv. The error handler matters:
+    // the CLI exits early on a bad flag or an auth failure, and the resulting
+    // EPIPE would otherwise take the whole worker down instead of failing this
+    // run.
+    writePromptToStdin(proc, prompt, (error) =>
+      log(`stdin closed before the prompt was written (${error.code ?? error.message})`)
+    );
+
+    return proc;
   }
 
   /**
@@ -458,164 +530,112 @@ export class CodexCliExecutorService implements IAgentExecutor {
    * Extracts tool calls (function_call), assistant text, command executions,
    * and result summaries for verbose debugging.
    */
-  /** Item types that represent assistant text messages */
-  private static readonly MESSAGE_ITEM_TYPES = new Set(['agent_message', 'message']);
-
-  private logStreamEvent(line: string): void {
-    try {
-      const parsed = JSON.parse(line);
-      const type = parsed.type as string;
-      const itemType = parsed.item?.type as string | undefined;
-
-      // Thread lifecycle
-      if (type === 'thread.started') {
-        this.log(`[thread] started thread_id=${parsed.thread_id ?? 'unknown'}`);
-        return;
-      }
-
-      // Agent/assistant message text — log the content
-      if (
-        type === 'item.completed' &&
-        itemType &&
-        CodexCliExecutorService.MESSAGE_ITEM_TYPES.has(itemType)
-      ) {
-        const text = this.extractItemText(parsed);
-        if (text) {
-          const preview = text.length > 200 ? `${text.slice(0, 197)}...` : text;
-          this.log(`[text] ${preview.replace(/\n/g, ' ')}`);
-        }
-        return;
-      }
-
-      // Delta/partial updates for messages — log text fragments
-      if (
-        type === 'item.updated' &&
-        itemType &&
-        CodexCliExecutorService.MESSAGE_ITEM_TYPES.has(itemType)
-      ) {
-        const delta = this.extractDeltaText(parsed);
-        if (delta) {
-          this.log(`[delta] ${delta.replace(/\n/g, ' ')}`);
-        }
-        return;
-      }
-
-      // Reasoning items — model's chain-of-thought
-      if (type === 'item.completed' && itemType === 'reasoning') {
-        const text = this.extractItemText(parsed);
-        if (text) {
-          const preview = text.length > 200 ? `${text.slice(0, 197)}...` : text;
-          this.log(`[text] Reasoning: ${preview.replace(/\n/g, ' ')}`);
-        }
-        return;
-      }
-
-      // Function/tool calls — log name and arguments
-      if (type === 'item.started' && itemType === 'function_call') {
-        const name = parsed.item.name ?? parsed.item.call_id ?? 'unknown';
-        const args = parsed.item.arguments ?? '';
-        this.log(`[tool] ${name} ${typeof args === 'string' ? args : JSON.stringify(args)}`);
-        return;
-      }
-      if (type === 'item.completed' && itemType === 'function_call') {
-        const name = parsed.item.name ?? 'unknown';
-        this.log(`[tool] ${name} completed`);
-        return;
-      }
-
-      // Function call output — log truncated result
-      if (type === 'item.completed' && itemType === 'function_call_output') {
-        const output = parsed.item.output ?? '';
-        const preview =
-          typeof output === 'string'
-            ? output.length > 200
-              ? `${output.slice(0, 197)}...`
-              : output
-            : JSON.stringify(output).slice(0, 200);
-        this.log(`[tool-result] ${preview.replace(/\n/g, ' ')}`);
-        return;
-      }
-
-      // Command executions (Codex shell tool)
-      if (type === 'item.started' && itemType === 'command_execution') {
-        const cmd = parsed.item.command ?? parsed.item.name ?? 'command';
-        this.log(`[cmd] running: ${cmd}`);
-        return;
-      }
-      if (type === 'item.completed' && itemType === 'command_execution') {
-        const exitCode = parsed.item.exit_code ?? '';
-        const output = parsed.item.output ?? '';
-        const preview =
-          typeof output === 'string'
-            ? output.length > 200
-              ? `${output.slice(0, 197)}...`
-              : output
-            : '';
-        this.log(
-          `[cmd] exit=${exitCode}${preview ? ` output: ${preview.replace(/\n/g, ' ')}` : ''}`
-        );
-        return;
-      }
-
-      // File changes
-      if (type === 'item.started' && itemType === 'file_change') {
-        const file = parsed.item.file ?? parsed.item.path ?? '';
-        this.log(`[file] modifying: ${file}`);
-        return;
-      }
-      if (type === 'item.completed' && itemType === 'file_change') {
-        const file = parsed.item.file ?? parsed.item.path ?? '';
-        this.log(`[file] modified: ${file}`);
-        return;
-      }
-
-      // Turn lifecycle with usage stats
-      if (type === 'turn.completed') {
-        const u = parsed.usage;
-        if (u) {
-          const inTokens = u.input_tokens ?? 0;
-          const outTokens = u.output_tokens ?? 0;
-          this.log(`[tokens] ${inTokens} in / ${outTokens} out`);
-        } else {
-          this.log('[turn] completed');
-        }
-        return;
-      }
-
-      if (type === 'turn.failed') {
-        const msg = parsed.error?.message ?? parsed.message ?? 'unknown';
-        this.log(`[turn] FAILED: ${msg}`);
-        return;
-      }
-
-      // Error events
-      if (type === 'error') {
-        const msg = parsed.message ?? parsed.error ?? 'unknown';
-        this.log(`[error] ${msg}`);
-        return;
-      }
-
-      // Catch-all: log any unhandled event so nothing is silently dropped
-      const summary = itemType ? `${type} (${itemType})` : type;
-      const snippet = line.length > 200 ? `${line.slice(0, 197)}...` : line;
-      this.log(`[event] ${summary}: ${snippet}`);
-    } catch {
+  private logStreamEvent(line: string, log: ExecutorLogger): void {
+    const parsed = parseJsonLine(line);
+    if (!parsed) {
       // Non-JSON line — log raw
-      if (line.length > 0) {
-        this.log(`[raw] ${line}`);
-      }
+      if (line.length > 0) log(`[raw] ${line}`);
+      return;
     }
+
+    const type = parsed.type as string;
+    const item = itemOf(parsed);
+    const itemType = item?.type as string | undefined;
+
+    // Thread lifecycle
+    if (type === EVENT_TYPE_THREAD_STARTED) {
+      log(`[thread] started thread_id=${asText(parsed.thread_id) || 'unknown'}`);
+      return;
+    }
+
+    // Agent/assistant message text — log the content
+    if (type === EVENT_TYPE_ITEM_COMPLETED && isMessageItem(parsed)) {
+      const text = extractItemText(parsed);
+      if (text) log(`[text] ${preview(text)}`);
+      return;
+    }
+
+    // Delta/partial updates for messages — log text fragments
+    if (type === EVENT_TYPE_ITEM_UPDATED && isMessageItem(parsed)) {
+      const delta = extractDeltaText(parsed);
+      if (delta) log(`[delta] ${delta.replace(/\n/g, ' ')}`);
+      return;
+    }
+
+    // Reasoning items — model's chain-of-thought
+    if (type === EVENT_TYPE_ITEM_COMPLETED && itemType === ITEM_TYPE_REASONING) {
+      const text = extractItemText(parsed);
+      if (text) log(`[text] Reasoning: ${preview(text)}`);
+      return;
+    }
+
+    // Function/tool calls — log name and arguments
+    if (type === EVENT_TYPE_ITEM_STARTED && itemType === ITEM_TYPE_FUNCTION_CALL) {
+      log(`[tool] ${asText(item?.name ?? item?.call_id) || 'unknown'} ${asText(item?.arguments)}`);
+      return;
+    }
+    if (type === EVENT_TYPE_ITEM_COMPLETED && itemType === ITEM_TYPE_FUNCTION_CALL) {
+      log(`[tool] ${asText(item?.name) || 'unknown'} completed`);
+      return;
+    }
+
+    // Function call output — log truncated result
+    if (type === EVENT_TYPE_ITEM_COMPLETED && itemType === ITEM_TYPE_FUNCTION_CALL_OUTPUT) {
+      log(`[tool-result] ${preview(asText(item?.output))}`);
+      return;
+    }
+
+    // Command executions (Codex shell tool)
+    if (type === EVENT_TYPE_ITEM_STARTED && itemType === ITEM_TYPE_COMMAND) {
+      log(`[cmd] running: ${asText(item?.command ?? item?.name) || 'command'}`);
+      return;
+    }
+    if (type === EVENT_TYPE_ITEM_COMPLETED && itemType === ITEM_TYPE_COMMAND) {
+      const output = preview(asText(item?.output));
+      log(`[cmd] exit=${asText(item?.exit_code)}${output ? ` output: ${output}` : ''}`);
+      return;
+    }
+
+    // File changes
+    if (type === EVENT_TYPE_ITEM_STARTED && itemType === ITEM_TYPE_FILE_CHANGE) {
+      log(`[file] modifying: ${asText(item?.file ?? item?.path)}`);
+      return;
+    }
+    if (type === EVENT_TYPE_ITEM_COMPLETED && itemType === ITEM_TYPE_FILE_CHANGE) {
+      log(`[file] modified: ${asText(item?.file ?? item?.path)}`);
+      return;
+    }
+
+    // Turn lifecycle with usage stats
+    if (type === EVENT_TYPE_TURN_COMPLETED) {
+      const u = parsed.usage as Record<string, number> | undefined;
+      if (u) log(`[tokens] ${u.input_tokens ?? 0} in / ${u.output_tokens ?? 0} out`);
+      else log('[turn] completed');
+      return;
+    }
+
+    if (type === EVENT_TYPE_TURN_FAILED) {
+      const error = parsed.error as { message?: unknown } | undefined;
+      log(`[turn] FAILED: ${asText(error?.message ?? parsed.message) || 'unknown'}`);
+      return;
+    }
+
+    // Error events
+    if (type === EVENT_TYPE_ERROR) {
+      log(`[error] ${asText(parsed.message ?? parsed.error) || 'unknown'}`);
+      return;
+    }
+
+    // Catch-all: log any unhandled event so nothing is silently dropped
+    const summary = itemType ? `${type} (${itemType})` : type;
+    log(`[event] ${summary}: ${preview(line)}`);
   }
 
   /**
    * Build CLI arguments for codex exec.
    *
    * For initial execution: `codex exec - --json --sandbox danger-full-access ...`
-   * For resume: `codex exec [flags] resume <threadId> -`
-   *
-   * Current Codex CLI treats `resume` as an exec subcommand. Exec-level
-   * flags such as --sandbox, --cd, and --color must appear before `resume`.
-   * A trailing `-` tells Codex to read the resumed prompt from stdin.
+   * For resume: `codex exec resume <threadId> "prompt" --json --sandbox danger-full-access ...`
    */
   private buildArgs(
     _prompt: string,
@@ -636,6 +656,10 @@ export class CodexCliExecutorService implements IAgentExecutor {
     if (tempSchemaPath) baseFlags.push('--output-schema', tempSchemaPath);
 
     if (options?.resumeSession) {
+      // Current Codex CLI treats `resume` as an exec subcommand, so exec-level
+      // flags (--sandbox, --cd, --color) must appear BEFORE it. The trailing
+      // `-` reads the resumed prompt from stdin, which also keeps user input
+      // out of argv.
       return ['exec', ...baseFlags, 'resume', options.resumeSession, '-'];
     }
 
@@ -644,99 +668,119 @@ export class CodexCliExecutorService implements IAgentExecutor {
     return ['exec', '-', ...baseFlags];
   }
 
-  private buildSpawnOptions(_options?: AgentExecutionOptions): Record<string, unknown> {
-    const spawnOpts: Record<string, unknown> = {};
-
-    // Explicitly pipe stdio so streams are available even when parent disconnects
-    spawnOpts.stdio = ['pipe', 'pipe', 'pipe'];
-
-    // On Windows: windowsHide=true to prevent blank console windows.
-    // Codex CLI is a native Rust binary, so shell=true is NOT needed.
-    if (process.platform === 'win32') {
-      spawnOpts.windowsHide = true;
-    }
-
-    // Strip CLAUDECODE env var to prevent "nested session" error when shep
-    // is invoked from within a Claude Code session.
-    const { CLAUDECODE: _, ...cleanEnv } = process.env;
+  /**
+   * Spawn options for codex.
+   *
+   * The working directory is passed to the CLI with `--cd` rather than as the
+   * child's cwd, so it is deliberately absent here.
+   */
+  private buildSpawnOptions(): Record<string, unknown> {
+    const extraEnv: Record<string, string> = {};
 
     // Inject CODEX_API_KEY when using token auth
     if (this.authConfig?.authMethod === 'token' && this.authConfig.token) {
-      spawnOpts.env = { ...cleanEnv, CODEX_API_KEY: this.authConfig.token };
-    } else {
-      spawnOpts.env = cleanEnv;
+      extraEnv[CODEX_API_KEY_ENV] = this.authConfig.token;
     }
 
-    return spawnOpts;
+    return buildSpawnOptions({ extraEnv });
   }
+}
 
-  /**
-   * Extract token usage from Codex CLI turn.completed usage object.
-   */
-  private extractUsage(usageObj: Record<string, number>): AgentExecutionUsage | undefined {
-    if (usageObj.input_tokens === undefined && usageObj.output_tokens === undefined) {
-      return undefined;
-    }
-    return {
-      inputTokens: usageObj.input_tokens ?? 0,
-      outputTokens: usageObj.output_tokens ?? 0,
-    };
+/** Truncate long text for a log line. */
+function preview(text: string): string {
+  const flat = text.replace(/\n/g, ' ');
+  return flat.length > LOG_PREVIEW_CHARS ? `${flat.slice(0, LOG_PREVIEW_CHARS - 3)}...` : flat;
+}
+
+/** Write the structured-output schema to a temp file, when one was requested. */
+function writeSchemaFile(options?: AgentExecutionOptions): string | undefined {
+  if (!options?.outputSchema) return undefined;
+  const schemaPath = path.join(
+    os.tmpdir(),
+    `codex-schema-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
+  );
+  fs.writeFileSync(schemaPath, JSON.stringify(options.outputSchema));
+  return schemaPath;
+}
+
+/** Best-effort cleanup of the temp schema file. */
+function removeSchemaFile(schemaPath: string | undefined): void {
+  if (!schemaPath) return;
+  try {
+    fs.unlinkSync(schemaPath);
+  } catch {
+    // Best effort cleanup
   }
+}
 
-  /**
-   * Extract delta text from an item.updated event.
-   * Codex CLI uses `item.text` directly, while other formats use content blocks or `item.delta`.
-   */
-  private extractDeltaText(parsed: Record<string, unknown>): string | undefined {
-    const item = parsed.item as Record<string, unknown> | undefined;
-    if (!item) return undefined;
-    // Codex CLI format: item.text is a plain string (accumulated so far)
-    if (typeof item.text === 'string' && item.text) return item.text;
-    // Fallback: content block array
-    const content = item.content;
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block.type === 'text' && block.text) return block.text;
-      }
-    }
-    if (typeof item.delta === 'string') return item.delta;
+/**
+ * Extract token usage from Codex CLI turn.completed usage object.
+ */
+function extractUsage(usageObj: Record<string, number>): AgentExecutionUsage | undefined {
+  if (usageObj.input_tokens === undefined && usageObj.output_tokens === undefined) {
     return undefined;
   }
+  return {
+    inputTokens: usageObj.input_tokens ?? 0,
+    outputTokens: usageObj.output_tokens ?? 0,
+  };
+}
 
-  /**
-   * Extract final text from an item.completed event.
-   * Codex CLI uses `item.text` directly, while other formats use `item.content` blocks.
-   */
-  private extractItemText(parsed: Record<string, unknown>): string | undefined {
-    const item = parsed.item as Record<string, unknown> | undefined;
-    if (!item) return undefined;
-    // Codex CLI format: item.text is a plain string
-    if (typeof item.text === 'string' && item.text) return item.text;
-    // Fallback: content block array format
-    const content = item.content;
-    if (Array.isArray(content)) {
-      const parts: string[] = [];
-      for (const block of content) {
-        if (block.type === 'text' && block.text) parts.push(block.text);
-      }
-      return parts.length > 0 ? parts.join('') : undefined;
-    }
-    if (typeof content === 'string') return content;
-    return undefined;
-  }
+/**
+ * Extract the text of an item.updated event.
+ * Codex CLI uses `item.text` (the message so far); other shapes use content
+ * blocks or `item.delta`.
+ */
+function extractDeltaText(parsed: Record<string, unknown>): string | undefined {
+  const item = itemOf(parsed);
+  if (!item) return undefined;
+  if (typeof item.text === 'string' && item.text) return item.text;
 
-  /**
-   * Check stderr for patterns indicating fatal API errors.
-   * Returns an error message if fatal patterns are found, null otherwise.
-   */
-  private detectFatalStderrError(stderr: string): string | null {
-    for (const pattern of FATAL_STDERR_PATTERNS) {
-      if (pattern.test(stderr)) {
-        const lines = stderr.split('\n').filter((l) => l.trim());
-        const summary = lines.slice(0, 3).join(' | ').slice(0, 300);
-        return `Codex CLI exited 0 but fatal error detected in stderr: ${summary}`;
-      }
+  const content = item.content;
+  if (Array.isArray(content)) {
+    for (const block of content as { type?: string; text?: string }[]) {
+      if (block.type === 'text' && block.text) return block.text;
     }
-    return null;
   }
+  if (typeof item.delta === 'string') return item.delta;
+  return undefined;
+}
+
+/**
+ * Extract final text from an item.completed event.
+ * Codex CLI uses `item.text` directly, while other formats use `item.content` blocks.
+ */
+function extractItemText(parsed: Record<string, unknown>): string | undefined {
+  const item = itemOf(parsed);
+  if (!item) return undefined;
+  if (typeof item.text === 'string' && item.text) return item.text;
+
+  const content = item.content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content as { type?: string; text?: string }[]) {
+      if (block.type === 'text' && block.text) parts.push(block.text);
+    }
+    return parts.length > 0 ? parts.join('') : undefined;
+  }
+  if (typeof content === 'string') return content;
+  return undefined;
+}
+
+/**
+ * Summarise stderr when it explains an empty run.
+ * Returns null when stderr carries nothing recognisable.
+ */
+function diagnoseStderr(stderr: string): string | null {
+  for (const pattern of DIAGNOSTIC_STDERR_PATTERNS) {
+    if (pattern.test(stderr)) {
+      const lines = stderr.split('\n').filter((l) => l.trim());
+      const summary = lines
+        .slice(0, STDERR_SUMMARY_LINES)
+        .join(' | ')
+        .slice(0, STDERR_SUMMARY_CHARS);
+      return `Codex CLI exited without a result; stderr reports a fatal error: ${summary}`;
+    }
+  }
+  return null;
 }

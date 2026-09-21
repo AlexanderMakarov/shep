@@ -50,6 +50,14 @@
         "continue": {
           "name": "Continue",
           "disabled": "(בקרוב)"
+        },
+        "kimiCode": {
+          "name": "Kimi Code",
+          "description": "סוכן טרמינל Kimi Code CLI מבית Moonshot AI (מודלי Kimi K)"
+        },
+        "llmProxy": {
+          "name": "LLM Proxy",
+          "description": "פרוקסי מקומי תואם OpenAI (בדרך כלל בפורט 4000)"
         }
       }
     },

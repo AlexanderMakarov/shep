@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   Home,
@@ -100,7 +100,12 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const { t, i18n } = useTranslation('web');
   const pathname = usePathname();
-  const { state } = useSidebar();
+  const { state, setOpenMobile } = useSidebar();
+
+  // Close after navigation commits, including feature links and browser history.
+  useEffect(() => {
+    setOpenMobile(false);
+  }, [pathname, setOpenMobile]);
   const collapsed = state === 'collapsed';
   const { mounted: showExpanded, visible: expandedVisible } = useDeferredMount(collapsed, 200);
   const versionData = useVersion();
@@ -150,6 +155,8 @@ export function AppSidebar({
 
   return (
     <Sidebar
+      role="navigation"
+      aria-label="Shep"
       data-testid="app-sidebar"
       data-no-drawer-close
       collapsible="icon"

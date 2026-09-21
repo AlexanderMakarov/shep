@@ -213,7 +213,8 @@ pnpm test tests/integration/application/use-cases/contributors/contributor-onboa
 ## Related Documentation
 
 - `docs/architecture/agent-system.md`
-- `docs/development/adding-agents.md`
+- `docs/development/adding-agent-types.md`
+- `docs/development/adding-agent-nodes.md`
 - `specs/097-ai-native-contributor-onboarding/spec.yaml`
 
 ---

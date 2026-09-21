@@ -641,17 +641,18 @@ export function FeatureTreePageClient({
 
   return (
     <DeploymentStatusProvider initialDeployments={initialDeployments}>
-      <div data-testid="feature-tree-page" className="flex h-full flex-col gap-4">
+      <div data-testid="feature-tree-page" className="flex min-h-full min-w-0 flex-col gap-4">
         <PageHeader title="Inventory" description="All applications, repositories and features" />
 
         {/* Toolbar */}
         <div className="flex flex-col gap-3">
           {/* Row 1: Search + Group By + Filters toggle */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Search */}
-            <div className="relative flex-1">
+            <div className="relative min-w-48 flex-1">
               <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
               <Input
+                aria-label="Search inventory"
                 placeholder="Search by name, branch, or repository..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -659,6 +660,7 @@ export function FeatureTreePageClient({
               />
               {searchQuery ? (
                 <button
+                  aria-label="Clear search"
                   onClick={() => setSearchQuery('')}
                   className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2"
                 >
@@ -673,7 +675,7 @@ export function FeatureTreePageClient({
                 Group by:
               </span>
               <Select value={groupBy ?? '__none__'} onValueChange={handleGroupByChange}>
-                <SelectTrigger className="w-[150px]">
+                <SelectTrigger aria-label="Group by" className="w-[150px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -712,7 +714,7 @@ export function FeatureTreePageClient({
               >
                 <Inbox className="size-3.5" />
                 Active
-                <span className="opacity-70">({activeCount})</span>
+                <span className="opacity-100">({activeCount})</span>
               </button>
               <button
                 onClick={() => setArchiveFilter('archived')}
@@ -724,7 +726,7 @@ export function FeatureTreePageClient({
               >
                 <Archive className="size-3.5" />
                 Archived
-                <span className="opacity-70">({archivedCount})</span>
+                <span className="opacity-100">({archivedCount})</span>
               </button>
               <button
                 onClick={() => setArchiveFilter('all')}
@@ -808,7 +810,7 @@ export function FeatureTreePageClient({
               <div className="flex items-center gap-1.5">
                 <span className="text-muted-foreground text-xs font-medium">Sort by</span>
                 <Select value={itemSortField} onValueChange={setItemSortField}>
-                  <SelectTrigger className="h-7 w-[120px] text-xs">
+                  <SelectTrigger aria-label="Sort by" className="h-7 w-[120px] text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -845,7 +847,7 @@ export function FeatureTreePageClient({
                   value={repoFilter ?? '__all__'}
                   onValueChange={(v) => setRepoFilter(v === '__all__' ? null : v)}
                 >
-                  <SelectTrigger className="h-8 w-[200px] text-xs">
+                  <SelectTrigger aria-label="Repository" className="h-8 w-[200px] text-xs">
                     <SelectValue placeholder="All repositories" />
                   </SelectTrigger>
                   <SelectContent>
@@ -863,7 +865,7 @@ export function FeatureTreePageClient({
         </div>
 
         {/* Quick actions toolbar + results count */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-muted-foreground flex items-center gap-2 text-xs">
             <span>
               {applicationCount} app{applicationCount !== 1 ? 's' : ''} · {filteredFeatures.length}{' '}
@@ -875,7 +877,7 @@ export function FeatureTreePageClient({
               </Badge>
             ) : null}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Button
               variant="outline"
               size="sm"
@@ -947,6 +949,7 @@ export function FeatureTreePageClient({
             <EmptyState
               icon={<Search className="size-10" />}
               title="Nothing to show"
+              headingLevel={2}
               description={
                 hasActiveFilters
                   ? 'No applications or features match your current filters. Try adjusting your search or filters.'

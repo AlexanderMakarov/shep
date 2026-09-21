@@ -92,6 +92,7 @@ nsis:
 
 # Linux configuration
 linux:
+  executableName: 'shep'
   target:
     - target: 'AppImage'
       arch:

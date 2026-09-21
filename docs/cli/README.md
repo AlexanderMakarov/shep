@@ -6,7 +6,7 @@ Reference documentation for the Shep AI CLI presentation layer.
 
 The CLI is built with [Commander.js](https://github.com/tj/commander.js/) and follows Clean Architecture principles. Commands live in `src/presentation/cli/commands/`, UI utilities in `src/presentation/cli/ui/`, and the entry point is `src/presentation/cli/index.ts`.
 
-Bootstrap initializes the DI container (database + migrations), loads settings into the in-memory singleton, runs the onboarding wizard on first launch (TTY only), then configures Commander and parses arguments. The default action (no subcommand) starts the web UI daemon.
+Bootstrap initializes the DI container (database + migrations), loads settings into the singleton, initializes i18n for the CLI and TUI layers, then configures Commander and parses arguments. The default action (no subcommand) starts the web UI daemon and opens it in the browser — onboarding happens there, in the web UI, not in the terminal. (`shep feat new` has a separate TTY-only onboarding gate of its own.)
 
 ## Documents
 
@@ -14,7 +14,7 @@ Bootstrap initializes the DI container (database + migrations), loads settings i
 | -------------------------------------- | -------------------------------------------------------------------- |
 | [architecture.md](./architecture.md)   | Command structure, file organization, DI integration, error handling |
 | [design-system.md](./design-system.md) | Colors, symbols, formatters, messages, output formats, tables        |
-| [commands.md](./commands.md)           | Command reference with usage examples                                |
+| [commands.md](./commands.md)           | **Full command reference** — every command group, with usage examples |
 
 ## Quick Reference
 
@@ -32,49 +32,38 @@ src/presentation/cli/
     stop.command.ts                 # shep stop (daemon)
     restart.command.ts              # shep restart (daemon)
     status.command.ts               # shep status (daemon)
-    _serve.command.ts               # shep serve (hidden, internal)
+    _serve.command.ts               # shep _serve (hidden, internal daemon child)
     install.command.ts              # shep install
-    ide-open.command.ts             # shep ide-open
+    ide-open.command.ts             # shep ide  <- file name != command name
     tools.command.ts                # shep tools (group)
-    log-viewer.ts                   # Log viewing utility
-    settings/
-      index.ts                     # settings command group (wizard default)
-      show.command.ts              # shep settings show
-      init.command.ts              # shep settings init
-      agent.command.ts             # shep settings agent
-      ide.command.ts               # shep settings ide
-      workflow.command.ts          # shep settings workflow
-      model.command.ts             # shep settings model
-    feat/
-      index.ts                     # feat command group
-      new.command.ts               # shep feat new
-      ls.command.ts                # shep feat ls
-      show.command.ts              # shep feat show
-      del.command.ts               # shep feat del
-      resume.command.ts            # shep feat resume
-      review.command.ts            # shep feat review
-      approve.command.ts           # shep feat approve
-      reject.command.ts            # shep feat reject
-      logs.command.ts              # shep feat logs
-    agent/
-      index.ts                     # agent command group
-      ls.command.ts                # shep agent ls
-      show.command.ts              # shep agent show
-      stop.command.ts              # shep agent stop
-      logs.command.ts              # shep agent logs
-      delete.command.ts            # shep agent delete
-      approve.command.ts           # shep agent approve
-      reject.command.ts            # shep agent reject
-    repo/
-      index.ts                     # repo command group
-      ls.command.ts                # shep repo ls
-      show.command.ts              # shep repo show
-    session/
-      index.ts                     # session command group
-      ls.command.ts                # shep session ls
-      show.command.ts              # shep session show
+    doctor.command.ts               # shep doctor
+    review.command.ts               # shep review (group)
+    security.command.ts             # shep security (group)
+    mcp.command.ts                  # shep mcp
+    log-viewer.ts                   # Log viewing utility (not a command)
+    settings/                       # shep settings (group; bare `settings` = wizard)
+    feat/                           # shep feat (group)
+    agent/                          # shep agent (group, incl. message/ + questions/)
+    repo/                           # shep repo (group)
+    session/                        # shep session (group)
+    app/                            # shep app (group, incl. deploy/ git/ cloud-providers/)
+    cluster/                        # shep cluster (group)
+    dev/                            # shep dev (group, incl. plan sub-group)
+    project/                        # shep project (group)
+    item/                           # shep item (group)
+    cycle/                          # shep cycle (group)
+    intake/                         # shep intake (group)
+    notifications/                  # shep notifications (group, alias `notif`)
+    supervisor/                     # shep supervisor (group)
+    bedrock/                        # shep bedrock (group)
+    contributors/                   # shep contributors (group)
+    whatsapp/                       # shep whatsapp (group)
+    aspm/                           # shep aspm (group)
+    plugin/                         # shep plugin (group)
+    workflow/                       # shep workflow (group)
+    fleet/                          # shep fleet (group)
     daemon/
-      start-daemon.ts              # Daemon start logic
+      start-daemon.ts              # Daemon start logic (spawns `shep _serve`)
       stop-daemon.ts               # Daemon stop logic
   ui/
     index.ts                       # Barrel export
@@ -92,9 +81,12 @@ src/presentation/cli/
 
 ### Command Summary
 
+A frequently-used selection. The full surface — 36 top-level commands and groups
+— is documented in [commands.md](./commands.md).
+
 | Command                      | Description                                               |
 | ---------------------------- | --------------------------------------------------------- |
-| `shep`                       | Start daemon (or onboarding on first run)                 |
+| `shep`                       | Start the web UI daemon and open it in the browser        |
 | `shep start`                 | Start the web UI as a background daemon                   |
 | `shep stop`                  | Stop the running daemon                                   |
 | `shep restart`               | Restart the daemon                                        |
@@ -132,8 +124,11 @@ src/presentation/cli/
 | `shep settings ide`          | Configure preferred IDE                                   |
 | `shep settings workflow`     | Configure workflow defaults                               |
 | `shep settings model`        | Configure default LLM model                               |
+| `shep settings language`     | Configure display language                                |
+| `shep settings adaptive-models` | Configure per-task model tier routing                  |
 | `shep tools list`            | List available tools                                      |
 | `shep install`               | Install a development tool                                |
-| `shep ide-open`              | Open IDE for a repository                                 |
-| `shep run`                   | Run an AI agent workflow                                  |
+| `shep ide <feat-id>`         | Open a feature worktree in your IDE                       |
+| `shep run <agent-name>`      | Run an AI agent workflow                                  |
 | `shep upgrade`               | Upgrade Shep CLI                                          |
+| `shep doctor`                | Diagnose the local Shep contributor environment           |

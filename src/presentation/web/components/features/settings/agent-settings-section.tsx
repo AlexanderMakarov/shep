@@ -16,30 +16,33 @@ import {
 } from '@/components/ui/select';
 import { updateSettingsAction } from '@/app/actions/update-settings';
 import { AgentType, AgentAuthMethod } from '@shepai/core/domain/generated/output';
+import { listAgentDescriptors } from '@shepai/core/domain/shared/agent-catalog';
 import { getAgentTypeIcon } from '@/components/common/feature-node/agent-type-icons';
 import type { AgentConfig } from '@shepai/core/domain/generated/output';
 
-const AGENT_TYPE_OPTIONS = [
-  { value: AgentType.ClaudeCode, label: 'Claude Code' },
-  { value: AgentType.CodexCli, label: 'Codex CLI' },
-  { value: AgentType.CopilotCli, label: 'Copilot CLI' },
-  { value: AgentType.Cursor, label: 'Cursor' },
-  { value: AgentType.GeminiCli, label: 'Gemini CLI' },
-  { value: AgentType.Cline, label: 'Cline' },
-  { value: AgentType.OpenRouter, label: 'OpenRouter' },
-  { value: AgentType.TogetherAi, label: 'Together AI' },
-  { value: AgentType.Ollama, label: 'Ollama' },
-  { value: AgentType.Aider, label: 'Aider' },
-  { value: AgentType.Continue, label: 'Continue' },
-  { value: AgentType.LlmProxy, label: 'LLM Proxy' },
-  { value: AgentType.Dev, label: 'Dev' },
-];
+/**
+ * Selectable agents, derived from the domain catalog.
+ *
+ * This list used to be hand-maintained here and had drifted twice over: it
+ * never learned about `kimi-code`, and it offered Aider and Continue as plain
+ * enabled options even though both are `supported: false` and have no executor
+ * — picking either threw inside `AgentExecutorFactory.createExecutor()`.
+ */
+const AGENT_TYPE_OPTIONS = listAgentDescriptors().map((descriptor) => ({
+  value: descriptor.type,
+  label: descriptor.label,
+  supported: descriptor.supported,
+}));
 
 /** Agent types that only support session-based auth (no API token). */
 const SESSION_ONLY_AGENTS = new Set<AgentType>([AgentType.CopilotCli]);
 
 /** Agent types that require token-based auth (API key only, no CLI binary). */
-const TOKEN_REQUIRED_AGENTS = new Set<AgentType>([AgentType.OpenRouter, AgentType.TogetherAi]);
+const TOKEN_REQUIRED_AGENTS = new Set<AgentType>(
+  listAgentDescriptors()
+    .filter((descriptor) => descriptor.requiresToken)
+    .map((descriptor) => descriptor.type)
+);
 
 const AUTH_METHOD_OPTIONS = [
   { value: AgentAuthMethod.Session, label: 'Session' },
@@ -53,7 +56,7 @@ export interface AgentSettingsSectionProps {
 export function AgentSettingsSection({ agent }: AgentSettingsSectionProps) {
   const [agentType, setAgentType] = useState(agent.type);
   const [authMethod, setAuthMethod] = useState(agent.authMethod);
-  const [token, setToken] = useState(agent.token ?? '');
+  const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [showSaved, setShowSaved] = useState(false);
@@ -81,7 +84,13 @@ export function AgentSettingsSection({ agent }: AgentSettingsSectionProps) {
     const merged = { type: agentType, authMethod, ...overrides };
     const result: Record<string, unknown> = { type: merged.type, authMethod: merged.authMethod };
     if (merged.authMethod === AgentAuthMethod.Token) {
-      result.token = overrides.token ?? token;
+      // Write-only: the stored token is never sent to the browser, so an
+      // empty field means "leave it alone", not "clear it". Sending '' here
+      // would wipe the credential whenever the auth method is toggled.
+      const tokenUpdate = overrides.token ?? (token.trim().length > 0 ? token.trim() : undefined);
+      if (tokenUpdate !== undefined) {
+        result.token = tokenUpdate;
+      }
     }
     return { agent: result as AgentConfig };
   }
@@ -107,9 +116,9 @@ export function AgentSettingsSection({ agent }: AgentSettingsSectionProps) {
   }
 
   function handleTokenBlur() {
-    if (token !== (agent.token ?? '')) {
-      save(buildPayload({ token }));
-    }
+    const trimmed = token.trim();
+    if (trimmed.length === 0) return;
+    save(buildPayload({ token: trimmed }));
   }
 
   return (
@@ -141,10 +150,13 @@ export function AgentSettingsSection({ agent }: AgentSettingsSectionProps) {
               {AGENT_TYPE_OPTIONS.map((opt) => {
                 const Icon = getAgentTypeIcon(opt.value);
                 return (
-                  <SelectItem key={opt.value} value={opt.value}>
+                  <SelectItem key={opt.value} value={opt.value} disabled={!opt.supported}>
                     <span className="flex items-center gap-2">
                       <Icon className="h-4 w-4 shrink-0" />
                       {opt.label}
+                      {!opt.supported && (
+                        <span className="text-muted-foreground text-xs">(Coming Soon)</span>
+                      )}
                     </span>
                   </SelectItem>
                 );

@@ -201,9 +201,13 @@ describe('GitForkService', () => {
 
       await service.pushToFork('/repo', 'feat/my-branch');
 
-      expect(mockExec).toHaveBeenCalledWith('git', ['push', '-u', 'origin', 'feat/my-branch'], {
-        cwd: '/repo',
-      });
+      expect(mockExec).toHaveBeenCalledWith(
+        'git',
+        ['push', '-u', 'origin', '--', 'feat/my-branch'],
+        {
+          cwd: '/repo',
+        }
+      );
     });
 
     it('should throw PUSH_FAILED on error', async () => {

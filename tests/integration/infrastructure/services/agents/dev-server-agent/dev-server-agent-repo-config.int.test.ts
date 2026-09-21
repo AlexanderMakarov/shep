@@ -19,10 +19,14 @@
 
 import 'reflect-metadata';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DeploymentState, RunPlanSource, DeploymentTargetType } from '@/domain/generated/output.js';
-import { REPO_DEV_CONFIG_PATH } from '@/infrastructure/services/deployment/repo-dev-config-reader.js';
+import {
+  approveRepoDevConfig,
+  REPO_DEV_CONFIG_PATH,
+} from '@/infrastructure/services/deployment/repo-dev-config-reader.js';
 import {
   createHarness,
   makeNodeFixture,
@@ -53,10 +57,18 @@ const RUN_SUCCEEDED = 'dev-server agent run succeeded';
 describe('dev-server agent integration — committed .shep/dev.json (tier zero)', () => {
   let harness: DevServerAgentHarness;
   let savedSkipRecovery: string | undefined;
+  let savedShepHome: string | undefined;
+  let approvalHome: string;
 
   beforeEach(() => {
     savedSkipRecovery = process.env.SHEP_SKIP_RECOVERY;
     process.env.SHEP_SKIP_RECOVERY = '1';
+    // The committed command now needs explicit consent, and the consent record
+    // lives under the shep home — redirect it so these runs never write to the
+    // developer's real ~/.shep.
+    savedShepHome = process.env.SHEP_HOME;
+    approvalHome = mkdtempSync(join(tmpdir(), 'shep-dsa-approvals-'));
+    process.env.SHEP_HOME = approvalHome;
   });
 
   afterEach(async () => {
@@ -66,13 +78,26 @@ describe('dev-server agent integration — committed .shep/dev.json (tier zero)'
     } else {
       process.env.SHEP_SKIP_RECOVERY = savedSkipRecovery;
     }
+    if (savedShepHome === undefined) delete process.env.SHEP_HOME;
+    else process.env.SHEP_HOME = savedShepHome;
+    rmSync(approvalHome, { recursive: true, force: true });
   });
 
-  /** Write `.shep/dev.json` — `contents` may be a document or raw text. */
+  /**
+   * Write `.shep/dev.json` — `contents` may be a document or raw text — and
+   * record the user's approval of whatever it declares.
+   *
+   * The approval is per command fingerprint, so a scenario that EDITS the
+   * file approves the new command here too; that is the behaviour under test
+   * (an edit takes effect with no invalidation step) plus the consent the
+   * edit now requires. A malformed document has nothing to approve and the
+   * call is a no-op.
+   */
   function writeDevConfig(dir: string, contents: unknown): void {
     const filePath = join(dir, ...REPO_DEV_CONFIG_PATH.split('/'));
     mkdirSync(join(dir, '.shep'), { recursive: true });
     writeFileSync(filePath, typeof contents === 'string' ? contents : JSON.stringify(contents));
+    approveRepoDevConfig(dir);
   }
 
   it(

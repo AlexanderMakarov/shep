@@ -354,7 +354,7 @@ export function buildColumns({
     },
     ...(extraColumns ?? []),
     {
-      title: '',
+      title: '<span class="sr-only">Actions</span>',
       field: ACTIONS_COLUMN_FIELD,
       width: ACTIONS_COLUMN_WIDTH,
       headerSort: false,
@@ -556,13 +556,16 @@ export function FeatureTreeTable({
           }),
     });
 
-    table.on('renderComplete', () => {
+    const afterRender = () => {
+      // Tabulator makes the scroll holder focusable. Give that real grid child
+      // row-group semantics, rather than aria-owning its nested table twice.
+      container.removeAttribute('aria-owns');
+      container.querySelector('.tabulator-tableholder')?.setAttribute('role', 'rowgroup');
+      container.querySelector('.tabulator-table')?.setAttribute('role', 'presentation');
       onTableRenderRef.current?.(container);
-    });
-
-    table.on('tableBuilt', () => {
-      onTableRenderRef.current?.(container);
-    });
+    };
+    table.on('renderComplete', afterRender);
+    table.on('tableBuilt', afterRender);
 
     // Event delegation for (+) create-for-repo buttons in group headers
     const handleCreateClick = (e: MouseEvent) => {

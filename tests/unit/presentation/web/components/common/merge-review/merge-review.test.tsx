@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PrStatus, CiStatus } from '@shepai/core/domain/generated/output';
 import { MergeReview } from '@/components/common/merge-review/merge-review';
 import type { MergeReviewProps } from '@/components/common/merge-review/merge-review-config';
@@ -203,24 +203,125 @@ describe('MergeReview', () => {
   });
 
   describe('approve button', () => {
-    it('renders "Approve Merge" button that calls onApprove when Ctrl+Shift is held', () => {
+    it('renders a dedicated "Approve Merge" button needing no modifier keys', async () => {
       const onApprove = vi.fn();
       render(<MergeReview {...baseProps} onApprove={onApprove} />);
 
-      // Hold Ctrl+Shift to switch the single button into approve mode
-      fireEvent.keyDown(window, { key: 'Control' });
-      fireEvent.keyDown(window, { key: 'Shift' });
-      const button = screen.getByTestId('drawer-action-submit');
-      fireEvent.click(button);
+      const button = screen.getByTestId('drawer-action-approve');
+      expect(button).toHaveAccessibleName('Approve Merge');
 
-      expect(onApprove).toHaveBeenCalledTimes(1);
+      fireEvent.click(button);
+      fireEvent.click(screen.getByTestId('drawer-action-approve-confirm'));
+
+      await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(1));
+    });
+
+    it('confirms against the named branch and PR before merging (P0-4)', () => {
+      const props: MergeReviewProps = {
+        ...baseProps,
+        data: { ...baseProps.data, branch: { source: 'feat/login', target: 'main' } },
+      };
+      const onApprove = vi.fn();
+      render(<MergeReview {...props} onApprove={onApprove} />);
+
+      fireEvent.click(screen.getByTestId('drawer-action-approve'));
+
+      expect(onApprove).not.toHaveBeenCalled();
+      const dialog = screen.getByRole('alertdialog');
+      expect(dialog).toHaveTextContent('feat/login');
+      expect(dialog).toHaveTextContent('main');
+      expect(dialog).toHaveTextContent('#42');
     });
 
     it('disables approve button when isProcessing is true', () => {
       render(<MergeReview {...baseProps} isProcessing />);
 
-      const button = screen.getByTestId('drawer-action-submit');
-      expect(button).toBeDisabled();
+      expect(screen.getByTestId('drawer-action-approve')).toBeDisabled();
+    });
+  });
+
+  describe('merge conflicts (P1 — label must match behaviour)', () => {
+    const conflictProps: MergeReviewProps = {
+      ...baseProps,
+      data: {
+        ...baseProps.data,
+        pr: { ...basePr, mergeable: false },
+        branch: { source: 'feat/login', target: 'main' },
+      },
+    };
+
+    it('does not label a reject-with-feedback action "Resolve Conflicts"', () => {
+      render(<MergeReview {...conflictProps} />);
+
+      expect(screen.queryByRole('button', { name: 'Resolve Conflicts' })).not.toBeInTheDocument();
+    });
+
+    it('keeps the approve control honestly labelled when the PR has conflicts', () => {
+      render(<MergeReview {...conflictProps} />);
+
+      expect(screen.getByTestId('drawer-action-approve')).toHaveAccessibleName('Approve Merge');
+    });
+
+    it('offers an explicitly-labelled "ask the agent" action that sends feedback', () => {
+      const onReject = vi.fn();
+      const onApprove = vi.fn();
+      render(<MergeReview {...conflictProps} onReject={onReject} onApprove={onApprove} />);
+
+      const button = screen.getByTestId('merge-review-ask-agent-conflicts');
+      expect(button.textContent).toMatch(/agent/i);
+      fireEvent.click(button);
+
+      expect(onReject).toHaveBeenCalledWith('Resolve merge conflicts', []);
+      expect(onApprove).not.toHaveBeenCalled();
+    });
+
+    it('warns about the conflicts inside the approve confirmation', () => {
+      render(<MergeReview {...conflictProps} />);
+
+      fireEvent.click(screen.getByTestId('drawer-action-approve'));
+
+      expect(screen.getByRole('alertdialog')).toHaveTextContent(/conflict/i);
+    });
+
+    it('hides the ask-the-agent action in read-only mode', () => {
+      render(<MergeReview {...conflictProps} readOnly />);
+
+      expect(screen.queryByTestId('merge-review-ask-agent-conflicts')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('empty diff (P1)', () => {
+    it('renders an explicit empty state when fileDiffs is an empty array', () => {
+      const props: MergeReviewProps = {
+        ...baseProps,
+        data: { ...baseProps.data, fileDiffs: [] },
+      };
+      render(<MergeReview {...props} />);
+
+      const empty = screen.getByTestId('merge-review-empty-diff');
+      expect(empty).toBeInTheDocument();
+      expect(empty.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    });
+
+    it('renders the diff view, not the empty state, when fileDiffs has entries', () => {
+      const props: MergeReviewProps = {
+        ...baseProps,
+        data: {
+          ...baseProps.data,
+          fileDiffs: [
+            {
+              path: 'src/app.ts',
+              additions: 5,
+              deletions: 2,
+              status: 'modified',
+              hunks: [{ header: '@@ -1,3 +1,6 @@', lines: [] }],
+            },
+          ],
+        },
+      };
+      render(<MergeReview {...props} />);
+
+      expect(screen.queryByTestId('merge-review-empty-diff')).not.toBeInTheDocument();
     });
   });
 
@@ -373,7 +474,8 @@ describe('MergeReview', () => {
     it('hides DrawerActionBar when readOnly is true', () => {
       render(<MergeReview {...baseProps} readOnly />);
 
-      expect(screen.queryByTestId('drawer-action-submit')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('drawer-action-approve')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('drawer-action-reject')).not.toBeInTheDocument();
       expect(
         screen.queryByRole('textbox', { name: /ask ai to revise before merging/i })
       ).not.toBeInTheDocument();
@@ -382,13 +484,13 @@ describe('MergeReview', () => {
     it('shows DrawerActionBar when readOnly is false', () => {
       render(<MergeReview {...baseProps} readOnly={false} />);
 
-      expect(screen.getByTestId('drawer-action-submit')).toBeInTheDocument();
+      expect(screen.getByTestId('drawer-action-approve')).toBeInTheDocument();
     });
 
     it('shows DrawerActionBar when readOnly is undefined (default)', () => {
       render(<MergeReview {...baseProps} />);
 
-      expect(screen.getByTestId('drawer-action-submit')).toBeInTheDocument();
+      expect(screen.getByTestId('drawer-action-approve')).toBeInTheDocument();
     });
 
     it('displays "Merge History" header when readOnly is true', () => {

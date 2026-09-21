@@ -171,6 +171,11 @@ export function FeaturesCanvas({
       className="dark:bg-background pointer-events-auto relative h-full w-full bg-[#f6f7f8]"
     >
       <ReactFlow
+        // xyflow puts role="application" on its own wrapper, which makes a
+        // screen reader switch interaction mode. Naming the region tells the
+        // user what they just entered — same treatment as
+        // features/aspm/asset-risk-graph.
+        aria-label="Features canvas — repository and feature graph"
         nodes={enrichedNodes}
         edges={edges}
         nodeTypes={nodeTypes}

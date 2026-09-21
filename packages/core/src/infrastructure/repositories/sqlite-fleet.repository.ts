@@ -14,6 +14,7 @@
 
 import type Database from 'better-sqlite3';
 import { injectable } from 'tsyringe';
+import { normalizeRepositoryPath } from '../../domain/shared/repository-path.js';
 import type {
   IFleetRepository,
   FleetTriageFilters,
@@ -61,13 +62,24 @@ const EXCLUDED_LIFECYCLES: SdlcLifecycle[] = [SdlcLifecycle.Archived];
  * Runs with no feature row belong to no fleet and are therefore excluded when a
  * scope is supplied — but still counted by the unscoped metric.
  */
+/**
+ * The stored column, compared directly.
+ *
+ * This used to be `REPLACE(f.repository_path, char(92), '/')` so that Windows
+ * and Unix spellings of the same repository compared equal. Paths are now
+ * normalised on write (and existing rows back-filled by migration 144), so the
+ * compensation is unnecessary — and it was expensive: wrapping an indexed
+ * column in a function makes `idx_features_fleet_scope` unusable.
+ */
+const SCOPED_REPO_PATH = 'f.repository_path';
+
 const SCOPED_RUN_PREDICATE = `
     AND EXISTS (
       SELECT 1 FROM features f
       WHERE f.id = agent_runs.feature_id
         AND f.deleted_at IS NULL
         AND f.lifecycle NOT IN (${EXCLUDED_LIFECYCLES.map(() => '?').join(', ')})
-        AND REPLACE(f.repository_path, char(92), '/') = ?
+        AND ${SCOPED_REPO_PATH} = ?
     )`;
 
 interface FeatureRunRow {
@@ -108,20 +120,6 @@ interface CountRow {
   failed: number;
 }
 
-/**
- * Normalizes a path to forward slashes so Windows and Unix spellings of the
- * same repository compare equal.
- */
-function normalizePath(value: string): string {
-  return value.replace(/\\/g, '/');
-}
-
-/**
- * SQLite has no portable backslash literal; `char(92)` renders one on every
- * platform, which keeps the stored path comparison separator-agnostic.
- */
-const NORMALIZED_REPO_PATH = "REPLACE(f.repository_path, char(92), '/')";
-
 function toIsoString(epochMillis: number): string {
   return new Date(epochMillis).toISOString();
 }
@@ -152,8 +150,8 @@ export class SQLiteFleetRepository implements IFleetRepository {
   constructor(private readonly db: Database.Database) {}
 
   async getOverview(repositoryPath?: string): Promise<FleetOverview> {
-    const scope = repositoryPath ? normalizePath(repositoryPath) : undefined;
-    const scopeClause = scope ? ` AND ${NORMALIZED_REPO_PATH} = ?` : '';
+    const scope = repositoryPath ? normalizeRepositoryPath(repositoryPath) : undefined;
+    const scopeClause = scope ? ` AND ${SCOPED_REPO_PATH} = ?` : '';
     const scopeParams = scope ? [scope] : [];
     const excluded = EXCLUDED_LIFECYCLES.map(() => '?').join(', ');
 
@@ -229,8 +227,10 @@ export class SQLiteFleetRepository implements IFleetRepository {
   }
 
   async listTriageItems(filters?: FleetTriageFilters): Promise<FleetTriageItem[]> {
-    const scope = filters?.repositoryPath ? normalizePath(filters.repositoryPath) : undefined;
-    const scopeClause = scope ? ` AND ${NORMALIZED_REPO_PATH} = ?` : '';
+    const scope = filters?.repositoryPath
+      ? normalizeRepositoryPath(filters.repositoryPath)
+      : undefined;
+    const scopeClause = scope ? ` AND ${SCOPED_REPO_PATH} = ?` : '';
     const scopeParams = scope ? [scope] : [];
     const excluded = EXCLUDED_LIFECYCLES.map(() => '?').join(', ');
     const baseScope = `f.deleted_at IS NULL AND f.lifecycle NOT IN (${excluded})${scopeClause}`;
@@ -429,7 +429,7 @@ export class SQLiteFleetRepository implements IFleetRepository {
     repositoryPath?: string,
     windowMinutes = DEFAULT_WINDOW_MINUTES
   ): Promise<number> {
-    const scope = repositoryPath ? normalizePath(repositoryPath) : undefined;
+    const scope = repositoryPath ? normalizeRepositoryPath(repositoryPath) : undefined;
     const since = Date.now() - windowMinutes * MILLIS_PER_MINUTE;
     const rows = this.db
       .prepare(
@@ -455,7 +455,7 @@ export class SQLiteFleetRepository implements IFleetRepository {
     repositoryPath?: string,
     windowMinutes = DEFAULT_WINDOW_MINUTES
   ): Promise<{ totalCompleted: number; failedCount: number; failureRatePercent: number }> {
-    const scope = repositoryPath ? normalizePath(repositoryPath) : undefined;
+    const scope = repositoryPath ? normalizeRepositoryPath(repositoryPath) : undefined;
     const since = Date.now() - windowMinutes * MILLIS_PER_MINUTE;
     const row = this.db
       .prepare(

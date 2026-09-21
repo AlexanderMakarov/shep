@@ -1,0 +1,609 @@
+{
+  "run": "c0057de92075",
+  "implementationCommit": "653bc4179557935ffdcb81338a6777c9ad47f1b5",
+  "verified": [
+    {
+      "command": "pnpm test:unit",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/unit-delivery.log",
+      "sha256": "ff29b20f5f5b966ad2172a4f5cd3fde9f7935a8d862e2af9513a89ec0ba35c9e",
+      "result": "12631 passed",
+      "tail": [
+        "Not implemented: HTMLMediaElement's pause() method",
+        "Not implemented: HTMLMediaElement's pause() method",
+        "Not implemented: HTMLMediaElement's pause() method",
+        "Not implemented: HTMLMediaElement's pause() method",
+        "Not implemented: HTMLMediaElement's pause() method",
+        "Not implemented: HTMLMediaElement's pause() method",
+        "",
+        " Test Files  1062 passed (1062)",
+        "      Tests  12631 passed (12631)",
+        "   Start at  01:18:57",
+        "   Duration  111.05s (transform 131.89s, setup 206.93s, import 387.29s, tests 460.49s, environment 289.24s)",
+        ""
+      ]
+    },
+    {
+      "command": "pnpm test:int",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/integration-full.log",
+      "sha256": "ffbc76d72293ae2f02ab66d7517feed9e4daa4a37777fac24b75bba8411f1d24",
+      "result": "1749 passed",
+      "tail": [
+        " 13 |   - broken item with : colon ca ...",
+        " 14 | openQuestions: [",
+        " 15 | ",
+        "------^",
+        "[2026-09-20T21:56:51.230Z] [validate:spec.yaml] Validating spec.yaml",
+        "[2026-09-20T21:56:51.232Z] [validate:spec.yaml] Validation passed",
+        "",
+        " Test Files  152 passed (152)",
+        "      Tests  1749 passed (1749)",
+        "   Start at  00:55:51",
+        "   Duration  62.75s (transform 53.35s, setup 6.75s, import 94.77s, tests 759.88s, environment 25ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Playwright against isolated SHEP_HOME, all standard and new browser tests",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/browser-verified.log",
+      "sha256": "e6f1adb1506cbb45ce38ef8352f3ecd09c2b5dd3b3c5252bf269bf5ca3fbd33d",
+      "result": "73 passed",
+      "tail": [
+        "[63/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a control-center exposes usable controls in light",
+        "[64/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a application exposes usable controls in dark",
+        "[65/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a repository exposes usable controls in dark",
+        "[66/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a feature exposes usable controls in dark",
+        "[67/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a project exposes usable controls in dark",
+        "[68/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a pages exposes usable controls in dark",
+        "[69/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a project-settings exposes usable controls in dark",
+        "[70/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a work-item exposes usable controls in dark",
+        "[71/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a agent-editor exposes usable controls in dark",
+        "[72/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a security-inventory exposes usable controls in dark",
+        "[73/73] tests/e2e/web/ui-populated-experience.spec.ts:94:7 \u203a populated page accessibility \u203a control-center exposes usable controls in dark",
+        "  73 passed (5.4m)"
+      ]
+    },
+    {
+      "command": "npx tsc --noEmit",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/typecheck-verified.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": "exit 0",
+      "tail": []
+    },
+    {
+      "command": "pnpm typecheck:web",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/typecheck-web-verified.log",
+      "sha256": "e03a0e7bf25f40f975c155d1bad84a25901c377efc0623367aee018780d0eadf",
+      "result": "exit 0",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 typecheck:web /home/ben/Documents/ben-is-a-dev/shep",
+        "> pnpm --filter @shepai/web typecheck",
+        "",
+        "",
+        "> @shepai/web@0.0.0 typecheck /home/ben/Documents/ben-is-a-dev/shep/src/presentation/web",
+        "> tsc --noEmit",
+        ""
+      ]
+    },
+    {
+      "command": "pnpm lint",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/lint-verified.log",
+      "sha256": "9e1673d6b651e65ee5b89809dd9c31cedffa8d989b1a55078ebb9504b312f319",
+      "result": "exit 0",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 lint /home/ben/Documents/ben-is-a-dev/shep",
+        "> eslint . --max-warnings 0 --cache",
+        ""
+      ]
+    },
+    {
+      "command": "pnpm format:check",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/format-verified.log",
+      "sha256": "f6768c1e89025102b137dcad128e3a9743d285c4009a8235c7cd5ea15b5516c5",
+      "result": "All matched files use Prettier code style!",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 format:check /home/ben/Documents/ben-is-a-dev/shep",
+        "> prettier --check --cache .",
+        "",
+        "Checking formatting...",
+        "All matched files use Prettier code style!"
+      ]
+    },
+    {
+      "command": "pnpm build:storybook",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/storybook-verified.log",
+      "sha256": "01dc91f5966b945be4c32ff704ad677ba901b03fd505dfab451434bd1f900135",
+      "result": "Preview built",
+      "tail": [
+        "storybook-static/assets/axe-db5h3v6X.js                                             579.71 kB \u2502 gzip: 159.60 kB",
+        "storybook-static/assets/page-editor-v1CvzuY-.js                                     634.98 kB \u2502 gzip: 199.27 kB",
+        "storybook-static/assets/index-Dwz3ztE3.js                                           660.99 kB \u2502 gzip: 156.89 kB",
+        "storybook-static/assets/index-BcDFlkMo.js                                           891.75 kB \u2502 gzip: 276.47 kB",
+        "",
+        "(!) Some chunks are larger than 500 kB after minification. Consider:",
+        "- Using dynamic import() to code-split the application",
+        "- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks",
+        "- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.",
+        "\u2713 built in 1m 9s",
+        "info => Preview built (1.23 min)",
+        "info => Output directory: /home/ben/Documents/ben-is-a-dev/shep/storybook-static"
+      ]
+    },
+    {
+      "command": "node scripts/check-stories.mjs",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/stories-final.log",
+      "sha256": "924487c39a4399fab59617ba60039fb77bbe2d39523ebe9b71a8019c18ae3cf6",
+      "result": "273/340",
+      "tail": [
+        "Story coverage OK \u2014 273/340 components have stories (67 grandfathered)."
+      ]
+    },
+    {
+      "command": "pnpm spec:validate specs/115-review-and-experience-polish",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/spec-validate-verified.log",
+      "sha256": "85cd5ea0c04bc74cf74ee6962c5e36835db453ad3924046d1d2f61b2bb407333",
+      "result": "[PASS] consistency",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 spec:validate /home/ben/Documents/ben-is-a-dev/shep",
+        "> tsx scripts/spec-validate.ts specs/115-review-and-experience-polish",
+        "",
+        "[PASS] completeness",
+        "[PASS] architecture",
+        "[PASS] consistency"
+      ]
+    },
+    {
+      "command": "pnpm build:release",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/release-delivery.log",
+      "sha256": "02ec10a8c2948fddd0a36265c3da73f039a5cacb6402951bde9dfd238c597198",
+      "result": "exit 0",
+      "tail": [
+        "\u251c \u0192 /webhooks",
+        "\u2514 \u0192 /workflows",
+        "",
+        "",
+        "\u0192 Proxy (Middleware)",
+        "",
+        "\u0192  (Dynamic)  server-rendered on demand",
+        ""
+      ]
+    },
+    {
+      "command": "node dist/src/presentation/cli/index.js restart --port 4050",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/restart-delivery.log",
+      "sha256": "8df69a47168468f8d0f5551626981a83c79f02c2c0ae162349448c8f08b279ef",
+      "result": "Server ready at http://localhost:4050",
+      "tail": [
+        "\u2834 Starting server...",
+        "\u2826 Starting server...",
+        "\u2827 Starting server...",
+        "\u2807 Starting server...",
+        "\u280f Starting server...",
+        "                     ",
+        "\u2713 Server ready at http://localhost:4050",
+        ""
+      ]
+    },
+    {
+      "command": "Focused Control Center setup unit tests",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/setup-spacing-unit.log",
+      "sha256": "07b119cf72f2235c8dac5c47d96d0c61ba7d5cdefc23096868b7e70e471c37a4",
+      "result": "21 passed",
+      "tail": [
+        " RUN  v4.1.11 /home/ben/Documents/ben-is-a-dev/shep",
+        "",
+        "",
+        " Test Files  2 passed (2)",
+        "      Tests  21 passed (21)",
+        "   Start at  01:27:20",
+        "   Duration  2.33s (transform 368ms, setup 421ms, import 355ms, tests 1.82s, environment 653ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Production setup/status overlap geometry assertion",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/setup-clearance-green.log",
+      "sha256": "d816fe1688317a2e8cb977d84eba842e2c0d56452c90de664ed65611af7435e6",
+      "result": "22px clearance",
+      "tail": [
+        "{\"progress\":{\"x\":35,\"y\":112,\"width\":320,\"height\":3},\"badge\":{\"x\":249.984375,\"y\":60,\"width\":128.015625,\"height\":30},\"clearance\":22}"
+      ]
+    },
+    {
+      "command": "Production screenshots, image checks, axe, authenticated readiness and Settings navigation",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/production-smoke-delivery.log",
+      "sha256": "f95daf977c505eac21fe60e22b89fe068278f970d665636b1d4a1f7caa33a63a",
+      "result": "four views and two hostnames passed",
+      "tail": [
+        "See ui-production-smoke.json for structured results."
+      ]
+    },
+    {
+      "command": "npx tsc --noEmit",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/typecheck-delivery.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": "exit 0 after production build",
+      "tail": []
+    },
+    {
+      "command": "pnpm typecheck:web",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/typecheck-web-delivery.log",
+      "sha256": "e03a0e7bf25f40f975c155d1bad84a25901c377efc0623367aee018780d0eadf",
+      "result": "exit 0 after production build",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 typecheck:web /home/ben/Documents/ben-is-a-dev/shep",
+        "> pnpm --filter @shepai/web typecheck",
+        "",
+        "",
+        "> @shepai/web@0.0.0 typecheck /home/ben/Documents/ben-is-a-dev/shep/src/presentation/web",
+        "> tsc --noEmit",
+        ""
+      ]
+    },
+    {
+      "command": "pnpm lint",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/lint-delivery.log",
+      "sha256": "9e1673d6b651e65ee5b89809dd9c31cedffa8d989b1a55078ebb9504b312f319",
+      "result": "exit 0 after production build",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 lint /home/ben/Documents/ben-is-a-dev/shep",
+        "> eslint . --max-warnings 0 --cache",
+        ""
+      ]
+    },
+    {
+      "command": "pnpm format:check",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/format-delivery.log",
+      "sha256": "f6768c1e89025102b137dcad128e3a9743d285c4009a8235c7cd5ea15b5516c5",
+      "result": "exit 0 after production build",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 format:check /home/ben/Documents/ben-is-a-dev/shep",
+        "> prettier --check --cache .",
+        "",
+        "Checking formatting...",
+        "All matched files use Prettier code style!"
+      ]
+    },
+    {
+      "command": "pnpm spec:validate specs/115-review-and-experience-polish",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/spec-validate-delivery.log",
+      "sha256": "85cd5ea0c04bc74cf74ee6962c5e36835db453ad3924046d1d2f61b2bb407333",
+      "result": "exit 0 after production build",
+      "tail": [
+        "",
+        "> @shepai/cli@1.228.3 spec:validate /home/ben/Documents/ben-is-a-dev/shep",
+        "> tsx scripts/spec-validate.ts specs/115-review-and-experience-polish",
+        "",
+        "[PASS] completeness",
+        "[PASS] architecture",
+        "[PASS] consistency"
+      ]
+    },
+    {
+      "command": "node scripts/check-stories.mjs",
+      "phase": "green",
+      "log": ".coding-agent/runs/c0057de92075/stories-delivery.log",
+      "sha256": "924487c39a4399fab59617ba60039fb77bbe2d39523ebe9b71a8019c18ae3cf6",
+      "result": "exit 0 after production build",
+      "tail": [
+        "Story coverage OK \u2014 273/340 components have stories (67 grandfathered)."
+      ]
+    }
+  ],
+  "redPhaseEvidence": [
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-shared-ui.log",
+      "sha256": "ed8c22a14af617ff4afbf09ad633d4afe8c00d52201868616a073e50cac271e3",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "       |                                         ^",
+        "     61|     expect(screen.getByRole('main')).toHaveAttribute('id', 'main-conte\u2026",
+        "     62|   });",
+        "",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af",
+        "",
+        "",
+        " Test Files  2 failed (2)",
+        "      Tests  3 failed | 3 passed (6)",
+        "   Start at  00:05:35",
+        "   Duration  1.38s (transform 430ms, setup 397ms, import 613ms, tests 356ms, environment 694ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-slider.log",
+      "sha256": "3911bade066ed35f1090561b07607104d83d936085ca22ed173d48eee60f320c",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "       |                           ^",
+        "     11|     expect(slider).toHaveAttribute('aria-valuetext', '30m');",
+        "     12|     slider.focus();",
+        "",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af",
+        "",
+        "",
+        " Test Files  1 failed (1)",
+        "      Tests  1 failed (1)",
+        "   Start at  00:21:33",
+        "   Duration  848ms (transform 100ms, setup 201ms, import 129ms, tests 113ms, environment 316ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-tools.log",
+      "sha256": "0fb322f276f61aab8331adefbd7a75cde3ced0c1388ea12910e1f860c6860738",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "       |           ^",
+        "     42|     expect(screen.getByRole('button', { name: 'Launch VS Code' })).not\u2026",
+        "     43|     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();",
+        "",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af",
+        "",
+        "",
+        " Test Files  1 failed (1)",
+        "      Tests  3 failed (3)",
+        "   Start at  00:12:39",
+        "   Duration  1.84s (transform 111ms, setup 170ms, import 155ms, tests 1.17s, environment 263ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-welcome.log",
+      "sha256": "446eb39e09ae3e42ce203513f43ec7319d7b93a626ba673631a3721acd5257fd",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        " \u276f runWithExpensiveErrorDiagnosticsDisabled node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:47:12",
+        " \u276f checkCallback node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/wait-for.js:124:77",
+        " \u276f Timeout.checkRealTimersCallback node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/wait-for.js:118:16",
+        "",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/2]\u23af",
+        "",
+        "",
+        " Test Files  1 failed (1)",
+        "      Tests  2 failed | 15 passed (17)",
+        "   Start at  00:19:38",
+        "   Duration  3.09s (transform 150ms, setup 226ms, import 145ms, tests 2.23s, environment 384ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-recovery.log",
+      "sha256": "281f24bab8fd79787905493a498356632ee1b1a173499eaa8a6a153e4842ac7b",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "The latest test that might've caused the error is \"preserves scope and announces a failed scope change\". It might mean one of the following:",
+        "- The error was thrown, while Vitest was running this test.",
+        "- If the error occurred after the test had been completed, this was the last documented test before it was thrown.",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af",
+        "",
+        "",
+        " Test Files  2 failed (2)",
+        "      Tests  7 failed | 8 passed (15)",
+        "     Errors  4 errors",
+        "   Start at  00:32:40",
+        "   Duration  4.20s (transform 348ms, setup 381ms, import 410ms, tests 5.65s, environment 544ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/memory-red-and-ui-green.log",
+      "sha256": "2aee9d4787d47daf49877ffbcecfc66525f2087be69b720f8ea757a705c10ed9",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "       |                   ^",
+        "     52|   });",
+        "     53|",
+        "",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af",
+        "",
+        "",
+        " Test Files  1 failed | 2 passed (3)",
+        "      Tests  1 failed | 25 passed (26)",
+        "   Start at  00:23:31",
+        "   Duration  2.23s (transform 324ms, setup 458ms, import 448ms, tests 2.01s, environment 834ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-picker-webhooks.log",
+      "sha256": "3597f338e47d5edda6fdec7874af8f8a90906735de679f42a84f968b05464f74",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "The latest test that might've caused the error is \"preserves data and offers refresh after a transport failure\". It might mean one of the following:",
+        "- The error was thrown, while Vitest was running this test.",
+        "- If the error occurred after the test had been completed, this was the last documented test before it was thrown.",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af",
+        "",
+        "",
+        " Test Files  2 failed (2)",
+        "      Tests  3 failed | 6 passed (9)",
+        "     Errors  2 errors",
+        "   Start at  00:51:15",
+        "   Duration  3.01s (transform 441ms, setup 440ms, import 560ms, tests 3.42s, environment 613ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/error-contrast-red.log",
+      "sha256": "7cab502e97b3e970f798a193909a7d8d385c80b4faa838d49aeb8c697b1921b3",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "       |         ^",
+        "    103|     });",
+        "    104|   }",
+        "",
+        "\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/4]\u23af",
+        "",
+        "",
+        " Test Files  1 failed (1)",
+        "      Tests  4 failed | 15 passed (19)",
+        "   Start at  01:05:31",
+        "   Duration  568ms (transform 82ms, setup 178ms, import 12ms, tests 8ms, environment 284ms)",
+        ""
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-mobile-navigation.log",
+      "sha256": "75eb56b694c2c9b3932070907e3600a80fb857c8e1d9a5f9a6e9498865986af3",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "",
+        "    attachment #3: trace (application/zip) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "    .coding-agent/runs/c0057de92075/playwright-results/ui-experience-web-experien-e05a4-out-losing-the-current-page/trace.zip",
+        "    Usage:",
+        "",
+        "        pnpm exec playwright show-trace .coding-agent/runs/c0057de92075/playwright-results/ui-experience-web-experien-e05a4-out-losing-the-current-page/trace.zip",
+        "",
+        "    \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "",
+        "",
+        "  1 failed",
+        "    tests/e2e/web/ui-experience.spec.ts:6:3 \u203a web experience regressions \u203a phone navigation opens and closes without losing the current page "
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-mobile-route-close.log",
+      "sha256": "0a1a26cbde7a48d3479372d457ae724c43cfeb06e97305580dda88be8b9aaa8a",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "",
+        "    attachment #3: trace (application/zip) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "    .coding-agent/runs/c0057de92075/playwright-results/ui-experience-web-experien-efc86-after-following-a-page-link/trace.zip",
+        "    Usage:",
+        "",
+        "        pnpm exec playwright show-trace .coding-agent/runs/c0057de92075/playwright-results/ui-experience-web-experien-efc86-after-following-a-page-link/trace.zip",
+        "",
+        "    \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "",
+        "",
+        "  1 failed",
+        "    tests/e2e/web/ui-experience.spec.ts:33:3 \u203a web experience regressions \u203a phone navigation closes after following a page link "
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-mobile-groups.log",
+      "sha256": "54363c278dc21c5e7636bfbd8aa08a08bb86f13aa248f26de5425571e864ff26",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "",
+        "    attachment #3: trace (application/zip) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "    .coding-agent/runs/c0057de92075/playwright-results/ui-experience-web-experien-5b445-e-desktop-sidebar-collapsed/trace.zip",
+        "    Usage:",
+        "",
+        "        pnpm exec playwright show-trace .coding-agent/runs/c0057de92075/playwright-results/ui-experience-web-experien-5b445-e-desktop-sidebar-collapsed/trace.zip",
+        "",
+        "    \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "",
+        "",
+        "  1 failed",
+        "    tests/e2e/web/ui-experience.spec.ts:44:3 \u203a web experience regressions \u203a phone navigation can expand groups even with the desktop sidebar collapsed "
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-mobile-workspaces.log",
+      "sha256": "2ebd6421133bd6abd8efb94ea56e3caa1e71318a74265f49140c1d602bfbbfde",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "    attachment #3: trace (application/zip) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "    .coding-agent/runs/c0057de92075/playwright-results/ui-populated-experience-po-48cf7-t-view-controls-fit-a-phone/trace.zip",
+        "    Usage:",
+        "",
+        "        pnpm exec playwright show-trace .coding-agent/runs/c0057de92075/playwright-results/ui-populated-experience-po-48cf7-t-view-controls-fit-a-phone/trace.zip",
+        "",
+        "    \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "",
+        "",
+        "  2 failed",
+        "    tests/e2e/web/ui-populated-experience.spec.ts:12:3 \u203a populated page accessibility \u203a application panes use the full phone width and switch without losing state ",
+        "    tests/e2e/web/ui-populated-experience.spec.ts:29:3 \u203a populated page accessibility \u203a all project view controls fit a phone "
+      ]
+    },
+    {
+      "command": "Focused regression before its repair",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/red-populated-controls.log",
+      "sha256": "56abf6611aee6c97ab552f033e8c870c11c87a053f06ff316a36b540fb95e9b0",
+      "result": "Observed failure before repair; see recorded log excerpt",
+      "tail": [
+        "[8/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a agent-editor exposes usable controls in light",
+        "[9/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a application exposes usable controls in dark",
+        "[10/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a repository exposes usable controls in dark",
+        "[11/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a feature exposes usable controls in dark",
+        "[12/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a project exposes usable controls in dark",
+        "[13/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a pages exposes usable controls in dark",
+        "[14/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a project-settings exposes usable controls in dark",
+        "[15/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a work-item exposes usable controls in dark",
+        "[16/16] tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a agent-editor exposes usable controls in dark",
+        "  1 failed",
+        "    tests/e2e/web/ui-populated-experience.spec.ts:12:7 \u203a populated page accessibility \u203a application exposes usable controls in light ",
+        "  15 did not run"
+      ]
+    },
+    {
+      "command": "Production setup/status overlap geometry assertion",
+      "phase": "red",
+      "log": ".coding-agent/runs/c0057de92075/setup-clearance-red.log",
+      "sha256": "884396d959c3ee69e4e445f89ad1de5d2e27c515a2277bef469e7355eb06f2ef",
+      "result": "Observed 10px overlap before correction",
+      "tail": [
+        "{\"progress\":{\"x\":35,\"y\":80,\"width\":320,\"height\":3},\"badge\":{\"x\":249.984375,\"y\":60,\"width\":128.015625,\"height\":30},\"clearance\":-10}",
+        "A [Error]: expect(received).toBeGreaterThanOrEqual(expected)",
+        "",
+        "Expected: >= 98",
+        "Received:    80"
+      ]
+    }
+  ],
+  "fullSuiteImplementationCommit": "e07d64896fabada54089e6ab8d68c20164e05b8b"
+}

@@ -128,6 +128,11 @@ export class SQLiteRemediationCampaignRepository implements IRemediationCampaign
       values.push(fields.dueDate ? (fields.dueDate as Date).getTime() : null);
     }
 
+    // IMMEDIATE, not the default deferred: this transaction READS the audit log
+    // and then writes it back. A deferred transaction takes its read snapshot
+    // before it acquires the write lock, so a writer that commits in between
+    // turns the whole append into SQLITE_BUSY_SNAPSHOT — an error busy_timeout
+    // does NOT retry, because retrying would write from a stale snapshot.
     const tx = this.db.transaction(() => {
       const row = this.db
         .prepare('SELECT audit_log FROM remediation_campaigns WHERE id = ? AND deleted_at IS NULL')
@@ -146,7 +151,7 @@ export class SQLiteRemediationCampaignRepository implements IRemediationCampaign
         )
         .run(...values);
     });
-    tx();
+    tx.immediate();
   }
 
   async updateStatus(
@@ -154,6 +159,11 @@ export class SQLiteRemediationCampaignRepository implements IRemediationCampaign
     status: CampaignStatus,
     auditEntry: CampaignAuditEntry
   ): Promise<void> {
+    // IMMEDIATE, not the default deferred: this transaction READS the audit log
+    // and then writes it back. A deferred transaction takes its read snapshot
+    // before it acquires the write lock, so a writer that commits in between
+    // turns the whole append into SQLITE_BUSY_SNAPSHOT — an error busy_timeout
+    // does NOT retry, because retrying would write from a stale snapshot.
     const tx = this.db.transaction(() => {
       const row = this.db
         .prepare('SELECT audit_log FROM remediation_campaigns WHERE id = ? AND deleted_at IS NULL')
@@ -173,7 +183,7 @@ export class SQLiteRemediationCampaignRepository implements IRemediationCampaign
         )
         .run(status, closedAt, JSON.stringify(audit), now, id);
     });
-    tx();
+    tx.immediate();
   }
 
   async softDelete(id: string): Promise<void> {

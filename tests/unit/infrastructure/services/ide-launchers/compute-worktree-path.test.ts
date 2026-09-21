@@ -63,4 +63,23 @@ describe('computeWorktreePath', () => {
     const result2 = computeWorktreePath('/home/user/project', 'feat/test');
     expect(result1).toBe(result2);
   });
+
+  describe('shell-unsafe branch names (C6)', () => {
+    it('never puts a shell metacharacter in the worktree path', () => {
+      const result = computeWorktreePath('/repo', 'feat/x$(touch proof)');
+
+      expect(result).not.toMatch(/[$()`;&|<>'"\s]/);
+    });
+
+    it('keeps the slug inside the safe character set', () => {
+      const result = computeWorktreePath('/repo', 'feat/a b;c&d');
+      const slug = result.slice(result.lastIndexOf('/') + 1);
+
+      expect(slug).toMatch(/^[A-Za-z0-9._-]+$/);
+    });
+
+    it('leaves ordinary branch names byte-identical', () => {
+      expect(computeWorktreePath('/repo', 'feat/my-feature')).toContain('wt/feat-my-feature');
+    });
+  });
 });

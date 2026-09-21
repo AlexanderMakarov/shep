@@ -2,17 +2,60 @@
  * E2E: Messaging remote control settings section.
  *
  * Exercises the Telegram/WhatsApp pairing flow in the web UI against a
- * real Next.js dev server. The pairing code is generated server-side by
- * BeginMessagingPairingUseCase and persisted in settings, so we do not
- * need to stub any network calls.
+ * real Next.js dev server and a local gateway fixture. The server performs
+ * real OAuth/route HTTP requests and persists the pairing code in settings.
  */
 
 import { test, expect } from '@playwright/test';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { COLD_ROUTE_READY_TIMEOUT_MS, COLD_ROUTE_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 test.describe('messaging settings', () => {
   // Lands on /settings, which may still be compiling on a cold runner.
   test.describe.configure({ timeout: COLD_ROUTE_TEST_TIMEOUT_MS });
+
+  let gateway: ReturnType<typeof createServer>;
+  let gatewayUrl: string;
+
+  test.beforeAll(async () => {
+    gateway = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      if (request.method === 'POST' && request.url === '/oauth/token') {
+        response.end(JSON.stringify({ access_token: 'e2e-gateway-access', expires_in: 3600 }));
+        return;
+      }
+      if (
+        request.method === 'POST' &&
+        request.url === '/gateway/v1/integrations/routes' &&
+        request.headers.authorization === 'Bearer e2e-gateway-access'
+      ) {
+        response.end(
+          JSON.stringify({
+            route: { route_id: 'e2e-route' },
+            route_token: 'e2e-route-token',
+            public_url: `${gatewayUrl}/integrations/e2e-route/e2e-route-token`,
+          })
+        );
+        return;
+      }
+      response.writeHead(404).end(JSON.stringify({ error: 'Unexpected gateway request' }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      gateway.once('error', reject);
+      gateway.listen(0, '127.0.0.1', resolve);
+    });
+    gatewayUrl = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
+  });
+
+  test.afterAll(async () => {
+    if (!gateway) return;
+    gateway.closeAllConnections();
+    await new Promise<void>((resolve, reject) => {
+      gateway.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
 
   test('enables messaging, sets gateway URL, pairs telegram, then disconnects', async ({
     page,
@@ -32,7 +75,7 @@ test.describe('messaging settings', () => {
 
     // Gateway URL
     const gatewayInput = page.getByTestId('input-gateway-url');
-    await gatewayInput.fill('https://gateway.example.com');
+    await gatewayInput.fill(gatewayUrl);
     await gatewayInput.blur();
 
     // Start Telegram pairing
@@ -85,11 +128,15 @@ test.describe('messaging settings', () => {
       await enableSwitch.click();
     }
 
-    await page.getByTestId('input-gateway-url').fill('not a url');
-    // Don't blur (would trigger a save error toast) — click pair directly
+    const gatewayInput = page.getByTestId('input-gateway-url');
+    await gatewayInput.fill('not a url');
     await page.getByTestId('btn-telegram-pair').click();
 
-    // The pairing dialog should NOT appear
+    // Observe the handler's rejection before asserting that no dialog opened.
+    await expect(
+      page.getByText('Set a valid Gateway URL before pairing', { exact: true })
+    ).toBeVisible();
+    await expect(gatewayInput).toHaveValue('not a url');
     await expect(page.getByTestId('messaging-pairing-dialog')).toBeHidden();
   });
 });

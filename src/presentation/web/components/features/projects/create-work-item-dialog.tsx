@@ -103,9 +103,9 @@ export function CreateWorkItemDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>State</Label>
+              <Label htmlFor="work-item-state">State</Label>
               <Select value={stateId} onValueChange={setStateId}>
-                <SelectTrigger data-testid="work-item-state-select">
+                <SelectTrigger id="work-item-state" data-testid="work-item-state-select">
                   <SelectValue placeholder="Default" />
                 </SelectTrigger>
                 <SelectContent>
@@ -118,9 +118,9 @@ export function CreateWorkItemDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Priority</Label>
+              <Label htmlFor="work-item-priority">Priority</Label>
               <Select value={priority} onValueChange={setPriority}>
-                <SelectTrigger data-testid="work-item-priority-select">
+                <SelectTrigger id="work-item-priority" data-testid="work-item-priority-select">
                   <SelectValue placeholder="None" />
                 </SelectTrigger>
                 <SelectContent>

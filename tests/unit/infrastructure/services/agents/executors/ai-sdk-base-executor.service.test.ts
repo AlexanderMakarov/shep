@@ -127,6 +127,38 @@ describe('AiSdkBaseExecutorService', () => {
       expect(model.doGenerateCalls).toHaveLength(1);
     });
 
+    // ── A truncated response is not a completed response ────────────────
+    it('rejects when the model stopped because it hit the token limit', async () => {
+      const truncated = makeGenerateResult('Half an answer, cut off mid-');
+      const model = new MockLanguageModelV3({
+        doGenerate: { ...truncated, finishReason: { unified: 'length' as const, raw: undefined } },
+      });
+      const executor = new TestSdkExecutor('test-key', model);
+
+      await expect(executor.execute('Write a very long thing')).rejects.toThrow(/truncat/i);
+    });
+
+    it('names the provider in the truncation error', async () => {
+      const truncated = makeGenerateResult('cut off');
+      const model = new MockLanguageModelV3({
+        doGenerate: { ...truncated, finishReason: { unified: 'length' as const, raw: undefined } },
+      });
+      const executor = new TestSdkExecutor('test-key', model);
+
+      await expect(executor.execute('Prompt')).rejects.toThrow(/TestProvider/);
+    });
+
+    it('resolves normally when the model stopped on its own', async () => {
+      const model = new MockLanguageModelV3({
+        doGenerate: makeGenerateResult('A complete answer'),
+      });
+      const executor = new TestSdkExecutor('test-key', model);
+
+      await expect(executor.execute('Prompt')).resolves.toMatchObject({
+        result: 'A complete answer',
+      });
+    });
+
     it('maps AI SDK usage to AgentExecutionUsage', async () => {
       const model = new MockLanguageModelV3({
         doGenerate: makeGenerateResult('Response', {

@@ -31,6 +31,19 @@ interface Size {
 
 const STORAGE_KEY = 'shep-global-chat';
 
+/**
+ * Elements a keyboard user can reach inside the panel, in document order.
+ * Used for the focus trap the maximized (genuinely modal) panel installs.
+ */
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
 function loadPersistedState(): { pos: Position | null; size: Size | null } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -107,9 +120,15 @@ export function GlobalChatPopup() {
     startH: number;
   } | null>(null);
 
+  // What to hand focus back to when the panel closes (normally the FAB).
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
   const toggle = useCallback(() => {
     setIsOpen((prev) => {
-      if (!prev) setHasOpened(true);
+      if (!prev) {
+        restoreFocusRef.current = document.activeElement as HTMLElement | null;
+        setHasOpened(true);
+      }
       return !prev;
     });
   }, []);
@@ -269,6 +288,64 @@ export function GlobalChatPopup() {
     setIsMaximized(false);
   }, []);
 
+  // ── Dialog behaviour ───────────────────────────────────────────────────
+  //
+  // The panel is a hand-rolled overlay (it is draggable, resizable and
+  // position-persisted, none of which survives being handed to the Radix
+  // dialog/sheet primitives), so it has to provide dialog behaviour itself:
+  // Escape closes it, focus moves into it on open and back out on close,
+  // and while maximized — the one state where it really is modal — focus
+  // is contained.
+
+  // Escape closes, like any dialog.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      handleClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isOpen, handleClose]);
+
+  // Move focus into the panel on open, and back to the opener on close.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+
+    if (isOpen) {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const input = panel.querySelector<HTMLTextAreaElement>('textarea');
+      (input ?? panel.querySelector<HTMLElement>(FOCUSABLE_SELECTOR))?.focus();
+      return;
+    }
+    if (wasOpen) restoreFocusRef.current?.focus();
+  }, [isOpen]);
+
+  // Contain Tab within the panel while it covers the page.
+  const handlePanelKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key !== 'Tab' || !isMaximized) return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      const outside = !active || !panel.contains(active);
+
+      if (e.shiftKey ? active === first || outside : active === last || outside) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      }
+    },
+    [isMaximized]
+  );
+
   // Compute panel style — maximized overrides everything
   const panelStyle: React.CSSProperties = isMaximized
     ? {}
@@ -291,6 +368,17 @@ export function GlobalChatPopup() {
       {hasOpened ? (
         <div
           ref={panelRef}
+          data-slot="global-chat-panel"
+          role="dialog"
+          // Only the maximized panel covers the page; the floating one leaves
+          // the rest of the app usable, and claiming otherwise would hide the
+          // whole application from a screen reader.
+          aria-modal={isMaximized ? 'true' : 'false'}
+          aria-label={t('chat.shepChat')}
+          // Mounted-but-closed: keep it out of the a11y tree AND the tab order.
+          aria-hidden={!isOpen}
+          inert={!isOpen}
+          onKeyDown={handlePanelKeyDown}
           className={cn(
             isMaximized
               ? 'bg-background fixed inset-0 z-[60] flex flex-col overflow-hidden dark:bg-neutral-900'
@@ -414,6 +502,9 @@ export function GlobalChatPopup() {
           <Button
             size="icon"
             onClick={toggle}
+            aria-label={t('chat.shepChat')}
+            aria-haspopup="dialog"
+            aria-expanded={isOpen}
             className={cn(
               'relative h-14 w-14 rounded-full shadow-lg',
               'transition-all duration-200 hover:scale-105 hover:shadow-xl active:scale-95',

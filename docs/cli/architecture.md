@@ -7,9 +7,9 @@ Entry point: `src/presentation/cli/index.ts`
 The `bootstrap()` function runs four sequential steps:
 
 1. **Initialize DI container** -- `initializeContainer()` opens SQLite, runs migrations, registers repositories and use cases. Exposes the container on `globalThis.__shepContainer` for the web UI's server-side code.
-2. **Initialize settings** -- Resolves `InitializeSettingsUseCase` from the container, executes it to load/create settings, then calls `initializeSettings(settings)` to populate the in-memory singleton.
-3. **First-run onboarding gate** -- If running in an interactive TTY and onboarding is not complete, launches the onboarding wizard (`onboardingWizard()`). The wizard is lazy-imported to avoid startup cost when already complete.
-4. **Configure Commander** -- Creates the root `Command('shep')`, registers subcommands, calls `program.parseAsync()`. The default action (no subcommand) starts the daemon via `startDaemon()`.
+2. **Initialize settings** -- Resolves `InitializeSettingsUseCase` from the container, executes it to load/create settings, then calls `initializeSettings(settings)` to populate the singleton.
+3. **Initialize i18n** -- Reads `settings.user.preferredLanguage` (default `en`) and initializes the CLI and TUI translation layers in parallel. Failure here is non-fatal: the CLI falls back to English rather than refusing to start.
+4. **Configure Commander** -- Creates the root `Command('shep')` with the name, description and version from `IVersionService`, registers subcommands, calls `program.parseAsync()`. The default action (no subcommand) starts the daemon via `startDaemon()`.
 
 ```typescript
 async function bootstrap() {
@@ -20,19 +20,16 @@ async function bootstrap() {
   const settings = await initializeSettingsUseCase.execute();
   initializeSettings(settings);
 
-  // First-run onboarding gate (TTY only)
-  if (process.stdin.isTTY) {
-    const onboardingCheck = new CheckOnboardingStatusUseCase();
-    const { isComplete } = await onboardingCheck.execute();
-    if (!isComplete) {
-      const { onboardingWizard } = await import('../tui/wizards/onboarding/onboarding.wizard.js');
-      await onboardingWizard();
-    }
-  }
+  const language = getSettings().user?.preferredLanguage ?? 'en';
+  await Promise.all([initCliI18n(language), initTuiI18n(language)]);
+
+  const versionService = container.resolve<IVersionService>('IVersionService');
+  const { version, description } = versionService.getVersion();
 
   const program = new Command()
     .name('shep')
-    .version(version, '-v, --version')
+    .description(description)
+    .version(version, '-v, --version', 'Display version number')
     .action(async () => {
       await startDaemon();
     });
@@ -43,6 +40,13 @@ async function bootstrap() {
   await program.parseAsync();
 }
 ```
+
+**There is no onboarding gate in `bootstrap()`.** The bare `shep` default action
+calls `startDaemon()` and nothing else; first-run onboarding is completed in the
+web UI, which `startDaemon()` opens in the browser once the server is ready.
+`shep feat new` has its own, separate TTY-only onboarding gate
+(`feat/new.command.ts`) that runs `onboardingWizard()` before creating a
+feature — that gate is specific to that command.
 
 `reflect-metadata` is imported at the very top of the file (before any other imports) as required by tsyringe.
 
@@ -70,60 +74,55 @@ export function createXxxCommand(): Command {
 
 ### File Organization
 
+The file name does not always equal the command name -- `ide-open.command.ts`
+registers `new Command('ide')`. The registered name is what ships.
+
 ```
 commands/
-  version.command.ts              # Top-level command
+  version.command.ts              # shep version
   run.command.ts                  # shep run
   ui.command.ts                   # shep ui
   start.command.ts                # shep start (daemon)
   stop.command.ts                 # shep stop (daemon)
   restart.command.ts              # shep restart (daemon)
   status.command.ts               # shep status (daemon)
-  _serve.command.ts               # shep serve (hidden, internal)
+  _serve.command.ts               # shep _serve (hidden, internal daemon child)
   upgrade.command.ts              # shep upgrade
   install.command.ts              # shep install
-  ide-open.command.ts             # shep ide-open
+  ide-open.command.ts             # shep ide   <- file name != command name
   tools.command.ts                # shep tools (group)
-  settings/
-    index.ts                      # settings command group
-    show.command.ts               # shep settings show
-    init.command.ts               # shep settings init
-    agent.command.ts              # shep settings agent
-    ide.command.ts                # shep settings ide
-    workflow.command.ts           # shep settings workflow
-    model.command.ts              # shep settings model
-  feat/
-    index.ts                      # feat command group
-    new.command.ts                # shep feat new
-    ls.command.ts                 # shep feat ls
-    show.command.ts               # shep feat show
-    del.command.ts                # shep feat del
-    resume.command.ts             # shep feat resume
-    review.command.ts             # shep feat review
-    approve.command.ts            # shep feat approve
-    reject.command.ts             # shep feat reject
-    logs.command.ts               # shep feat logs
-  agent/
-    index.ts                      # agent command group
-    ls.command.ts                 # shep agent ls
-    show.command.ts               # shep agent show
-    stop.command.ts               # shep agent stop
-    logs.command.ts               # shep agent logs
-    delete.command.ts             # shep agent delete
-    approve.command.ts            # shep agent approve
-    reject.command.ts             # shep agent reject
-  repo/
-    index.ts                      # repo command group
-    ls.command.ts                 # shep repo ls
-    show.command.ts               # shep repo show
-  session/
-    index.ts                      # session command group
-    ls.command.ts                 # shep session ls
-    show.command.ts               # shep session show
+  doctor.command.ts               # shep doctor
+  review.command.ts               # shep review (group)
+  security.command.ts             # shep security (group)
+  mcp.command.ts                  # shep mcp
+  log-viewer.ts                   # Log viewing utility (not a command)
+  settings/                       # shep settings (group)
+  feat/                           # shep feat (group)
+  agent/                          # shep agent (group, incl. message/ + questions/)
+  repo/                           # shep repo (group)
+  session/                        # shep session (group)
+  app/                            # shep app (group, incl. deploy/ git/ cloud-providers/)
+  cluster/                        # shep cluster (group)
+  dev/                            # shep dev (group, incl. plan sub-group)
+  project/                        # shep project (group)
+  item/                           # shep item (group)
+  cycle/                          # shep cycle (group)
+  intake/                         # shep intake (group)
+  notifications/                  # shep notifications (group, alias `notif`)
+  supervisor/                     # shep supervisor (group)
+  bedrock/                        # shep bedrock (group)
+  contributors/                   # shep contributors (group, GitHub Actions entry points)
+  whatsapp/                       # shep whatsapp (group)
+  aspm/                           # shep aspm (group)
+  plugin/                         # shep plugin (group)
+  workflow/                       # shep workflow (group)
+  fleet/                          # shep fleet (group)
   daemon/
-    start-daemon.ts               # Daemon start logic
+    start-daemon.ts               # Daemon start logic (spawns `shep _serve`)
     stop-daemon.ts                # Daemon stop logic
 ```
+
+See [commands.md](./commands.md) for the full per-command reference.
 
 To add a new command group:
 
@@ -152,7 +151,7 @@ import { getSettings } from '@/infrastructure/services/settings.service';
 const settings = getSettings(); // Returns Settings object
 ```
 
-The `getSettings()` singleton is the preferred way to access settings in command handlers. It avoids re-resolving from the DI container on every call. The singleton is set once during bootstrap and is read-only thereafter. The `settings init` command uses `resetSettings()` + `initializeSettings()` to replace the singleton in-place.
+The `getSettings()` singleton is the preferred way to access settings in command handlers. It avoids re-resolving from the DI container on every call. The singleton is set once during bootstrap; commands that change settings refresh it after the database write rather than mutating it ad hoc — `updateSettings(newSettings)` for an in-place refresh, or `resetSettings()` + `initializeSettings()` to replace it outright (what `settings init` does). The instance is stored on `globalThis`/`process` rather than in a module-level variable, so it survives Turbopack module re-evaluation inside the web UI's API routes.
 
 ## Error Handling
 
@@ -188,7 +187,7 @@ Registered at module level for safety:
 
 ### Debug output
 
-Error stack traces are only printed when the `DEBUG` environment variable is set. This applies to `messages.error()` and `messages.debug()`.
+Error stack traces are only printed when the `DEBUG` environment variable is set. This applies to `messages.error()` and `messages.debug()`. `DEBUG` is a plain truthy check (`if (process.env.DEBUG)`), not a namespace filter -- use `DEBUG=1`, not `DEBUG=shep:*`.
 
 ## Help Text Conventions
 

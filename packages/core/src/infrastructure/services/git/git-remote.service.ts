@@ -21,6 +21,7 @@ import type {
 import { GhNotAuthenticatedError } from '../../../domain/errors/gh-not-authenticated.error.js';
 import { GitHubRepoNameTakenError } from '../../../domain/errors/github-repo-name-taken.error.js';
 import { GitRemoteCreationError } from '../../../domain/errors/git-remote-creation.error.js';
+import { assertSafeGitRef } from '../../../domain/shared/git-ref-argument.js';
 
 const NOOP_LOG: GitRemoteLogEmitter = () => undefined;
 
@@ -353,8 +354,8 @@ export class GitRemoteService implements IGitRemoteService {
     try {
       // -u sets upstream on the first push. Subsequent pushes are no-ops for
       // -u but it's idempotent so we always pass it.
-      const branchName = before.branch ?? 'HEAD';
-      await this.execFile('git', ['push', '-u', 'origin', branchName], { cwd });
+      const branchName = assertSafeGitRef(before.branch ?? 'HEAD', 'branch');
+      await this.execFile('git', ['push', '-u', 'origin', '--', branchName], { cwd });
       log('info', `Push succeeded for branch ${branchName}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

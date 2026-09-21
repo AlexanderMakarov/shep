@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { readFile, stat, readdir } from 'fs/promises';
-import { basename, extname, join, resolve } from 'path';
+import { basename, extname, join, resolve, sep } from 'path';
 import { getShepHomeDir } from '@shepai/core/infrastructure/services/filesystem/shep-directory.service';
 
 const MIME_MAP: Record<string, string> = {
@@ -69,19 +69,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Missing path parameter' }, { status: 400 });
   }
 
-  // Security: only allow paths within SHEP_HOME/attachments
+  // Security: only allow paths strictly within SHEP_HOME/attachments.
+  // The separator matters — without it `~/.shep/attachments-evil/` passes as
+  // `~/.shep/attachments`. Same shape as `resolveInside()` in
+  // `node-application-file-system.service.ts`.
   const attachmentsRoot = resolve(getShepHomeDir(), 'attachments');
-  if (!resolve(path).startsWith(attachmentsRoot)) {
+  const rootWithSep = attachmentsRoot.endsWith(sep) ? attachmentsRoot : attachmentsRoot + sep;
+  const resolvedPath = resolve(path);
+  if (!resolvedPath.startsWith(rootWithSep)) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 });
   }
 
   try {
-    await stat(path);
-    return await serveFile(path, mimeTypeHint);
+    await stat(resolvedPath);
+    return await serveFile(resolvedPath, mimeTypeHint);
   } catch {
     // File not found at exact path — try fallback search
     // This handles the case where pending-<sessionId>/ was renamed to <featureSlug>/
-    const fallbackPath = await findAttachmentFallback(path, attachmentsRoot);
+    const fallbackPath = await findAttachmentFallback(resolvedPath, attachmentsRoot);
     if (fallbackPath) {
       return await serveFile(fallbackPath, mimeTypeHint);
     }

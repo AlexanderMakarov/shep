@@ -37,6 +37,10 @@ export function createMockFeatureRepository(
     findByParentId: vi.fn().mockResolvedValue([]),
     countByLifecycles: vi.fn().mockResolvedValue(0),
     listQueued: vi.fn().mockResolvedValue([]),
+    // Defaults to winning the claim: a test that cares about losing a race
+    // overrides it, and every other test behaves as it did when admission was
+    // an unconditional update.
+    claimForStart: vi.fn().mockResolvedValue(true),
     delete: vi.fn().mockResolvedValue(undefined),
     softDelete: vi.fn().mockResolvedValue(undefined),
     ...overrides,

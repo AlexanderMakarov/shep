@@ -6,13 +6,15 @@ import { ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { getApplicationDebugPrompt } from '@/app/actions/get-application-debug-prompt';
 
 export interface CopyPromptButtonProps {
   applicationId: string;
+  menuItem?: boolean;
 }
 
-export function CopyPromptButton({ applicationId }: CopyPromptButtonProps) {
+export function CopyPromptButton({ applicationId, menuItem = false }: CopyPromptButtonProps) {
   const [busy, setBusy] = useState(false);
 
   const handleClick = useCallback(async () => {
@@ -39,7 +41,7 @@ export function CopyPromptButton({ applicationId }: CopyPromptButtonProps) {
     }
   }, [applicationId, busy]);
 
-  return (
+  const content = (
     <Button
       variant="ghost"
       size="icon"
@@ -51,5 +53,12 @@ export function CopyPromptButton({ applicationId }: CopyPromptButtonProps) {
     >
       <ClipboardList className="h-3.5 w-3.5" />
     </Button>
+  );
+  return menuItem ? (
+    <DropdownMenuItem asChild disabled={busy}>
+      {content}
+    </DropdownMenuItem>
+  ) : (
+    content
   );
 }

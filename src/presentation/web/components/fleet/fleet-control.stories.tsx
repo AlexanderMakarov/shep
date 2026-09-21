@@ -83,7 +83,15 @@ export const CircuitBreakerTripped: Story = {
   },
 };
 
-/** An empty fleet renders nothing — there is nothing to report. */
+/**
+ * An empty fleet keeps its seat and says so.
+ *
+ * It used to return `null` here, which meant the bar vanished on the operator's
+ * first visit and did not come back when they created their first feature —
+ * only a reload brought it back. The quiet "No active features" pill is the
+ * honest state, and it is already live, so the counts appear the moment the
+ * first run starts.
+ */
 export const EmptyFleet: Story = {
   args: {
     initialData: {

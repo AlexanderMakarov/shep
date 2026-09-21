@@ -927,3 +927,105 @@ describe('createMergeNode (agent-driven)', () => {
     });
   });
 });
+
+describe('mergeNode — local merge verification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInterrupt.mockReset();
+    mockShouldInterrupt.mockReturnValue(false);
+    mockCleanupExecute.mockResolvedValue(undefined);
+  });
+
+  /** State that reaches the local squash-merge branch (no PR to merge through). */
+  function localMergeState() {
+    return baseState({
+      approvalGates: { allowPrd: true, allowPlan: true, allowMerge: true },
+      prUrl: null,
+      prNumber: null,
+      push: false,
+      openPr: false,
+    });
+  }
+
+  it('should capture the base SHA before merging and pass it to verification', async () => {
+    const deps = baseDeps();
+    await createMergeNode(deps)(localMergeState());
+
+    expect(deps.revParse).toHaveBeenCalled();
+    expect(deps.verifyMerge).toHaveBeenCalledWith(
+      '/tmp/repo',
+      expect.any(String),
+      expect.any(String),
+      'premerge-sha-abc'
+    );
+  });
+
+  it('should mark the feature merged when verification confirms it', async () => {
+    const featureRepository = createMockFeatureRepo();
+    const deps = baseDeps({
+      featureRepository,
+      verifyMerge: vi.fn().mockResolvedValue(true),
+    });
+
+    await createMergeNode(deps)(localMergeState());
+
+    expect(featureRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle: 'Maintain' })
+    );
+  });
+
+  /**
+   * `merged = true` drives the lifecycle to Maintain, which force-removes the
+   * worktree and deletes the local AND remote branch. A local squash merge can
+   * return normally having silently skipped its commit (a concurrent
+   * `reset --hard` in the same checkout clears the staged changes), so believing
+   * the absence of an exception destroys the work and reports success.
+   */
+  it('should NOT mark the feature merged when verification fails', async () => {
+    const featureRepository = createMockFeatureRepo();
+    const deps = baseDeps({
+      featureRepository,
+      verifyMerge: vi.fn().mockResolvedValue(false),
+    });
+
+    const result = await createMergeNode(deps)(localMergeState());
+
+    expect(featureRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle: 'Review' })
+    );
+    expect(featureRepository.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle: 'Maintain' })
+    );
+    expect(result.messages?.join(' ')).toMatch(/could not be verified/i);
+  });
+
+  it('should not clean up the worktree when verification fails', async () => {
+    const deps = baseDeps({ verifyMerge: vi.fn().mockResolvedValue(false) });
+
+    await createMergeNode(deps)(localMergeState());
+
+    expect(mockCleanupExecute).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The conflict path hands the merge to the agent and previously believed
+   * whatever it reported. That is the weakest evidence in the whole flow.
+   */
+  it('should verify the agent-resolved conflict merge too', async () => {
+    const conflict = new GitPrError('merge conflict', GitPrErrorCode.MERGE_CONFLICT);
+    const deps = baseDeps({
+      localMergeSquash: vi.fn().mockRejectedValue(conflict),
+      verifyMerge: vi.fn().mockResolvedValue(false),
+      featureRepository: createMockFeatureRepo(),
+    });
+
+    const result = await createMergeNode(deps)(localMergeState());
+
+    expect(deps.executor.execute).toHaveBeenCalled();
+    expect(deps.verifyMerge).toHaveBeenCalled();
+    expect(deps.featureRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle: 'Review' })
+    );
+    expect(result.messages?.join(' ')).toMatch(/could not be verified/i);
+  });
+});

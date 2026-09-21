@@ -1,4 +1,76 @@
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openShepDb } from './helpers/collaboration-flag';
+import { removeDirWithRetry } from '../../helpers/remove-dir.helper';
+
+const REPO_ID = `e2e-clickability-${randomUUID()}`;
+const FEATURES = [
+  {
+    id: `${REPO_ID}-implementation`,
+    name: 'Existing implementation feature',
+    lifecycle: 'Implementation',
+  },
+  { id: `${REPO_ID}-review`, name: 'Existing review feature', lifecycle: 'Review' },
+];
+let repoPath: string;
+
+test.beforeAll(() => {
+  repoPath = mkdtempSync(join(tmpdir(), 'shep-clickability-'));
+  const db = openShepDb();
+  try {
+    const now = Date.now();
+    db.prepare(
+      'INSERT INTO repositories (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(REPO_ID, 'Clickability fixture', repoPath, now, now);
+    const insertFeature = db.prepare(
+      `INSERT INTO features
+      (id, name, slug, description, user_query, repository_path, repository_id, branch,
+       lifecycle, messages, related_artifacts, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const feature of FEATURES) {
+      insertFeature.run(
+        feature.id,
+        feature.name,
+        feature.id,
+        'Clickability fixture',
+        'Fixture',
+        repoPath,
+        REPO_ID,
+        `feat/${feature.id}`,
+        feature.lifecycle,
+        '[]',
+        '[]',
+        now,
+        now
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test.afterAll(() => {
+  const db = openShepDb();
+  try {
+    for (const feature of FEATURES) {
+      db.prepare('DELETE FROM features WHERE id = ?').run(feature.id);
+    }
+    db.prepare('DELETE FROM repositories WHERE id = ?').run(REPO_ID);
+  } finally {
+    db.close();
+    if (repoPath) removeDirWithRetry(repoPath);
+  }
+});
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('shep:collaboration-onboarding-dismissed', '1');
+  });
+});
 
 test.describe('Feature node clickability — drawer opens after feature creation', () => {
   test('clicking existing feature nodes opens the detail drawer after submitting the create form', async ({
@@ -11,8 +83,8 @@ test.describe('Feature node clickability — drawer opens after feature creation
         contentType: 'application/json',
         body: JSON.stringify([
           {
-            id: 'repo-1',
-            path: '/test/repo',
+            id: REPO_ID,
+            path: repoPath,
             name: 'Test Repo',
           },
         ]),
@@ -35,28 +107,20 @@ test.describe('Feature node clickability — drawer opens after feature creation
           return;
         }
       }
-      await route.continue();
+      await route.fallback();
     });
 
     // Navigate to control center
     await page.goto('/control-center');
 
-    // Check if any feature nodes exist
-    const featureCards = page.locator('[data-testid="feature-node-card"]');
-    const hasFeatures = await featureCards
-      .first()
-      .isVisible({ timeout: 10000 })
-      .catch(() => false);
-    test.skip(!hasFeatures, 'Need at least 1 existing feature node to test clickability');
-
-    // Remember the name of the first existing feature node for drawer verification
-    const firstNodeHeading = page
-      .locator('[data-testid="feature-node-card"]:not([aria-busy="true"]) h3')
-      .first();
-    const firstNodeName = await firstNodeHeading.textContent();
+    // Keep the target stable while unrelated background agents update their own nodes.
+    const firstNode = page
+      .locator(`[data-id="feat-${FEATURES[0].id}"]`)
+      .getByTestId('feature-node-card');
+    await expect(firstNode).toBeVisible({ timeout: 10000 });
 
     // Step 1: Open the create-feature drawer by navigating to /create with repo selected
-    await page.goto('/create?repo=/test/repo');
+    await page.goto(`/create?repo=${encodeURIComponent(repoPath)}`);
 
     // Wait for the create drawer heading
     await expect(page.getByRole('heading', { name: 'NEW FEATURE' })).toBeVisible({
@@ -79,84 +143,46 @@ test.describe('Feature node clickability — drawer opens after feature creation
     });
 
     // Step 4: While the server action is still in-flight, click on an existing feature node
-    const clickableNode = page
-      .locator('[data-testid="feature-node-card"]:not([aria-busy="true"])')
-      .first();
-    await expect(clickableNode).toBeVisible();
-    await clickableNode.click();
+    await expect(firstNode).toBeVisible();
+    await firstNode.click();
 
     // Step 5: Verify the feature detail drawer opens for the clicked node
     const drawerHeader = page.locator('[data-testid="feature-drawer-header"]');
     await expect(drawerHeader).toBeVisible({ timeout: 5000 });
 
     // The drawer should show the name of the clicked feature
-    if (firstNodeName) {
-      await expect(drawerHeader).toContainText(firstNodeName);
-    }
+    await expect(drawerHeader).toContainText(FEATURES[0].name);
 
     // Step 6: Close the drawer by pressing Escape
     await page.keyboard.press('Escape');
     await expect(drawerHeader).not.toBeVisible({ timeout: 3000 });
 
-    // Step 7: Click a different existing node (if available) to verify multiple clicks work
-    const secondClickableNode = page
-      .locator('[data-testid="feature-node-card"]:not([aria-busy="true"])')
-      .nth(1);
-
-    if ((await secondClickableNode.count()) > 0) {
-      await secondClickableNode.click();
-
-      // Drawer should open again for the second node
-      await expect(drawerHeader).toBeVisible({ timeout: 5000 });
-
-      // Close again
-      await page.keyboard.press('Escape');
-      await expect(drawerHeader).not.toBeVisible({ timeout: 3000 });
-    }
+    // Step 7: The second fixture guarantees that changing the selected feature is exercised.
+    const secondNode = page
+      .locator(`[data-id="feat-${FEATURES[1].id}"]`)
+      .getByTestId('feature-node-card');
+    await secondNode.click();
+    await expect(drawerHeader).toBeVisible({ timeout: 5000 });
+    await expect(drawerHeader).toContainText(FEATURES[1].name);
+    await page.keyboard.press('Escape');
+    await expect(drawerHeader).not.toBeVisible({ timeout: 3000 });
   });
 });
 
-test.describe('All feature nodes open a drawer on click', () => {
-  test('clicking each non-creating feature node opens some drawer', async ({ page }) => {
-    // Navigate to control center
+test.describe('Feature nodes open their corresponding drawers on click', () => {
+  test('implementation and review nodes each open the correct drawer', async ({ page }) => {
     await page.goto('/control-center');
+    const drawerHeader = page.getByTestId('feature-drawer-header');
 
-    // Check if any feature nodes exist (use isVisible with short timeout to avoid blocking)
-    const featureCards = page.locator('[data-testid="feature-node-card"]');
-    const hasFeatures = await featureCards
-      .first()
-      .isVisible({ timeout: 10000 })
-      .catch(() => false);
-    test.skip(!hasFeatures, 'Need at least 1 feature node to test drawer opening');
-
-    // Get all non-creating feature nodes
-    const clickableNodes = page.locator(
-      '[data-testid="feature-node-card"]:not([aria-busy="true"])'
-    );
-    const clickableCount = await clickableNodes.count();
-    test.skip(clickableCount < 1, 'Need at least 1 non-creating feature node');
-
-    const drawerHeader = page.locator('[data-testid="feature-drawer-header"]');
-
-    // Click each feature node and verify a drawer opens
-    for (let i = 0; i < clickableCount; i++) {
-      const node = clickableNodes.nth(i);
-      const nodeName = await node.locator('h3').textContent();
-
-      // Click the feature node
+    // Seed both states ourselves; other suites create features whose agents rename them live.
+    for (const feature of FEATURES) {
+      const node = page.locator(`[data-id="feat-${feature.id}"]`).getByTestId('feature-node-card');
+      await expect(node).toBeVisible({ timeout: 10000 });
+      await expect(node).not.toHaveAttribute('aria-busy', 'true');
+      await expect(node.getByTestId('feature-node-title')).toHaveText(feature.name);
       await node.click();
-
-      // Verify some drawer opens (either basic FeatureDrawer or specialized ReviewDrawerShell)
-      await expect(drawerHeader).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Verify the drawer shows the correct feature name
-      if (nodeName) {
-        await expect(drawerHeader).toContainText(nodeName);
-      }
-
-      // Close the drawer before clicking the next node
+      await expect(drawerHeader).toBeVisible({ timeout: 5000 });
+      await expect(drawerHeader).toContainText(feature.name);
       await page.keyboard.press('Escape');
       await expect(drawerHeader).not.toBeVisible({ timeout: 3000 });
     }

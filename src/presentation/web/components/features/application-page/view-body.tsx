@@ -59,6 +59,10 @@ export function ViewBody({
           'absolute inset-0 flex min-h-0 flex-col',
           activeView === 'terminal' ? 'visible' : 'pointer-events-none invisible'
         )}
+        id={`application-${applicationId}-view-terminal`}
+        role="tabpanel"
+        aria-label="Terminal"
+        tabIndex={0}
         aria-hidden={activeView !== 'terminal'}
       >
         <TerminalTab cwd={terminalCwd} />
@@ -71,6 +75,10 @@ export function ViewBody({
           'absolute inset-0 flex min-h-0 flex-col',
           activeView === 'ide' ? 'visible' : 'pointer-events-none invisible'
         )}
+        id={`application-${applicationId}-view-ide`}
+        role="tabpanel"
+        aria-label="IDE"
+        tabIndex={0}
         aria-hidden={activeView !== 'ide'}
       >
         <IdeTab applicationId={applicationId} />
@@ -81,21 +89,21 @@ export function ViewBody({
           down the preview session. When there's no deploy activity
           yet we still render the empty state (only while visible)
           so the user sees the "Run" CTA. */}
-      {hasWebContent ? (
-        <div
-          className={cn(
-            'absolute inset-0 flex min-h-0 flex-col',
-            activeView === 'web' ? 'visible' : 'pointer-events-none invisible'
-          )}
-          aria-hidden={activeView !== 'web'}
-        >
+      <div
+        id={`application-${applicationId}-view-web`}
+        role="tabpanel"
+        aria-label="Web preview"
+        tabIndex={0}
+        className={cn(
+          'absolute inset-0 flex min-h-0 flex-col',
+          activeView === 'web' ? 'visible' : 'pointer-events-none invisible'
+        )}
+        aria-hidden={activeView !== 'web'}
+      >
+        {hasWebContent || activeView === 'web' ? (
           <WebPreviewTab deploy={deploy} isBuilding={isBuilding} target={runPlanTarget} />
-        </div>
-      ) : (
-        activeView === 'web' && (
-          <WebPreviewTab deploy={deploy} isBuilding={isBuilding} target={runPlanTarget} />
-        )
-      )}
+        ) : null}
+      </div>
     </div>
   );
 }

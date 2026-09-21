@@ -52,6 +52,7 @@ import {
 import { truncateCommitTitle } from '@/infrastructure/services/git/pr-branding.js';
 import { parseCommitHash, parsePrUrl } from './merge-output-parser.js';
 import { runCiWatchFixLoop } from './ci-watch-fix-loop.js';
+import { ciStatusBlocksAutoMerge } from './ci-helpers.js';
 import { getSettings } from '@/infrastructure/services/settings.service.js';
 import type { CleanupFeatureWorktreeUseCase } from '@/application/use-cases/features/cleanup-feature-worktree.use-case.js';
 import type { IGitForkService } from '@/application/ports/output/services/git-fork-service.interface.js';
@@ -180,6 +181,11 @@ export function createMergeNode(deps: MergeNodeDeps) {
       let prNumber = state.prNumber;
       let ciStatus = state.ciStatus;
 
+      // Set when the CI gate produced no evidence that the branch is green
+      // (e.g. rate-limited, or CI is configured but no run was observed).
+      // Such a run must never auto-merge — it escalates to the human gate.
+      let ciBlocksAutoMerge = false;
+
       let ciFixAttempts = state.ciFixAttempts ?? 0;
       let ciFixHistory = state.ciFixHistory ?? [];
       let ciFixStatus = state.ciFixStatus ?? 'idle';
@@ -244,24 +250,35 @@ export function createMergeNode(deps: MergeNodeDeps) {
           if (prResult) {
             prUrl = prResult.url;
             prNumber = prResult.number;
+          }
 
-            // Cross-validate agent-parsed PR URL against authoritative source.
-            // The agent may hallucinate the repo URL or PR number, so we look up
-            // the real PR for this branch via the GitHub API.
-            try {
-              const prStatuses = await deps.gitPrService.listPrStatuses(cwd);
-              const matchingPr = prStatuses.find(
-                (pr) => pr.headRefName === branch || pr.headRefName === prTarget?.headRef
-              );
-              if (matchingPr) {
-                prUrl = matchingPr.url;
-                prNumber = matchingPr.number;
-              }
-            } catch {
-              // gh CLI unavailable or API failure — fall back to agent-parsed URL
+          // Ask GitHub which PR actually exists for this branch. This is both a
+          // cross-validation (the agent may hallucinate the repo URL or number)
+          // and a recovery path: it used to run only when the agent's output
+          // parsed, so an unparseable-but-successful `gh pr create` left the
+          // user with no PR recorded, no message and no log line at all.
+          try {
+            const prStatuses = await deps.gitPrService.listPrStatuses(cwd);
+            const matchingPr = prStatuses.find(
+              (pr) => pr.headRefName === branch || pr.headRefName === prTarget?.headRef
+            );
+            if (matchingPr) {
+              prUrl = matchingPr.url;
+              prNumber = matchingPr.number;
             }
+          } catch {
+            // gh CLI unavailable or API failure — fall back to agent-parsed URL
+          }
 
+          if (prUrl) {
             messages.push(`[merge] PR created: ${prUrl}`);
+          } else {
+            log.error(
+              `A PR was requested but none was found for ${branch} — the agent output contained no PR URL and GitHub reports no open PR for this branch`
+            );
+            messages.push(
+              `[merge] No pull request was created for ${branch}. Check \`gh pr list --head ${branch}\`.`
+            );
           }
         }
 
@@ -289,6 +306,8 @@ export function createMergeNode(deps: MergeNodeDeps) {
             }
           );
           ciStatus = ciResult.ciStatus;
+          ciBlocksAutoMerge =
+            ciResult.ciStatus !== null && ciStatusBlocksAutoMerge(ciResult.ciStatus);
           ciFixAttempts = ciResult.ciFixAttempts;
           ciFixHistory = ciResult.ciFixHistory;
           ciFixStatus = ciResult.ciFixStatus;
@@ -320,7 +339,13 @@ export function createMergeNode(deps: MergeNodeDeps) {
         }
 
         // --- Merge approval gate ---
-        if (shouldInterrupt('merge', state.approvalGates)) {
+        // An unverified CI result forces the gate open even when allowMerge
+        // would otherwise auto-merge: no CI evidence, no automated merge.
+        if (shouldInterrupt('merge', state.approvalGates) || ciBlocksAutoMerge) {
+          if (ciBlocksAutoMerge) {
+            log.info(`CI status is ${ciStatus} — escalating to the human merge gate`);
+            messages.push(`[merge] CI status ${ciStatus} — human approval required`);
+          }
           log.info('Interrupting for merge approval');
           await recordPhaseEnd(mergeTimingId, Date.now() - startTime, {
             inputTokens: totalInputTokens || undefined,
@@ -447,8 +472,51 @@ export function createMergeNode(deps: MergeNodeDeps) {
       // approved at the merge gate (isResumeAfterInterrupt means they
       // clicked Approve). The approval IS permission to merge.
       let merged = false;
+      let premergeBaseSha: string | undefined;
+
+      /**
+       * Confirm the base branch really contains this feature before reporting
+       * success.
+       *
+       * `merged = true` moves the feature to Maintain, which force-removes the
+       * worktree and deletes the local AND remote branch — so a false positive
+       * destroys the work and tells the user it shipped. Neither local path
+       * gives trustworthy evidence on its own: `localMergeSquash` can return
+       * normally having skipped its commit (a concurrent `reset --hard` in the
+       * same checkout clears the staged changes), and the conflict path simply
+       * believes whatever the agent says it did.
+       *
+       * On failure we deliberately do NOT throw: leaving the feature in Review
+       * with its worktree intact is the recoverable outcome. The message and
+       * the error log are what make it visible.
+       *
+       * Not used for the GitHub PR merge path — that merge happens on the
+       * remote, and this check compares local refs, so it would report a false
+       * negative until the next fetch.
+       */
+      const confirmMerged = async (successMessage: string, subject: string): Promise<boolean> => {
+        const verified = await deps.verifyMerge(
+          state.repositoryPath,
+          branch,
+          baseBranch,
+          premergeBaseSha
+        );
+        if (verified) {
+          messages.push(`[merge] ${successMessage}`);
+          return true;
+        }
+        log.error(
+          `${subject} reported success but ${baseBranch} does not contain ${branch} — refusing to mark the feature merged`
+        );
+        messages.push(
+          `[merge] ${subject} could not be verified — ${baseBranch} does not contain ${branch}. ` +
+            `The branch and worktree have been kept so no work is lost.`
+        );
+        return false;
+      };
+
       const userApprovedMerge = isResumeAfterInterrupt && state._approvalAction !== 'rejected';
-      if (state.approvalGates?.allowMerge || userApprovedMerge) {
+      if ((state.approvalGates?.allowMerge && !ciBlocksAutoMerge) || userApprovedMerge) {
         if (prUrl && prNumber) {
           // PR exists: merge via GitHub API directly — no agent or local merge needed.
           // This will fail if the PR is not in a mergeable state (checks pending, reviews needed).
@@ -463,6 +531,15 @@ export function createMergeNode(deps: MergeNodeDeps) {
           // On MERGE_CONFLICT, falls back to agent-based merge for conflict resolution.
           log.info('Programmatic local squash merge (no agent needed)');
 
+          // Record where the base branch pointed BEFORE the merge, so
+          // verification can tell "the base advanced" from "nothing happened"
+          // even when a squash legitimately rewrites the tree.
+          try {
+            premergeBaseSha = await deps.revParse(state.repositoryPath, baseBranch);
+          } catch {
+            // Non-fatal: verification still has two stronger checks to try.
+          }
+
           const commitMsg = truncateCommitTitle(`feat: squash merge ${branch} into ${baseBranch}`);
           try {
             await deps.localMergeSquash(
@@ -474,8 +551,10 @@ export function createMergeNode(deps: MergeNodeDeps) {
             );
 
             log.info('Local squash merge completed successfully');
-            messages.push(`[merge] Local squash merge completed`);
-            merged = true;
+            merged = await confirmMerged(
+              'Local squash merge completed and verified',
+              'Local squash merge'
+            );
           } catch (mergeErr: unknown) {
             // Fall back to agent-based merge when conflicts are detected.
             // The agent can resolve conflicts using its full coding capabilities.
@@ -507,8 +586,10 @@ export function createMergeNode(deps: MergeNodeDeps) {
             totalDurationApiMs += mergeResult.usage?.durationApiMs ?? 0;
 
             log.info('Agent-based merge completed successfully');
-            messages.push(`[merge] Agent resolved conflicts and completed merge`);
-            merged = true;
+            merged = await confirmMerged(
+              'Agent resolved conflicts and the merge was verified',
+              'Agent conflict resolution'
+            );
           }
         }
       }

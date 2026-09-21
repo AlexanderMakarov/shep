@@ -32,6 +32,7 @@ import { DeploymentState } from '@shepai/core/domain/generated/output';
 import { featureIdForApplication } from '@shepai/core/domain/shared/feature-id';
 import { deriveAppLiveStatus } from '@/lib/derive-app-status';
 import { getDeploymentStartingLabel } from '@/lib/deployment-state-copy';
+import { ACTIVATABLE_TITLE_CLASS, useActivatableTitle } from '@/hooks/use-activatable-title';
 import type { ApplicationNodeData } from './application-node-config';
 
 /** Preview slot height. Used only when a deployment is actually Live —
@@ -98,6 +99,11 @@ export function ApplicationNode({
   const stopCardClick = useCallback((e: React.MouseEvent | React.PointerEvent) => {
     e.stopPropagation();
   }, []);
+
+  const activateTitle = useCallback(() => {
+    data.onClick?.();
+  }, [data]);
+  const titleProps = useActivatableTitle(activateTitle);
 
   const openPreviewInNewTab = useCallback(
     (e: React.MouseEvent) => {
@@ -180,20 +186,11 @@ export function ApplicationNode({
       ) : null}
 
       <div
-        role="button"
-        tabIndex={0}
         data-testid="application-node-card"
         data-app-name={data.name}
         onClick={(e) => {
           e.stopPropagation();
           data.onClick?.();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            e.stopPropagation();
-            data.onClick?.();
-          }
         }}
         className={cn(
           'nodrag bg-card flex w-[26rem] cursor-pointer flex-col overflow-hidden rounded-xl border shadow-sm transition-[border-color,box-shadow] duration-200 dark:bg-neutral-800/80',
@@ -211,9 +208,12 @@ export function ApplicationNode({
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500">
             <LayoutGrid className="h-4 w-4 text-white" />
           </div>
+          {/* The name — not the card — is the activatable control: the card
+              holds real buttons, which may not be nested inside `role="button"`. */}
           <span
+            {...titleProps}
             data-testid="application-node-name"
-            className="min-w-0 truncate text-sm font-medium"
+            className={cn('min-w-0 truncate text-sm font-medium', ACTIVATABLE_TITLE_CLASS)}
           >
             {data.name}
           </span>
@@ -256,7 +256,7 @@ export function ApplicationNode({
                           data.onCreateSddFeature?.(data.id);
                         }}
                         onPointerDown={(e) => e.stopPropagation()}
-                        className="nodrag flex h-6 shrink-0 cursor-pointer items-center gap-0.5 rounded bg-blue-500 px-1.5 text-[11px] font-bold text-white transition-colors hover:bg-blue-600 dark:bg-amber-500 dark:hover:bg-amber-400"
+                        className="nodrag flex h-6 shrink-0 cursor-pointer items-center gap-0.5 rounded bg-blue-600 px-1.5 text-[11px] font-bold text-white transition-colors hover:bg-blue-600 dark:bg-amber-500 dark:text-neutral-950 dark:hover:bg-amber-400"
                       >
                         <Plus className="h-3 w-3" />
                         <span className="translate-y-px">{t('repositoryNode.new')}</span>

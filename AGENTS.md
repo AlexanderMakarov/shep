@@ -8,7 +8,9 @@ Guidance for AI coding agents (Cursor, Windsurf, Copilot, etc.) working in this 
 
 ## Spec Workflow
 
-**All feature work MUST begin with a spec.** See [spec-driven-workflow](./docs/development/spec-driven-workflow.md).
+**All feature work MUST begin with `/shep-kit:new-feature`.** See [spec-driven-workflow](./docs/development/spec-driven-workflow.md).
+
+`/shep-kit:new-feature → /shep-kit:research → /shep-kit:plan → /shep-kit:implement → /shep-kit:commit-pr`
 
 Specs live in `specs/NNN-feature-name/`. **Edit YAML only — Markdown is auto-generated.**
 
@@ -16,14 +18,15 @@ Specs live in `specs/NNN-feature-name/`. **Edit YAML only — Markdown is auto-g
 
 | Command          | Purpose                         |
 | ---------------- | ------------------------------- |
-| `pnpm build`     | Build CLI + web                 |
-| `pnpm test`      | Run all tests                   |
+| `pnpm build`         | Build CLI only (fast, for dev)  |
+| `pnpm build:release` | Build CLI + web (CI/packaging)  |
+| `pnpm test`      | Run all tests (unit + integration + e2e) |
 | `pnpm test:unit` | Unit tests only                 |
 | `pnpm test:int`  | Integration tests only          |
 | `pnpm test:e2e`  | Playwright e2e tests            |
 | `pnpm lint:fix`  | Fix lint issues                 |
 | `pnpm validate`  | Lint + format + typecheck + tsp |
-| `pnpm dev:cli`   | Run CLI locally (ts-node)       |
+| `pnpm dev:cli`   | Run CLI locally (tsx)           |
 | `pnpm dev:web`   | Start Next.js dev server        |
 
 ## Architecture
@@ -43,15 +46,96 @@ See [clean-architecture](./docs/architecture/clean-architecture.md).
 - **MANDATORY — TypeSpec-first**: Domain models defined in `tsp/`. Run `pnpm tsp:compile` to generate `packages/core/src/domain/generated/output.ts`. Never edit generated files. See [typespec-guide](./docs/development/typespec-guide.md).
 - **MANDATORY — Agent resolution**: No component may hardcode an agent type. All resolution flows through `IAgentExecutorProvider`. See [agent-system](./docs/architecture/agent-system.md). The supervisor agent (spec 093) follows the same rule — its evaluator LLM is resolved through `IAgentExecutorProvider`, never a hardcoded provider SDK.
 - **MANDATORY — Storybook stories**: Every web UI component MUST have a colocated `.stories.tsx` file. Commits without stories will be rejected.
-- **MANDATORY — Spec-driven**: All features start with a spec. No implementation without a spec.
+- **MANDATORY — Spec-driven**: All features start with `/shep-kit:new-feature`. No implementation without a spec.
 - **MANDATORY — Actor namespaces**: When an agent acts on a user's behalf (e.g., the supervisor closing an approval gate), it MUST use the `supervisor:<id>` actor namespace. The user namespace `user:<id>` always wins on conflict — `ApproveAgentRunUseCase` / `RejectAgentRunUseCase` enforce this invariant. See [supervision](./docs/architecture/supervision.md#user-always-wins-invariant).
+
+## Settings-Driven Agent Resolution (MANDATORY)
+
+**No component may name an agent.** Every LLM call resolves the agent from settings, at call
+time, through `IAgentExecutorProvider`:
+
+```ts
+// packages/core/src/application/ports/output/agents/agent-executor-provider.interface.ts
+export interface IAgentExecutorProvider {
+  getExecutor(): Promise<IAgentExecutor>;
+}
+```
+
+The single implementation reads the user's stored choice and asks the factory for that
+executor — nothing else decides:
+
+```ts
+// packages/core/src/infrastructure/services/agents/common/agent-executor-provider.service.ts
+async getExecutor(): Promise<IAgentExecutor> {
+  const settings = await this.settingsRepository.load();
+  if (!settings) throw new Error('Settings not found. Please run initialization first.');
+  return this.factory.createExecutor(settings.agent.type, settings.agent);
+}
+```
+
+What this forbids, concretely:
+
+- No `import { ChatAnthropic } from '@langchain/anthropic'` (or any other provider SDK) outside
+  an executor in `infrastructure/services/agents/common/executors/`.
+- No `if (agentType === AgentType.ClaudeCode)` branch in a use case, node, command or component.
+- No agent type captured at construction time and reused later — resolve per call, so
+  `shep settings agent` takes effect without a restart.
+- LangGraph nodes are **factories that receive an executor** and never choose one. See
+  `nodes/analyze.node.ts` and how `createFeatureAgentGraph()` wires them.
+
+The supervisor agent (spec 093) follows the same rule — its evaluator LLM is resolved through
+`IAgentExecutorProvider`, never a hardcoded provider SDK.
+
+Deeper treatment, including the resolution sequence diagram:
+[docs/architecture/agent-system.md](./docs/architecture/agent-system.md).
+
+## Current Implementation
+
+`packages/core/src/domain/shared/agent-catalog.ts` is the **single source of truth** for every
+agent fact. It is typed as a total `Record<AgentType, AgentDescriptor>`, so adding a member to
+the TypeSpec `AgentType` enum is a **compile error** until its row is filled in — the compiler
+produces the "what do I have to touch" list.
+
+| Agent type | Label | Kind | Binary | Tool id | Status |
+| ---------- | ----- | ---- | ------ | ------- | ------ |
+| `claude-code` | Claude Code | CLI | `claude` | `claude-code` | Supported |
+| `kimi-code` | Kimi Code | CLI | `kimi` | `kimi` | Supported |
+| `codex-cli` | Codex CLI | CLI | `codex` | `codex` | Supported |
+| `copilot-cli` | Copilot CLI | CLI | `copilot` | `copilot` | Supported |
+| `cursor` | Cursor CLI | CLI | `cursor-agent` | `cursor-cli` | Supported |
+| `gemini-cli` | Gemini CLI | CLI | `gemini` | `gemini-cli` | Supported |
+| `cline` | Cline | CLI | `cline` | — | Supported |
+| `openrouter` | OpenRouter | SDK | — | — | Supported (API key) |
+| `together-ai` | Together AI | SDK | — | — | Supported (API key) |
+| `ollama` | Ollama | SDK | — | — | Supported |
+| `llmproxy` | LLM Proxy | SDK | — | — | Supported |
+| `dev` | Demo | mock | — | — | Supported |
+| `aider` | Aider | — | — | — | **Coming soon** — no executor |
+| `continue` | Continue | — | — | — | **Coming soon** — no executor |
+
+Two traps the catalog exists to stop repeating: Cursor's binary is **`cursor-agent`**, not
+`cursor`; and `toolId` MUST equal the basename of the JSON file under
+`infrastructure/services/tool-installer/tools/`, because that is how tool ids are derived.
+
+Executors live in `packages/core/src/infrastructure/services/agents/common/executors/`
+(one file per agent, plus `ai-sdk-base-executor.service.ts` for the HTTP/SDK agents and
+`process-stream.ts` for NDJSON CLI plumbing). `AgentExecutorFactory` derives its supported set
+from the catalog, so the picker and the factory cannot disagree.
+
+To add a provider, follow
+[docs/development/adding-agent-types.md](./docs/development/adding-agent-types.md).
 
 ## Commit Format
 
 [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`
 
 | Types | feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert |
-| Scopes | specs, cli, tui, web, api, domain, agents, deployment, tsp, deps, config, dx, release, ci |
+| Scopes | specs, shep-kit, cli, tui, web, api, domain, agents, deployment, tsp, deps, config, dx, release, ci |
+
+The scope is **optional** — commitlint reports an unknown scope as a warning (severity 1) and
+`.github/workflows/pr-check.yml` sets `requireScope: false`. Subject **case is not enforced**
+(`'subject-case': [0]` in `commitlint.config.mjs`); keep it under 72 characters with no trailing
+period. Note `docs` and `build` are *types*, never scopes.
 
 ## Key Docs
 
@@ -67,7 +151,8 @@ See [clean-architecture](./docs/architecture/clean-architecture.md).
 | Testing guide                  | [docs/development/tdd-guide.md](./docs/development/tdd-guide.md)                       |
 | Implementation patterns        | [docs/development/implementation-guide.md](./docs/development/implementation-guide.md) |
 | CI/CD + Docker                 | [docs/development/cicd.md](./docs/development/cicd.md)                                 |
-| Adding agents                  | [docs/development/adding-agents.md](./docs/development/adding-agents.md)               |
+| Adding an agent provider       | [docs/development/adding-agent-types.md](./docs/development/adding-agent-types.md)     |
+| Adding a LangGraph agent node  | [docs/development/adding-agent-nodes.md](./docs/development/adding-agent-nodes.md)     |
 | CLI architecture               | [docs/cli/architecture.md](./docs/cli/architecture.md)                                 |
 | TUI architecture               | [docs/tui/architecture.md](./docs/tui/architecture.md)                                 |
 | Web UI architecture            | [docs/ui/architecture.md](./docs/ui/architecture.md)                                   |

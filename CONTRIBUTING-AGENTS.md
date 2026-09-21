@@ -1,18 +1,21 @@
 # Contributing Guidelines for AI Agents
 
-Rules and guidelines for AI agents (Cursor, Claude Code, Copilot, etc.) when contributing to this repository. Project skills live in `.cursor/skills/`.
+Rules and guidelines for AI agents when contributing to this repository. Project skills live in `.cursor/skills/` (mirrored in `.claude/skills/`).
+
+These rules apply to any agent, not a favoured few. The supported set is whatever `AGENT_CATALOG` in [`packages/core/src/domain/shared/agent-catalog.ts`](./packages/core/src/domain/shared/agent-catalog.ts) marks `supported: true` — twelve today: Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI (binary `cursor-agent`), Gemini CLI, Cline, OpenRouter, Together AI, Ollama, LLM Proxy, and the `dev` mock. Aider and Continue are catalogued but *Coming Soon* — no executor exists for either.
 
 ## Quick Reference
 
-| Rule         | Requirement                                         |
-| ------------ | --------------------------------------------------- |
-| **Specs**    | **Start ALL features with `/shep-kit:new-feature`** |
-| Commits      | Conventional Commits format, always                 |
-| Scope        | Required for all commits                            |
-| Co-author    | Include `Co-Authored-By` footer                     |
-| TDD          | Write tests first (Red-Green-Refactor)              |
-| Architecture | Follow Clean Architecture layers                    |
-| Edits        | Read files before editing                           |
+| Rule         | Requirement                                          |
+| ------------ | ---------------------------------------------------- |
+| **Specs**    | **Start ALL features with `/shep-kit:new-feature`**  |
+| Commits      | Conventional Commits format, always                  |
+| Type         | Required — `type-enum` is an error                   |
+| Scope        | **Optional** — `scope-enum` is a warning (severity 1) |
+| Co-author    | Include `Co-Authored-By` footer                      |
+| TDD          | Write tests first (Red-Green-Refactor)               |
+| Architecture | Follow Clean Architecture layers                     |
+| Edits        | Read files before editing                            |
 
 ## Spec-Driven Development (MANDATORY)
 
@@ -23,16 +26,18 @@ See [Spec-Driven Workflow](./docs/development/spec-driven-workflow.md) for compl
 ### Workflow
 
 ```
-/shep-kit:new-feature → /shep-kit:research → /shep-kit:plan → implement
+/shep-kit:new-feature → /shep-kit:research → /shep-kit:plan → /shep-kit:implement → /shep-kit:commit-pr
 ```
 
 ### Quick Commands
 
 | Command                 | Purpose             | Output                            |
 | ----------------------- | ------------------- | --------------------------------- |
-| `/shep-kit:new-feature` | Start new feature   | Branch + `specs/NNN-name/spec.md` |
-| `/shep-kit:research`    | Technical analysis  | `research.md`                     |
-| `/shep-kit:plan`        | Implementation plan | `plan.md` + `tasks.md`            |
+| `/shep-kit:new-feature` | Start new feature   | Branch + `specs/NNN-name/spec.yaml` |
+| `/shep-kit:research`    | Technical analysis  | `research.yaml`                   |
+| `/shep-kit:plan`        | Implementation plan | `plan.yaml` + `tasks.yaml`        |
+| `/shep-kit:implement`   | Execute the tasks   | Code + tests, phase by phase      |
+| `/shep-kit:commit-pr`   | Commit and open PR  | Conventional commits + PR         |
 
 ### What the Agent Does
 
@@ -47,13 +52,17 @@ See [Spec-Driven Workflow](./docs/development/spec-driven-workflow.md) for compl
 
 ```
 specs/NNN-feature-name/
-├── spec.md         # Requirements (filled by /new-feature)
-├── research.md     # Technical decisions (filled by /research)
-├── plan.md         # Architecture (filled by /plan)
-├── tasks.md        # Task breakdown (filled by /plan)
+├── spec.yaml       # Requirements (filled by /new-feature)
+├── research.yaml   # Technical decisions (filled by /research)
+├── plan.yaml       # Architecture (filled by /plan)
+├── tasks.yaml      # Task breakdown (filled by /plan)
+├── feature.yaml    # Lifecycle + phase state (maintained by the feature agent)
+├── evidence/       # Screenshots and command output (filled by /implement)
 ├── data-model.md   # Entity changes (if needed)
 └── contracts/      # API specs (if needed)
 ```
+
+**Edit the YAML only** — the sibling `.md` files are generated from it.
 
 ## Commit Rules
 
@@ -83,25 +92,29 @@ specs/NNN-feature-name/
 | `perf`     | Performance improvements                   |
 | `ci`       | CI/CD configuration changes                |
 
-### Scope (Required)
+### Scope (Optional)
 
-Use the component or area being modified:
+If you give a scope, it must be one of these fifteen — the `scope-enum` list in `commitlint.config.mjs`. Anything else is a **warning**, not an error, and `.github/workflows/pr-check.yml` sets `requireScope: false`, so a scopeless commit is valid.
 
-| Scope         | Area                            |
-| ------------- | ------------------------------- |
-| `specs`       | Feature specifications          |
-| `cli`         | CLI commands and presentation   |
-| `tui`         | Terminal UI components          |
-| `web`         | Web UI (Next.js)                |
-| `agents`      | LangGraph agent implementations |
-| `domain`      | Domain entities and services    |
-| `application` | Use cases and ports             |
-| `infra`       | Infrastructure layer            |
-| `db`          | Database/persistence            |
-| `config`      | Configuration handling          |
-| `tests`       | Test infrastructure             |
-| `deps`        | Dependencies                    |
-| `build`       | Build configuration             |
+| Scope        | Area                                                        |
+| ------------ | ----------------------------------------------------------- |
+| `specs`      | Feature specifications (shep-kit)                            |
+| `shep-kit`   | Shep-kit skills and workflow                                 |
+| `cli`        | CLI commands and presentation                                |
+| `tui`        | Terminal UI components                                       |
+| `web`        | Web UI (Next.js)                                             |
+| `api`        | API layer                                                    |
+| `domain`     | Domain entities and services                                 |
+| `agents`     | AI agent system (LangGraph nodes, executors, prompts)        |
+| `deployment` | Deployment configuration                                     |
+| `tsp`        | TypeSpec models                                              |
+| `deps`       | Dependencies                                                 |
+| `config`     | Configuration files                                          |
+| `dx`         | Developer experience                                         |
+| `release`    | Release related                                              |
+| `ci`         | CI/CD workflows                                              |
+
+**There is no `application`, `infra`, `db`, `tests`, `readme`, `architecture` or `e2e` scope.** `build` and `docs` are *types*, never scopes — write `docs(cli)`, not `fix(docs)`. Use-case and port changes go under `domain`; persistence and infrastructure changes usually go under `domain` or `config`; test-only changes use the `test` **type**.
 
 ### Examples
 
@@ -113,35 +126,38 @@ feat(web): add dark mode toggle
 
 # Fixes
 fix(cli): resolve config path on Windows
-fix(db): handle concurrent write conflicts
+fix(domain): handle concurrent write conflicts
 fix(tui): correct keyboard navigation in menus
 
-# Documentation
-docs(readme): update installation instructions
-docs(architecture): add agent system diagrams
+# Documentation (`docs` is the TYPE — the scope names the area)
+docs(cli): update installation instructions
+docs(agents): add agent system diagrams
 
-# Refactoring
+# Refactoring (note: refactor publishes a PATCH release)
 refactor(domain): extract validation logic to value objects
-refactor(infra): simplify repository implementations
+refactor(api): simplify repository implementations
 
 # Tests
 test(domain): add Feature entity edge cases
-test(e2e): cover onboarding flow
+test(web): cover onboarding flow
 
 # Chores
 chore(deps): update vitest to v1.0
-chore(build): optimize bundle size
+chore(config): optimize bundle size
+
+# No scope is fine too
+fix: handle empty worktree path
 ```
 
 ### Commit Rules
 
-1. **Type is mandatory** - Every commit must start with a valid type
-2. **Scope is mandatory** - Always specify the affected component
+1. **Type is mandatory** - Every commit must start with a valid type (`type-enum`, severity 2)
+2. **Scope is optional** - Include one when it clarifies the change; an unknown or missing scope is a warning (`scope-enum`, severity 1), and `pr-check.yml` sets `requireScope: false`
 3. **Description must be imperative** - Use "add" not "added" or "adds"
-4. **Description must be ALL lowercase** - No capital letters after the colon, including acronyms (`pr` not `PR`, `api` not `API`, `ui` not `UI`)
-5. **No period at the end** - Description should not end with a period
-6. **Keep it concise** - Description should be under 72 characters
-7. **Body for details** - Use the body for explaining "why" if needed
+4. **Case is not enforced** - `commitlint.config.mjs` sets `'subject-case': [0]`, disabling the rule. Sentence case, lowercase and mixed all pass, and acronyms may stay uppercase
+5. **No period at the end** - `subject-full-stop` is an error
+6. **Keep it concise** - Subject ≤ 72 characters, whole header ≤ 100
+7. **Body for details** - Use the body for explaining "why" if needed; body and footer lines are capped at 100 characters
 
 ### Breaking Changes
 
@@ -166,6 +182,8 @@ Co-Authored-By: Shep Bot <shep-agent@users.noreply.github.com>
 
 Do NOT use any other Co-Authored-By trailer (e.g. Claude, Anthropic). All commits must be attributed to Shep Bot.
 
+This is also enforced mechanically: the `.husky/prepare-commit-msg` hook strips any `Co-Authored-By: Claude … <noreply@anthropic.com>` trailer and appends the Shep Bot trailer if it is missing. Your commit message **will be rewritten** — write it correctly rather than relying on the hook.
+
 ## Code Guidelines
 
 ### Before Editing
@@ -182,25 +200,34 @@ Follow Clean Architecture - dependencies point inward:
 Presentation → Application → Domain ← Infrastructure
 ```
 
-| Layer          | Can Import          | Cannot Import                     |
-| -------------- | ------------------- | --------------------------------- |
-| Domain         | Nothing             | Any other layer                   |
-| Application    | Domain              | Infrastructure, Presentation      |
-| Infrastructure | Application, Domain | Presentation                      |
-| Presentation   | Application         | Domain (directly), Infrastructure |
+| Layer          | Can Import          | Cannot Import                |
+| -------------- | ------------------- | ---------------------------- |
+| Domain         | Nothing             | Any other layer              |
+| Application    | Domain              | Infrastructure, Presentation |
+| Infrastructure | Application, Domain | Presentation                 |
+| Presentation   | Application, Domain | Infrastructure — except to resolve the DI container |
+
+The last row is the honest rule: `src/presentation/` is the composition root, so it does import `infrastructure/di/container.js`. That is the only sanctioned reason. Business logic still goes through a use case, and **`application/` and `domain/` never import infrastructure at all** — define a port under `packages/core/src/application/ports/output/` instead.
 
 ### File Locations
 
-| What            | Where                                        |
-| --------------- | -------------------------------------------- |
-| Domain entities | `src/domain/entities/`                       |
-| Value objects   | `src/domain/value-objects/`                  |
-| Use cases       | `src/application/use-cases/`                 |
-| Port interfaces | `src/application/ports/`                     |
-| Repositories    | `src/infrastructure/repositories/`           |
-| Agent nodes     | `src/infrastructure/agents/langgraph/nodes/` |
-| CLI commands    | `src/presentation/cli/commands/`             |
-| Web components  | `src/presentation/web/components/`           |
+The first three layers live in `packages/core/src/`; presentation lives in `src/presentation/`.
+
+| What             | Where                                                                     |
+| ---------------- | ------------------------------------------------------------------------- |
+| Domain entities  | Authored in `tsp/`, generated to `packages/core/src/domain/generated/output.ts` (never edit) |
+| Domain helpers   | `packages/core/src/domain/shared/`                                        |
+| Value objects    | `packages/core/src/domain/value-objects/`                                 |
+| Use cases        | `packages/core/src/application/use-cases/`                                |
+| Port interfaces  | `packages/core/src/application/ports/output/`                             |
+| Repositories     | `packages/core/src/infrastructure/repositories/`                          |
+| Persistence      | `packages/core/src/infrastructure/persistence/sqlite/` (+ `migrations/`)  |
+| Agent executors  | `packages/core/src/infrastructure/services/agents/common/executors/`      |
+| Agent nodes      | `packages/core/src/infrastructure/services/agents/feature-agent/nodes/`   |
+| CLI commands     | `src/presentation/cli/commands/`                                          |
+| Web components   | `src/presentation/web/components/`                                        |
+
+There is no `infrastructure/agents/` directory and no `langgraph/`, `graphs/` or `tools/` directory — agent code lives under `infrastructure/services/agents/`.
 
 ### Testing (TDD Required)
 
@@ -211,9 +238,11 @@ Follow Red-Green-Refactor:
 3. **REFACTOR** - Improve while keeping tests green
 
 ```bash
-pnpm test:watch    # TDD mode
-pnpm test          # Run all tests
+pnpm test:watch          # TDD mode (vitest watch)
+pnpm test:unit           # Unit tests only — the fast inner loop
+pnpm test                # unit + integration, THEN the e2e suite (builds the CLI; slow)
 pnpm test:single <path>  # Single file
+pnpm test:unit -t "name" # Filter by test name — vitest has no --grep
 ```
 
 ## Documentation Rules
@@ -282,12 +311,16 @@ Brief description of changes
 
 ```bash
 # Development
-pnpm dev              # Start dev mode
-pnpm build            # Build project
+pnpm dev              # Start the web dev server
+pnpm dev:cli <cmd>    # Run the CLI from source (tsx) — no global install needed
+pnpm build            # Build the CLI only
+pnpm build:release    # Build CLI + web (what CI packages)
 pnpm typecheck        # Type checking
+pnpm validate         # lint:fix + format + typecheck + tsp:compile
 
 # Testing
-pnpm test             # Run all tests
+pnpm test             # unit + integration + e2e
+pnpm test:unit        # Unit tests only
 pnpm test:watch       # TDD mode
 pnpm test:e2e         # E2E tests
 

@@ -61,12 +61,12 @@ export function makeSelectiveExec(realExec: ExecFunction): ExecFunction {
       return { stdout: `${FAKE_PR_URL}\n`, stderr: '' };
     }
     if (sub === 'pr' && cmd === 'merge') {
-      // NOTE: This mock does NOT actually merge any git branches.
-      // This is intentional: it exposes the unverified-PR-merge bug where
-      // the merge node skips verifyMerge() when prUrl is set.
+      // PR tests provide remote state explicitly; a successful command alone
+      // is not evidence of a completed merge.
       return { stdout: '', stderr: '' };
     }
     if (sub === 'pr' && cmd === 'view') {
+      if (args.includes('.state')) return { stdout: 'MERGED\n', stderr: '' };
       return { stdout: '{"state":"MERGED","statusCheckRollup":[]}\n', stderr: '' };
     }
     if (sub === 'pr' && cmd === 'checks') {

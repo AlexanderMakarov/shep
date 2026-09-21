@@ -16,8 +16,76 @@ import path from 'node:path';
 import fs from 'node:fs';
 import type { IWebServerService } from '../../application/ports/output/services/web-server-service.interface.js';
 import { IS_WINDOWS } from '../platform.js';
+import { createRequestListener } from './http-request-listener.js';
 
 type NextApp = ReturnType<typeof next>;
+
+/** Environment variable requesting a non-default listen address. */
+export const BIND_HOST_ENV = 'SHEP_BIND_HOST';
+
+/** Explicit opt-in required before the daemon leaves the loopback interface. */
+export const ALLOW_PUBLIC_BIND_ENV = 'SHEP_ALLOW_PUBLIC_BIND';
+
+/**
+ * Environment variable the service publishes so the Next.js middleware can
+ * validate Host headers against the port actually in use (the CLI picks a
+ * free port at startup, so it is not a constant).
+ */
+export const WEB_PORT_ENV = 'SHEP_WEB_PORT';
+
+/** Value that turns an opt-in environment flag on. */
+export const ENV_FLAG_ON = '1';
+
+/** The address the daemon binds to unless told otherwise. */
+export const DEFAULT_BIND_HOST = 'localhost';
+
+/** Addresses that keep the daemon reachable only from this machine. */
+export const LOOPBACK_BIND_HOSTS = ['localhost', '127.0.0.1', '::1'] as const;
+
+export interface ResolvedBindHost {
+  host: string;
+  /** Non-null when the operator should be told what happened. */
+  warning: string | null;
+}
+
+/**
+ * Decide which interface to listen on.
+ *
+ * The control center spawns shells, installs tools and holds the user's
+ * GitHub token, so leaving loopback is a deliberate, dangerous act. A
+ * requested public bind is refused unless `SHEP_ALLOW_PUBLIC_BIND=1` is also
+ * set, and even then it is announced.
+ */
+export function resolveBindHost(
+  requested: string | undefined,
+  allowPublic: boolean
+): ResolvedBindHost {
+  const host = requested?.trim();
+  if (!host) {
+    return { host: DEFAULT_BIND_HOST, warning: null };
+  }
+
+  if ((LOOPBACK_BIND_HOSTS as readonly string[]).includes(host.toLowerCase())) {
+    return { host, warning: null };
+  }
+
+  if (!allowPublic) {
+    return {
+      host: DEFAULT_BIND_HOST,
+      warning:
+        `${BIND_HOST_ENV}=${host} was ignored: the Shep control center can start shells and ` +
+        `install software, so it only listens on ${DEFAULT_BIND_HOST}. Set ` +
+        `${ALLOW_PUBLIC_BIND_ENV}=${ENV_FLAG_ON} to override.`,
+    };
+  }
+
+  return {
+    host,
+    warning:
+      `${ALLOW_PUBLIC_BIND_ENV}=${ENV_FLAG_ON}: the Shep control center is listening on ${host}. ` +
+      `Anyone who can reach this address can run commands as this user.`,
+  };
+}
 
 export interface WebServerDeps {
   createNextApp: typeof next;
@@ -135,10 +203,22 @@ export class WebServerService implements IWebServerService {
       }
     }
 
-    // Bind to SHEP_BIND_HOST (default: localhost). Next's own hostname is
-    // always 'localhost' so it generates correct relative URLs regardless of
-    // which interface the HTTP server actually listens on.
-    const bindHost = process.env.SHEP_BIND_HOST ?? 'localhost';
+    // Bind to SHEP_BIND_HOST (default: localhost), refusing anything outside
+    // the loopback interface without an explicit opt-in. Next's own hostname
+    // is always 'localhost' so it generates correct relative URLs regardless
+    // of which interface the HTTP server actually listens on.
+    const { host: bindHost, warning } = resolveBindHost(
+      process.env[BIND_HOST_ENV],
+      process.env[ALLOW_PUBLIC_BIND_ENV] === ENV_FLAG_ON
+    );
+    if (warning) {
+      // eslint-disable-next-line no-console
+      console.warn(`[WebServerService] ${warning}`);
+    }
+
+    // Publish the port so `middleware.ts` can reject Host headers that name a
+    // different port (DNS rebinding defence).
+    process.env[WEB_PORT_ENV] = String(port);
 
     const app = this.deps.createNextApp({
       dev,
@@ -153,9 +233,7 @@ export class WebServerService implements IWebServerService {
     this.app = app;
 
     await new Promise<void>((resolve, reject) => {
-      const server = this.deps.createHttpServer((req, res) => {
-        handle(req!, res!);
-      });
+      const server = this.deps.createHttpServer(createRequestListener(handle));
 
       server.on('error', reject);
 

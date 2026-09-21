@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { Application, DeploymentState } from '@shepai/core/domain/generated/output';
 import { ApplicationStatus } from '@shepai/core/domain/generated/output';
 import type { ChatState } from '@shepai/core/application/ports/output/services/interactive-session-service.interface';
@@ -46,6 +47,7 @@ export interface ApplicationPageProps {
 }
 
 export function ApplicationPage({ application, initialChatState }: ApplicationPageProps) {
+  const [compactPane, setCompactPane] = useState<'left' | 'right'>('left');
   // Hoisted dev-server state — subscribes to the shared
   // DeploymentStatusProvider scoped to this application's id. The server
   // component seeds the provider with `initialDeployment` (if any) so
@@ -126,17 +128,22 @@ export function ApplicationPage({ application, initialChatState }: ApplicationPa
     // exactly — in the apps-only surface the main is `viewport - topbar`,
     // and `h-dvh` would make this 40px taller than its container and
     // trigger an outer scrollbar over the whole window.
-    <div className="bg-background flex h-full flex-col">
+    <div className="bg-background @container flex h-full min-w-0 flex-col">
       <AppTopBar
         application={application}
         activeView={activeView}
-        onViewChange={handleViewChange}
+        onViewChange={(view) => {
+          handleViewChange(view);
+          setCompactPane('right');
+        }}
         agentRunning={agentRunning}
         initialChatState={initialChatState}
         deploy={deploy}
         cloudDeploy={cloudDeploy}
       />
       <ResizableSplit
+        compactPane={compactPane}
+        onCompactPaneChange={setCompactPane}
         left={
           <ChatTab
             featureId={featureIdForApplication(application.id)}

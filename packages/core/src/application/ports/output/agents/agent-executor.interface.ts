@@ -71,6 +71,14 @@ export interface AgentExecutionStreamEvent {
   content: string;
   /** When the event was emitted */
   timestamp: Date;
+  /**
+   * Session ID for resuming the conversation, when the agent reported one.
+   *
+   * `content` always carries text meant for a human or a downstream node, so an
+   * agent whose final event also identifies the session puts the identifier
+   * here — never in `content`, which callers treat as the answer.
+   */
+  sessionId?: string;
 }
 
 /**

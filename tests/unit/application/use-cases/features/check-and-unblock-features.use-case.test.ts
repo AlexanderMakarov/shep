@@ -32,6 +32,7 @@ import { SdlcLifecycle, BuildMode } from '@/domain/generated/output.js';
 import type { Feature } from '@/domain/generated/output.js';
 import { createMockFeatureRepository } from '../../../../helpers/feature-repository.mock.js';
 import { SpawnFeatureAgentUseCase } from '@/application/use-cases/features/spawn-feature-agent.use-case.js';
+import { createMockFeatureCapacityService } from '../../../../helpers/feature-capacity.mock.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,6 +80,7 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
   let mockAgentProcess: IFeatureAgentProcessService;
   let mockWorktreeService: IWorktreeService;
   let mockSyncFeatureBranch: SyncFeatureBranchUseCase;
+  let capacity: ReturnType<typeof createMockFeatureCapacityService>;
   let mockAgentRunRepo: IAgentRunRepository;
   let mockPhaseTimingRepo: IPhaseTimingRepository;
 
@@ -143,6 +145,8 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
       findByFeatureId: vi.fn(),
     } as unknown as IPhaseTimingRepository;
 
+    capacity = createMockFeatureCapacityService();
+
     mockSyncFeatureBranch = {
       execute: vi.fn().mockResolvedValue({
         cwd: '/worktrees/test-feature',
@@ -166,7 +170,7 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
         { load: vi.fn().mockResolvedValue({ security: { mode: 'Advisory' } }) } as any,
         mockSyncFeatureBranch
       ) as any,
-      { hasCapacity: vi.fn().mockResolvedValue(true), getQueuePosition: vi.fn() } as any
+      capacity as never
     );
   });
 
@@ -225,7 +229,7 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
 
     await useCase.execute(parentId);
 
-    expect(mockFeatureRepo.update).not.toHaveBeenCalled();
+    expect(capacity.claimSlot).not.toHaveBeenCalled();
     expect(mockAgentProcess.spawn).not.toHaveBeenCalled();
   });
 
@@ -241,10 +245,18 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
 
     await useCase.execute(parentId);
 
-    expect(mockFeatureRepo.update).toHaveBeenCalledOnce();
-    const updatedFeature = (mockFeatureRepo.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(updatedFeature.id).toBe('child-001');
-    expect(updatedFeature.lifecycle).toBe(SdlcLifecycle.Started);
+    // The transition is the capacity claim: taking the slot and leaving
+    // Blocked are one statement, so this sweep cannot start a child that a
+    // `shep start` is starting at the same moment.
+    expect(capacity.claimSlot).toHaveBeenCalledOnce();
+    expect(capacity.claimSlot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureId: 'child-001',
+        targetLifecycle: SdlcLifecycle.Started,
+        requireLifecycle: SdlcLifecycle.Blocked,
+      })
+    );
+    expect(mockFeatureRepo.update).not.toHaveBeenCalled();
 
     expect(mockAgentProcess.spawn).toHaveBeenCalledOnce();
     expect(mockAgentProcess.spawn).toHaveBeenCalledWith(
@@ -288,11 +300,11 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
 
     await useCase.execute(parentId);
 
-    expect(mockFeatureRepo.update).toHaveBeenCalledTimes(2);
+    expect(capacity.claimSlot).toHaveBeenCalledTimes(2);
     expect(mockAgentProcess.spawn).toHaveBeenCalledTimes(2);
 
-    const updatedIds = (mockFeatureRepo.update as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call: unknown[]) => (call[0] as Feature).id
+    const updatedIds = capacity.claimSlot.mock.calls.map(
+      (call: unknown[]) => (call[0] as { featureId: string }).featureId
     );
     expect(updatedIds).toContain('child-001');
     expect(updatedIds).toContain('child-002');
@@ -307,10 +319,10 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
 
     await useCase.execute(parentId);
 
-    expect(mockFeatureRepo.update).toHaveBeenCalledOnce();
-    const updatedFeature = (mockFeatureRepo.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(updatedFeature.id).toBe('blocked');
-    expect(updatedFeature.lifecycle).toBe(SdlcLifecycle.Started);
+    expect(capacity.claimSlot).toHaveBeenCalledOnce();
+    expect(capacity.claimSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ featureId: 'blocked', targetLifecycle: SdlcLifecycle.Started })
+    );
 
     expect(mockAgentProcess.spawn).toHaveBeenCalledOnce();
   });
@@ -399,8 +411,8 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
 
     // spawn() called exactly once (on the first call only)
     expect(mockAgentProcess.spawn).toHaveBeenCalledOnce();
-    // update called exactly once (on the first call only)
-    expect(mockFeatureRepo.update).toHaveBeenCalledOnce();
+    // the slot claimed exactly once (on the first call only)
+    expect(capacity.claimSlot).toHaveBeenCalledOnce();
   });
 
   // -------------------------------------------------------------------------
@@ -558,8 +570,8 @@ describe('CheckAndUnblockFeaturesUseCase', () => {
 
     await useCase.execute(parentId);
 
-    // Should still update lifecycle but NOT call spawn
-    expect(mockFeatureRepo.update).toHaveBeenCalledOnce();
+    // Should still claim the slot and transition, but NOT call spawn
+    expect(capacity.claimSlot).toHaveBeenCalledOnce();
     expect(mockAgentProcess.spawn).not.toHaveBeenCalled();
   });
 });

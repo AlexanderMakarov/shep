@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -203,6 +204,78 @@ describe('Tabs', () => {
         const tabindex = tab.getAttribute('tabindex');
         expect(tabindex).not.toBeNull();
       });
+    });
+  });
+
+  describe('forceMount (draft preservation)', () => {
+    // Radix keeps the panel <div> in the DOM but drops its CHILDREN when the
+    // tab is inactive — that is what destroys the chat draft, attachments and
+    // model override. `forceMount` is the opt-in that keeps children alive.
+    function Harness() {
+      return (
+        <Tabs defaultValue="chat">
+          <TabsList>
+            <TabsTrigger value="chat">Chat</TabsTrigger>
+            <TabsTrigger value="plan">Plan</TabsTrigger>
+          </TabsList>
+          <TabsContent value="chat" forceMount data-testid="chat-panel">
+            <input aria-label="draft" defaultValue="" />
+          </TabsContent>
+          <TabsContent value="plan" data-testid="plan-panel">
+            Plan content
+          </TabsContent>
+        </Tabs>
+      );
+    }
+
+    it("keeps a force-mounted panel's children alive while another tab is active", async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+
+      await user.click(screen.getByRole('tab', { name: 'Plan' }));
+
+      expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
+      // The children are the part Radix drops without forceMount.
+      expect(screen.getByLabelText('draft')).toBeInTheDocument();
+    });
+
+    it('preserves the draft typed into a force-mounted panel across tab switches', async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+
+      await user.type(screen.getByLabelText('draft'), 'half-written message');
+      await user.click(screen.getByRole('tab', { name: 'Plan' }));
+      await user.click(screen.getByRole('tab', { name: 'Chat' }));
+
+      expect(screen.getByLabelText('draft')).toHaveValue('half-written message');
+    });
+
+    it('hides an inactive force-mounted panel from sight and from assistive tech', async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+
+      await user.click(screen.getByRole('tab', { name: 'Plan' }));
+      const panel = screen.getByTestId('chat-panel');
+
+      expect(panel).toHaveAttribute('data-state', 'inactive');
+      // Radix stops setting the `hidden` attribute once a panel is
+      // force-mounted, so the primitive must supply `display: none` itself —
+      // that removes the node from the a11y tree AND the tab order.
+      expect(panel.className.split(/\s+/)).toContain('data-[state=inactive]:hidden');
+    });
+
+    it('leaves the default (non-opted-in) behaviour untouched', async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+
+      // Without forceMount the panel's children stay unmounted.
+      expect(screen.queryByText('Plan content')).not.toBeInTheDocument();
+      expect(screen.getByTestId('plan-panel').className).not.toMatch(
+        /data-\[state=inactive\]:hidden/
+      );
+
+      await user.click(screen.getByRole('tab', { name: 'Plan' }));
+      expect(screen.getByText('Plan content')).toBeInTheDocument();
     });
   });
 });

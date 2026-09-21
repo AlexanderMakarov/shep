@@ -27,7 +27,7 @@ export type SoftDeletableEntity = BaseEntity & {
 The central aggregate root representing a piece of work progressing through the SDLC lifecycle. Feature encapsulates all related entities (Messages, Plan, Artifacts) and serves as the boundary for transactional consistency.
 
 ```typescript
-export type Feature = BaseEntity & {
+export type Feature = SoftDeletableEntity & {
   name: string;
   userQuery: string;
   slug: string;
@@ -39,16 +39,33 @@ export type Feature = BaseEntity & {
   plan?: Plan;
   relatedArtifacts: Artifact[];
   agentRunId?: string;
+  injectedSkills?: string[];
   specPath?: string;
   repositoryId?: UUID;
+  applicationId?: UUID;
+  buildMode: BuildMode;
   fast: boolean;
   push: boolean;
   openPr: boolean;
+  forkAndPr: boolean;
+  commitSpecs: boolean;
+  ciWatchEnabled: boolean;
+  enableEvidence: boolean;
+  injectSkills: boolean;
+  commitEvidence: boolean;
   approvalGates: ApprovalGates;
   worktreePath?: string;
+  activePlugins?: Record<string, boolean>;
+  iterationCount?: integer;
+  maxIterations?: integer;
   pr?: PullRequest;
   parentId?: UUID;
+  previousLifecycle?: SdlcLifecycle;
   attachments?: Attachment[];
+  bedrockEnabled?: boolean;
+  sourceAgentSessionId?: string;
+  sourceAgentType?: AgentType;
+  queuedAt?: any;
 };
 ```
 
@@ -171,8 +188,19 @@ export type Settings = BaseEntity & {
   workflow: WorkflowConfig;
   featureFlags?: FeatureFlags;
   onboardingComplete: boolean;
+  interactiveAgent?: InteractiveAgentConfig;
+  fabLayout?: FabLayoutConfig;
+  supervisor?: SupervisorConfig;
+  defaultHomePage?: DefaultHomePage;
+  whatsapp?: WhatsAppConfig;
+  security?: SecurityConfig;
+  messaging?: MessagingConfig;
+  worktree?: WorktreeConfig;
 };
 ```
+
+Settings is persisted as a single flattened row in SQLite — see
+[../architecture/settings-service.md](../architecture/settings-service.md).
 
 ### Repository
 
@@ -180,6 +208,10 @@ export type Settings = BaseEntity & {
 export type Repository = SoftDeletableEntity & {
   name: string;
   path: string;
+  remoteUrl?: string;
+  isFork?: boolean;
+  upstreamUrl?: string;
+  bedrockEnabled?: boolean;
 };
 ```
 
@@ -221,6 +253,7 @@ export type UserProfile = {
   name?: string;
   email?: string;
   githubUsername?: string;
+  preferredLanguage?: Language;
 };
 ```
 
@@ -230,6 +263,8 @@ export type UserProfile = {
 export type EnvironmentConfig = {
   defaultEditor: EditorType;
   shellPreference: string;
+  terminalPreference: TerminalType;
+  defaultCloneDirectory?: string;
 };
 ```
 
@@ -273,8 +308,15 @@ export type PullRequest = {
   ciStatus?: CiStatus;
   ciFixAttempts?: number;
   ciFixHistory?: CiFixRecord[];
+  mergeable?: boolean;
+  upstreamPrUrl?: string;
+  upstreamPrNumber?: number;
+  upstreamPrStatus?: PrStatus;
 };
 ```
+
+The `upstream*` fields are populated only for the fork-and-PR flow, where the
+feature branch lives on a fork and the PR targets the upstream repository.
 
 ### Attachment
 
@@ -286,6 +328,7 @@ export type Attachment = {
   mimeType: string;
   path: string;
   createdAt: any;
+  notes?: string;
 };
 ```
 
@@ -306,9 +349,22 @@ export type ApprovalGateDefaults = {
 export type WorkflowConfig = {
   openPrOnImplementationComplete: boolean;
   approvalGateDefaults: ApprovalGateDefaults;
+  ciWatchEnabled: boolean;
+  maxParallelFeatures?: number;
   ciMaxFixAttempts?: number;
   ciWatchTimeoutMs?: number;
   ciLogMaxChars?: number;
+  ciWatchPollIntervalSeconds?: number;
+  stageTimeouts?: StageTimeouts;
+  analyzeRepoTimeouts?: AnalyzeRepoTimeouts;
+  enableEvidence: boolean;
+  commitEvidence: boolean;
+  evidenceRetries?: number;
+  hideCiStatus?: boolean;
+  defaultMode: string;
+  explorationMaxIterations?: number;
+  autoArchiveDelayMinutes?: number;
+  skillInjection?: SkillInjectionConfig;
 };
 ```
 
@@ -327,11 +383,25 @@ export type NotificationPreferences = {
 
 ```typescript
 export type FeatureFlags = {
-  skills: boolean;
   envDeploy: boolean;
   debug: boolean;
+  reactFileManager: boolean;
+  projects: boolean;
+  codeReview: boolean;
+  collaboration: boolean;
+  bedrockIntegration: boolean;
+  whatsappDispatch: boolean;
+  aspm: boolean;
+  clusters: boolean;
+  supplyChainSecurity: boolean;
+  scheduledWorkflows: boolean;
+  githubImport: boolean;
 };
 ```
+
+Several command groups are gated on these flags — for example `shep aspm` on
+`aspm`, `shep supervisor` on `collaboration`, and `shep security enforce` on
+`supplyChainSecurity`.
 
 ### GanttViewData
 
@@ -367,6 +437,11 @@ enum SdlcLifecycle {
   Review = 'Review',
   Maintain = 'Maintain',
   Blocked = 'Blocked',
+  Pending = 'Pending',
+  Exploring = 'Exploring',
+  Deleting = 'Deleting',
+  AwaitingUpstream = 'AwaitingUpstream',
+  Archived = 'Archived',
 }
 ```
 
@@ -456,13 +531,30 @@ enum MessageRole {
 ```typescript
 enum AgentType {
   ClaudeCode = 'claude-code',
+  KimiCode = 'kimi-code',
+  CodexCli = 'codex-cli',
+  CopilotCli = 'copilot-cli',
   GeminiCli = 'gemini-cli',
-  Aider = 'aider',
-  Continue = 'continue',
+  Aider = 'aider', // Coming Soon — not executable
+  Continue = 'continue', // Coming Soon — not executable
   Cursor = 'cursor',
+  Cline = 'cline',
+  OpenRouter = 'openrouter',
+  TogetherAi = 'together-ai',
+  Ollama = 'ollama',
+  LlmProxy = 'llmproxy',
   Dev = 'dev',
 }
 ```
+
+Twelve of the fourteen members are supported today. `aider` and `continue` are
+declared for future extensibility only: they have `supported: false` in the
+agent catalog, no binary and no executor, and are surfaced in pickers as
+"Coming Soon". Per-agent facts (label, kind, binary, tool id, supported flag,
+model list) live in one place —
+`packages/core/src/domain/shared/agent-catalog.ts`, a total
+`Record<AgentType, AgentDescriptor>`, so adding a member here is a compile error
+until its catalog row exists.
 
 ### AgentAuthMethod
 
@@ -502,6 +594,7 @@ enum CiStatus {
   Pending = 'Pending',
   Success = 'Success',
   Failure = 'Failure',
+  Indeterminate = 'Indeterminate',
 }
 ```
 
@@ -518,6 +611,72 @@ enum NotificationEventType {
   PrClosed = 'pr_closed',
   PrChecksPassed = 'pr_checks_passed',
   PrChecksFailed = 'pr_checks_failed',
+  PrBlocked = 'pr_blocked',
+  MergeReviewReady = 'merge_review_ready',
+  CloudDeploymentUpdated = 'cloud_deployment_updated',
+  ApplicationUpdated = 'application_updated',
+  OperationLogAppended = 'operation_log_appended',
+  AgentQuestionPending = 'agent_question_pending',
+  AgentQuestionBlocking = 'agent_question_blocking',
+  AgentMessageBlocked = 'agent_message_blocked',
+  SupervisorEscalated = 'supervisor_escalated',
+  SupervisorFailed = 'supervisor_failed',
+  WorkflowStarted = 'workflow_started',
+  WorkflowCompleted = 'workflow_completed',
+  WorkflowFailed = 'workflow_failed',
+}
+```
+
+### BuildMode
+
+Selects which agent graph runs a feature.
+
+```typescript
+enum BuildMode {
+  Application = 'application',
+  Fast = 'fast',
+  Spec = 'spec',
+  Exploration = 'exploration',
+}
+```
+
+### TerminalType
+
+```typescript
+enum TerminalType {
+  System = 'system',
+  Warp = 'warp',
+  ITerm2 = 'iterm2',
+  Alacritty = 'alacritty',
+  Kitty = 'kitty',
+}
+```
+
+### Language
+
+The nine locales shipped under `translations/<locale>/`.
+
+```typescript
+enum Language {
+  English = 'en',
+  Ukrainian = 'uk',
+  Russian = 'ru',
+  Portuguese = 'pt',
+  Spanish = 'es',
+  Arabic = 'ar',
+  Hebrew = 'he',
+  French = 'fr',
+  German = 'de',
+}
+```
+
+### DefaultHomePage
+
+```typescript
+enum DefaultHomePage {
+  ControlCenter = 'control-center',
+  Applications = 'applications',
+  Features = 'features',
 }
 ```
 

@@ -1,13 +1,22 @@
 # Good First Issues
 
-A curated list of issues that are well-scoped, well-described, and a good place to start. Grouped by **lane** (the part of the system you'll touch) and by **difficulty** (`goodFirst` is the easiest tier).
-
-If nothing here looks like a fit, search the issue tracker with the [`good first issue` label](https://github.com/shep-ai/shep/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) directly, or open a [feature request](./.github/ISSUE_TEMPLATE/feature-request.yml) for something you'd like to build.
-
-> **How this list is maintained**
-> The contributor-onboarding agent grooms inbound issues into lanes and difficulty tiers. Maintainers refresh this list during the monthly recap. If an issue here is already claimed or has gone stale, it'll be re-groomed and either reopened or replaced.
+> ## ⚠️ This file currently curates nothing
 >
-> **Status Aug 28, 2026:** All 11 previously curated entries (#615–#625) are now closed — 6 merged (#616, #617, #618, #619, #620, #622), 2 deleted (#615, #623), and 3 closed as not planned (#621, #624, #625). Each bucket below links to a live tracker search for that lane and difficulty.
+> **Every one of the fifteen buckets below is empty.** They are kept as a routing table: each one links to a live GitHub search for that lane and difficulty, and that search — not this file — is the authoritative list of what is available right now.
+>
+> **Start here instead:** [open issues labelled `good first issue`](https://github.com/shep-ai/shep/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+>
+> The last curated batch was #615–#625, and all eleven are closed: 6 merged (#616, #617, **#618**, #619, #620, #622), 2 deleted (#615, #623), 3 closed as not planned (#621, #624, #625). Nothing has replaced them.
+
+This page groups work by **lane** (the part of the system you'll touch) and by **difficulty** (`goodFirst` is the easiest tier). If nothing in the tracker looks like a fit, open a [feature request](./.github/ISSUE_TEMPLATE/feature-request.yml) for something you'd like to build, or a [Good First Issue](./.github/ISSUE_TEMPLATE/good-first-issue.yml) for something a future contributor could pick up.
+
+### How this list is (and isn't) maintained
+
+- **Nothing regenerates this Markdown file.** Refreshing the buckets below is a manual maintainer job, and it has not happened since the batch above closed.
+- **`.github/workflows/generate-good-first-issues.yml` does not write this file.** It runs an agent that scans the codebase and current AI trends and opens up to ten **new GitHub issues** per run via `gh issue create`. It never commits or pushes. It is also **disabled by default** — its `schedule:` trigger is commented out, so it only runs on a manual `workflow_dispatch` from the Actions tab.
+- **Inbound issues are still groomed automatically.** `.github/workflows/label-by-lane.yml` fires on `issues: [opened]` and runs `shep contributors groom-issue`, which classifies the lane, proposes acceptance criteria, and suggests labels — so the `lane:*` and `difficulty:*` labels the searches below rely on do get applied.
+
+Net effect: trust the tracker links, not the bullet lists.
 
 ---
 
@@ -15,8 +24,13 @@ If nothing here looks like a fit, search the issue tracker with the [`good first
 
 1. Comment `/claim` on the issue (or just say "I'd like to take this") so we don't double-assign
 2. Run `pnpm dev:cli doctor` to verify your environment
-3. Optionally: `pnpm dev:cli contributors groom-issue --number <issue>` to get acceptance criteria + lane suggestion from the contributor-onboarding agent
-4. Open a PR using the [PR template](./.github/PULL_REQUEST_TEMPLATE.md)
+3. Open a PR using the [PR template](./.github/PULL_REQUEST_TEMPLATE.md)
+
+Grooming is automatic and does not need a manual step: `groom-issue` is a GitHub Actions entry point that takes **no options** — no `--number`. It reads the issue from `$GITHUB_EVENT_PATH` and the repo slug from `$GITHUB_REPOSITORY`. To re-run it by hand against a saved event payload:
+
+```bash
+GITHUB_EVENT_PATH=event.json GITHUB_REPOSITORY=shep-ai/shep pnpm dev:cli contributors groom-issue
+```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full flow.
 
@@ -42,7 +56,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full flow.
 
 ## agents lane
 
-*Agent prompts, supervisor flow, agent-agnostic plumbing under `tsp/agents/`, `application/use-cases/agents/`, `infrastructure/agents/`.*
+*Agent prompts, supervisor flow, agent-agnostic plumbing under `tsp/agents/`, `packages/core/src/application/use-cases/agents/`, `packages/core/src/infrastructure/services/agents/`.*
 
 ### goodFirst
 
@@ -96,7 +110,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full flow.
 
 ## infra lane
 
-*SQLite, ports/adapters, queues, schedulers, GitHub plumbing under `infrastructure/`.*
+*SQLite, ports/adapters, queues, schedulers, GitHub plumbing under `packages/core/src/infrastructure/`.*
 
 ### goodFirst
 
@@ -112,14 +126,15 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full flow.
 
 ---
 
-## When this list is empty
+## The list is empty — now what?
 
-It usually means the curated buffer is being refreshed, not that there's nothing to do. Two reliable next steps:
+An empty page here does not mean there is nothing to do; it means nobody has curated this Markdown file lately. Three reliable next steps:
 
-1. Search the live tracker for [open `good first issue` labels](https://github.com/shep-ai/shep/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — anything there is fair game.
+1. Search the live tracker for [open `good first issue` labels](https://github.com/shep-ai/shep/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — anything there is fair game, and it is kept current by the repo itself rather than by hand.
 2. Drop into [Discord](https://discord.gg/ES6tdVFfur) and ask "what should I work on?" — a maintainer will route you.
+3. Open a [Good First Issue](./.github/ISSUE_TEMPLATE/good-first-issue.yml) yourself if you spot something a future contributor could pick up. The issue templates collect lane, difficulty and acceptance criteria, and `label-by-lane.yml` grooms it on open.
 
-You can also open a [Good First Issue](./.github/ISSUE_TEMPLATE/good-first-issue.yml) yourself if you spot something a future contributor could pick up.
+Re-curating this file is itself a good first issue in the **docs** lane.
 
 ---
 

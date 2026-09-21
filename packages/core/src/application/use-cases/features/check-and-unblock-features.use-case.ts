@@ -85,17 +85,33 @@ export class CheckAndUnblockFeaturesUseCase {
       }
 
       // The dependency gate is open, but a machine slot is a separate question.
-      // With none free, the child leaves Blocked for the capacity queue rather
-      // than starting — AdmitQueuedFeaturesUseCase releases it when one frees.
-      if (!(await this.capacity.hasCapacity())) {
-        await this.featureRepo.update(markQueuedForCapacity(child));
+      // Taking the slot and transitioning are ONE statement, so this sweep
+      // cannot start a child that a `shep start` or a queue drain is starting
+      // at the same moment — that would be two workers in one worktree.
+      const now = new Date();
+      const claimed = await this.capacity.claimSlot({
+        featureId: child.id,
+        targetLifecycle: SdlcLifecycle.Started,
+        requireLifecycle: SdlcLifecycle.Blocked,
+        now,
+      });
+
+      if (!claimed) {
+        const fresh = await this.featureRepo.findById(child.id);
+        // Still Blocked means the cap refused it: the child leaves Blocked for
+        // the capacity queue rather than starting, and
+        // AdmitQueuedFeaturesUseCase releases it when a slot frees. Anything
+        // else means another process already moved it on.
+        if (fresh && fresh.lifecycle === SdlcLifecycle.Blocked) {
+          await this.featureRepo.update(markQueuedForCapacity(child, now));
+        }
         continue;
       }
 
-      // Transition to Started
+      // The claim already wrote the transition — mirror it in memory for the
+      // rebase and spawn below.
       child.lifecycle = SdlcLifecycle.Started;
-      child.updatedAt = new Date();
-      await this.featureRepo.update(child);
+      child.updatedAt = now;
       unblockedIds.push(child.id);
 
       // Rebase child branch onto parent branch (isolated per-child)

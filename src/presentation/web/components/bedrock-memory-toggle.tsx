@@ -9,9 +9,11 @@ import {
 } from '@/app/actions/enable-bedrock.action';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu';
 
 export interface BedrockMemoryToggleProps {
   applicationId: string;
+  menuItem?: boolean;
   initialEnabled: boolean;
   /**
    * Stories and tests inject a stand-in for the server action so the three
@@ -30,6 +32,7 @@ export function BedrockMemoryToggle({
   applicationId,
   initialEnabled,
   enableActionOverride,
+  menuItem = false,
 }: BedrockMemoryToggleProps) {
   const [enabled, setEnabled] = useState(initialEnabled);
   const [failure, setFailure] = useState<FailureState | null>(null);
@@ -57,6 +60,20 @@ export function BedrockMemoryToggle({
       }
       setEnabled(result.bedrockEnabled);
     });
+  }
+
+  if (menuItem) {
+    return (
+      <DropdownMenuCheckboxItem
+        checked={enabled}
+        disabled={isPending || enabled}
+        onCheckedChange={handleToggle}
+        onSelect={(event) => event.preventDefault()}
+        data-testid="bedrock-memory-toggle"
+      >
+        Bedrock memory
+      </DropdownMenuCheckboxItem>
+    );
   }
 
   return (

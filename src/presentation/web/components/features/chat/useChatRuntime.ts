@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ThreadMessageLike, AppendMessage } from '@assistant-ui/react';
 import { useExternalStoreRuntime } from '@assistant-ui/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type { InteractiveMessage, WorkflowStep } from '@shepai/core/domain/generated/output';
 import { InteractiveMessageRole } from '@shepai/core/domain/generated/output';
 
@@ -152,6 +153,29 @@ async function postMessage(
   if (!res.ok) throw new Error(`Failed to send message: ${res.status}`);
   const data = (await res.json()) as { message: InteractiveMessage };
   return data.message;
+}
+
+// ── User-facing failure messages ────────────────────────────────────────────
+//
+// Plain strings rather than i18n keys: `translations/` is not part of this
+// change's surface, and a missing key renders as the raw key path on screen.
+
+const RETRY_LABEL = 'Retry';
+const ANSWER_FAILED_MESSAGE = 'Your answer was not delivered';
+const ANSWER_FAILED_DESCRIPTION = 'The agent is still waiting for it. Retry to answer again.';
+const SEND_FAILED_MESSAGE = 'Message not sent';
+const STOP_FAILED_MESSAGE = 'Could not stop the agent';
+const STOP_FAILED_DESCRIPTION = 'It is still running. Try again in a moment.';
+
+/** Max characters of the failed message echoed back in the toast. */
+const SEND_FAILED_PREVIEW_CHARS = 140;
+
+/** Short, single-line echo of the message the user just lost. */
+function previewMessage(content: string): string {
+  const oneLine = content.replace(/\s+/g, ' ').trim();
+  return oneLine.length > SEND_FAILED_PREVIEW_CHARS
+    ? `${oneLine.slice(0, SEND_FAILED_PREVIEW_CHARS)}…`
+    : oneLine;
 }
 
 // ── Convert domain message to assistant-ui format ───────────────────────────
@@ -337,17 +361,35 @@ export function useChatRuntime(
 
   // ── Interaction state (AskUserQuestion) ─────────────────────────────
   const [pendingInteraction, setPendingInteraction] = useState<InteractionData | null>(null);
+  // Mirror of the state above so async callbacks can snapshot the card
+  // without capturing a stale render value (and without re-creating
+  // `respondToInteraction` on every question).
+  const pendingInteractionRef = useRef<InteractionData | null>(null);
+  pendingInteractionRef.current = pendingInteraction;
 
-  // Sync pending interaction from backend polling (fallback for missed SSE)
+  // Sync pending interaction from backend state (fallback for missed SSE).
+  //
+  // This only reacts to a CHANGE in what the backend reports. The earlier
+  // version also depended on the local `pendingInteraction` and cleared it
+  // whenever the cached chat state had none — so an interaction pushed over
+  // SSE (the normal path; the query is not refetched for it) was wiped in
+  // the very next commit, and any attempt to restore the card after a failed
+  // answer was wiped the same way. Clearing now requires the backend to
+  // actually transition from "has a question" to "has none" (e.g. the agent
+  // moved on), which is the only case that genuinely invalidates the card.
+  const backendInteraction = chatState?.pendingInteraction ?? null;
+  const prevBackendInteractionRef = useRef<InteractionData | null>(null);
   useEffect(() => {
-    const backendInteraction = chatState?.pendingInteraction ?? null;
+    const previousBackendInteraction = prevBackendInteractionRef.current;
+    prevBackendInteractionRef.current = backendInteraction;
     if (backendInteraction) {
       setPendingInteraction(backendInteraction);
-    } else if (!backendInteraction && pendingInteraction) {
-      // Backend cleared it (e.g. agent continued) — clear local state
+      return;
+    }
+    if (previousBackendInteraction) {
       setPendingInteraction(null);
     }
-  }, [chatState?.pendingInteraction, pendingInteraction]);
+  }, [backendInteraction]);
 
   // Delayed awaiting — only show Thinking bubble after 600ms to avoid flash
   const startAwaiting = useCallback(() => {
@@ -611,17 +653,32 @@ export function useChatRuntime(
 
       return { previous };
     },
-    onError: (_err, _content, context) => {
-      // Rollback on error
+    onError: (_err, content, context) => {
+      // Rollback on error. The composer was cleared the moment the user hit
+      // send, so a silent rollback makes the message vanish as if it had
+      // never been typed — say so, and hand the text back via a retry.
       if (context?.previous) {
         queryClient.setQueryData(chatQueryKey(featureId), context.previous);
       }
+      cancelAwaiting();
+      toast.error(SEND_FAILED_MESSAGE, {
+        description: previewMessage(content),
+        action: {
+          label: RETRY_LABEL,
+          onClick: () => sendMutationRef.current?.(content),
+        },
+      });
     },
     onSettled: () => {
       // Refetch to reconcile optimistic data with server
       void queryClient.invalidateQueries({ queryKey: chatQueryKey(featureId) });
     },
   });
+
+  // Lets `onError` above offer a retry that resends the exact same content
+  // without referencing the mutation it is being declared inside.
+  const sendMutationRef = useRef<((content: string) => void) | null>(null);
+  sendMutationRef.current = (content: string) => sendMutation.mutate(content);
 
   // ── Derive running state ────────────────────────────────────────────────
   // Note: sendMutation.isPending is excluded — the 600ms awaitingResponse
@@ -956,21 +1013,46 @@ export function useChatRuntime(
   }, [featureId, queryClient, cancelAwaiting]);
 
   // ── Stop agent ────────────────────────────────────────────────────────
+  //
+  // This is the ONLY thing that actually stops the running agent process —
+  // clearing the local streaming state just hides the evidence. It never
+  // throws at the caller (the stop button is a fire-and-forget UI action);
+  // a failure is surfaced as a toast so the user knows the agent is still
+  // running, and the local state is left untouched so the UI keeps telling
+  // the truth.
+  const [isStopping, setIsStopping] = useState(false);
   const stopAgent = useCallback(async () => {
-    const res = await fetch(`/api/interactive/chat/${featureId}/stop`, { method: 'POST' });
-    if (!res.ok) throw new Error(`Failed to stop agent: ${res.status}`);
-    setStreamingText('');
+    setIsStopping(true);
+    try {
+      const res = await fetch(`/api/interactive/chat/${featureId}/stop`, { method: 'POST' });
+      if (!res.ok) throw new Error(`${res.status}`);
+    } catch {
+      toast.error(STOP_FAILED_MESSAGE, { description: STOP_FAILED_DESCRIPTION });
+      return;
+    } finally {
+      setIsStopping(false);
+    }
 
+    setStreamingText('');
     setStatusLog(null);
     cancelAwaiting();
     void queryClient.invalidateQueries({ queryKey: chatQueryKey(featureId) });
   }, [featureId, queryClient, cancelAwaiting]);
 
   // ── Respond to interaction (AskUserQuestion) ───────────────────────────
+  //
+  // The answer POST is the ONLY thing that unblocks the agent, so the card is
+  // cleared optimistically but genuinely restored when the POST does not land.
+  // Losing it silently (the previous behaviour: clear first, `console.error`
+  // on failure) left the user believing they had answered while the agent
+  // waited forever.
+  const respondToInteractionRef = useRef<
+    ((answers: Record<string, string>) => Promise<void>) | null
+  >(null);
   const respondToInteraction = useCallback(
     async (answers: Record<string, string>) => {
-      // Clear the bubble and status log immediately — answers are persisted as
-      // a user message by the backend, shown in conversation history on refetch.
+      // Snapshot the card so a failure can put it back exactly as it was.
+      const submitted = pendingInteractionRef.current;
       setPendingInteraction(null);
       setStatusLog(null);
 
@@ -980,13 +1062,18 @@ export function useChatRuntime(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ answers }),
         });
-        if (!res.ok) {
-          // eslint-disable-next-line no-console
-          console.error(`[respondToInteraction] failed: ${res.status}`);
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[respondToInteraction] error:', err);
+        if (!res.ok) throw new Error(`${res.status}`);
+      } catch {
+        // Revert the optimistic clear — the agent is still waiting on us.
+        if (submitted) setPendingInteraction(submitted);
+        toast.error(ANSWER_FAILED_MESSAGE, {
+          description: ANSWER_FAILED_DESCRIPTION,
+          action: {
+            label: RETRY_LABEL,
+            onClick: () => void respondToInteractionRef.current?.(answers),
+          },
+        });
+        return;
       }
 
       // Refetch to show the persisted user message with answers
@@ -994,6 +1081,7 @@ export function useChatRuntime(
     },
     [featureId, queryClient]
   );
+  respondToInteractionRef.current = respondToInteraction;
 
   // ── Build assistant-ui runtime ──────────────────────────────────────────
   // While a workflow is RUNNING, assistant-ui's `isRunning=true` would
@@ -1014,12 +1102,10 @@ export function useChatRuntime(
     convertMessage: useCallback((msg: ThreadMessageLike): ThreadMessageLike => msg, []),
     isRunning: runtimeIsRunning,
     onNew,
-    onCancel: useCallback(async () => {
-      setStreamingText('');
-
-      setStatusLog(null);
-      cancelAwaiting();
-    }, [cancelAwaiting]),
+    // assistant-ui's cancel affordance (the composer's stop button) must
+    // stop the AGENT, not just the local streaming buffer — otherwise the
+    // UI goes quiet while the agent keeps burning tokens in the background.
+    onCancel: stopAgent,
   });
 
   return {
@@ -1027,6 +1113,8 @@ export function useChatRuntime(
     status,
     clearChat,
     stopAgent,
+    /** True while a stop request is in flight — the stop button is busy. */
+    isStopping,
     sessionInfo,
     isChatLoading,
     pendingInteraction,

@@ -3,7 +3,10 @@
   "compilerOptions": {
     "noEmit": false,
     "declaration": true,
-    "declarationMap": true,
+    // Declaration maps point at .ts sources, and the published tarball ships
+    // only `dist`, `web`, `apis` and one script — never `src`. So every .d.ts.map
+    // was 11 MB of links to files the consumer does not have.
+    "declarationMap": false,
     "outDir": "dist",
     "rootDir": "."
   },
@@ -15,6 +18,11 @@
     "apis",
     "**/*.test.ts",
     "**/*.spec.ts",
-    "packages/core/src/infrastructure/templates/**"
+    "packages/core/src/infrastructure/templates/**",
+    // The Next.js app is shipped as a prebuilt bundle in `web/` (see
+    // `build:web:prod`), and `resolveWebDir()` only ever looks for
+    // `next.config.ts` or `web/.next` — never the tsc output. Compiling it into
+    // `dist/` produced 17 MB of JSX and Storybook stories that nothing loads.
+    "src/presentation/web/**"
   ]
 }

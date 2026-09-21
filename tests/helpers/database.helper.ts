@@ -8,6 +8,13 @@
 import Database from 'better-sqlite3';
 
 /**
+ * How long a file-backed test connection waits for a write lock before it
+ * gives up with SQLITE_BUSY. Matches the production `busy_timeout` pragma so a
+ * test that contends for the write lock behaves the way the real app does.
+ */
+const FILE_DATABASE_BUSY_TIMEOUT_MS = 5000;
+
+/**
  * Creates an in-memory SQLite database for testing.
  * Database is destroyed when the connection is closed.
  *
@@ -157,4 +164,74 @@ export function getAppliedMigrations(db: Database.Database): string[] {
  */
 export function clearMigrationsAfter(db: Database.Database, afterVersion: string): void {
   db.prepare('DELETE FROM umzug_migrations WHERE name > ?').run(afterVersion);
+}
+
+/**
+ * Creates a file-backed SQLite database configured like production.
+ *
+ * Concurrency defects cannot be reproduced against `:memory:` — an in-memory
+ * database is private to its connection, so two "processes" would never see
+ * each other's writes. Tests that exercise two connections (or two real OS
+ * processes) against one database file use this instead, with the same WAL +
+ * busy_timeout + foreign_keys pragmas `connection.ts` applies in production.
+ *
+ * @param filePath - Absolute path to the database file (created if absent).
+ * @returns Database instance pointed at that file
+ */
+export function createFileDatabase(filePath: string): Database.Database {
+  const db = new Database(filePath, {
+    verbose: process.env.DEBUG_SQL ? console.log : undefined,
+  });
+
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('temp_store = MEMORY');
+  db.pragma(`busy_timeout = ${FILE_DATABASE_BUSY_TIMEOUT_MS}`);
+
+  return db;
+}
+
+/** How a `db.transaction(...)` was actually run. */
+export type TransactionMode = 'deferred' | 'immediate' | 'exclusive';
+
+/**
+ * Wraps a database so every `db.transaction(...)` invocation records the mode
+ * it ran in.
+ *
+ * A read-then-write transaction must take the write lock up front
+ * (`.immediate()`), or a concurrent writer turns it into SQLITE_BUSY_SNAPSHOT
+ * — an error `busy_timeout` never retries. That choice is invisible in the
+ * result of a successful call, so it is asserted here instead.
+ *
+ * @param db - The database to wrap.
+ * @param sink - Array that receives one entry per transaction run.
+ * @returns A proxy that behaves exactly like `db`.
+ */
+export function recordTransactionModes(
+  db: Database.Database,
+  sink: TransactionMode[]
+): Database.Database {
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === 'transaction') {
+        return (fn: (...args: never[]) => unknown) => {
+          const real = target.transaction(fn);
+          const record =
+            (mode: TransactionMode, variant: (...args: never[]) => unknown) =>
+            (...args: never[]) => {
+              sink.push(mode);
+              return variant(...args);
+            };
+          return Object.assign(record('deferred', real), {
+            deferred: record('deferred', real.deferred),
+            immediate: record('immediate', real.immediate),
+            exclusive: record('exclusive', real.exclusive),
+          });
+        };
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as Database.Database;
 }

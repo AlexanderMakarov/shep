@@ -48,6 +48,11 @@ function loadDevFallbacks(): Record<string, string> {
 }
 
 const nextConfig: NextConfig = {
+  // The CLI binds to loopback and users may open either spelling. Next's
+  // dev-origin guard otherwise blocks HMR on numeric loopback addresses,
+  // leaving the rendered page without hydrated interaction handlers.
+  allowedDevOrigins: ['127.0.0.1', '[::1]'],
+
   // Prefix all static asset URLs so a reverse proxy can forward them
   // without ambiguity. Unset locally (assets served at /_next/…); set to
   // '/cli' in the org-runner image so the shep-cloud proxy can route

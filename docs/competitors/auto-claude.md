@@ -40,7 +40,7 @@ Task → Spec creation → Planning → Implementation (parallel) → QA review 
 |                        | Auto-Claude                 | Shep                                |
 | ---------------------- | --------------------------- | ----------------------------------- |
 | **Interface**          | Electron desktop app        | CLI + Web dashboard                 |
-| **Agent support**      | Claude Code only            | Claude Code, Cursor CLI, Gemini CLI |
+| **Agent support**      | Claude Code only            | Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline + API providers |
 | **Requirements**       | Spec creation (single step) | Interactive PRD with research phase |
 | **Planning**           | Task breakdown              | Reviewable plan with approval gate  |
 | **Parallel execution** | Up to 12 agents             | Per-feature worktrees               |

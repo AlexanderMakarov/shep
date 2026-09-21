@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { createCliRunner } from '../../helpers/cli/index.js';
 
 /**
@@ -65,17 +66,28 @@ describe('CLI: settings initialization', () => {
       const firstResult = runner.run('version');
       expect(firstResult.success).toBe(true);
 
-      const stats1 = statSync(dbPath);
-      const firstMtime = stats1.mtimeMs;
+      // Keep a non-default setting so re-creating defaults cannot pass unnoticed.
+      const firstDb = new Database(dbPath);
+      let firstSettings: unknown;
+      try {
+        firstDb.prepare('UPDATE settings SET user_name = ?').run('Existing user');
+        firstSettings = firstDb.prepare('SELECT * FROM settings').all();
+      } finally {
+        firstDb.close();
+      }
 
-      const secondResult = runner.run('version');
+      const secondResult = runner.run('settings show --output json');
 
       expect(secondResult.success).toBe(true);
-      const stats2 = statSync(dbPath);
-      const secondMtime = stats2.mtimeMs;
-
-      const mtimeDiff = Math.abs(secondMtime - firstMtime);
-      expect(mtimeDiff).toBeLessThan(5000);
+      expect(JSON.parse(secondResult.stdout).user.name).toBe('Existing user');
+      // SQLite can update the file while opening/migrating it. File timestamps
+      // measure runner speed, not whether the persisted settings were reused.
+      const secondDb = new Database(dbPath, { readonly: true });
+      try {
+        expect(secondDb.prepare('SELECT * FROM settings').all()).toEqual(firstSettings);
+      } finally {
+        secondDb.close();
+      }
     },
     timeoutForRuns(2)
   );

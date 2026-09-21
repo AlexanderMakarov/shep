@@ -11,13 +11,13 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
-import { openSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { openSync, mkdirSync, chmodSync } from 'node:fs';
 import type {
   IClusterAgentProcessService,
   ClusterAgentSpawnOptions,
 } from '../../../../application/ports/output/services/cluster-agent-process-service.interface.js';
 import { IS_WINDOWS } from '../../../platform.js';
+import { getShepHomeDir } from '../../filesystem/shep-directory.service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -41,10 +41,26 @@ export class ClusterAgentProcessService implements IClusterAgentProcessService {
     }
 
     // Create log file for worker output
-    const logsDir = join(homedir(), '.shep', 'logs');
-    mkdirSync(logsDir, { recursive: true });
+    // Two bugs lived on these two lines: the directory was created with the
+    // default mode (0777 & ~umask, so world-readable — and worker logs carry
+    // every tool call's full input, including tokenised git remote URLs), and
+    // `homedir()` bypassed getShepHomeDir(), so SHEP_HOME was ignored and test
+    // runs wrote into the user's real ~/.shep.
+    const logsDir = join(getShepHomeDir(), 'logs');
+    mkdirSync(logsDir, { recursive: true, ...(IS_WINDOWS ? {} : { mode: 0o700 }) });
+    // mkdirSync applies `mode` only when it CREATES the directory, so an
+    // install that already has a permissive ~/.shep/logs would never be
+    // repaired. chmod every time; a volume that refuses chmod must not stop a
+    // run from starting.
+    if (!IS_WINDOWS) {
+      try {
+        chmodSync(logsDir, 0o700);
+      } catch {
+        /* read-only or unsupported filesystem — not worth failing the run */
+      }
+    }
     const logPath = join(logsDir, `cluster-worker-${runId}.log`);
-    const logFd = openSync(logPath, 'a');
+    const logFd = openSync(logPath, 'a', IS_WINDOWS ? undefined : 0o600);
 
     const child = fork(workerPath, args, {
       detached: true,

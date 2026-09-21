@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ErrorBoundary } from '@/components/common/error-boundary';
 import { useRouter, usePathname } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { Direction } from 'radix-ui';
-import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
+import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/layouts/app-sidebar';
 import { pickFolder } from '@/components/common/add-repository-button/pick-folder';
 import { buildCreateUrl } from '@/lib/url-params';
@@ -46,6 +47,7 @@ import {
 } from '@/hooks/sidebar-features-context';
 import { TurnStatusesProvider } from '@/hooks/turn-statuses-provider';
 
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useNotifications } from '@/hooks/use-notifications';
 import { useFeatureFlags } from '@/hooks/feature-flags-context';
 import type { ShellVariant } from '@/lib/shell-variant';
@@ -68,6 +70,7 @@ interface AppShellProps {
 function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const isMobile = useIsMobile();
   const { guardedNavigate } = useDrawerCloseGuard();
   const featureFlags = useFeatureFlags();
 
@@ -103,6 +106,24 @@ function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProp
     },
     [router, guardedNavigate]
   );
+
+  // Every global overlay below is wrapped in an ErrorBoundary whose
+  // fallback is an explicit `null`: these widgets render nothing until the
+  // user opens them, so replacing a crashed one with an error card would
+  // leave a permanent 200px panel in the shell on behalf of a closed
+  // dialog. Rendering nothing is right — being SILENT is not. Without this
+  // report a crashed GlobalSearchDialog just means Cmd+K stops working
+  // forever with no clue anywhere, which is how it went unnoticed.
+  //
+  // One report per surface per mount: a boundary stops rendering its
+  // children once it catches, so a crash cannot loop, and the stable toast
+  // id makes a remount replace the toast instead of stacking a new one.
+  const reportedOverlayCrashes = useRef<Set<string>>(new Set());
+  const reportOverlayCrash = useCallback((surface: string, message: string) => {
+    if (reportedOverlayCrashes.current.has(surface)) return;
+    reportedOverlayCrashes.current.add(surface);
+    toast.error(message, { id: `shell-overlay-${surface}` });
+  }, []);
 
   const [addingRepo, setAddingRepo] = useState(false);
   const [githubDialogOpen, setGithubDialogOpen] = useState(false);
@@ -191,6 +212,20 @@ function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProp
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen ?? false}>
+      {/* WCAG 2.4.1 (Bypass Blocks): the first tabbable element in the
+          shell, so a keyboard or screen-reader user can jump straight to
+          the page content instead of tabbing the whole sidebar nav on
+          every route. Invisible until focused, then a normal button-sized
+          target in the top-left corner. `tabIndex={-1}` on the <main>
+          target is what makes the browser move FOCUS there and not just
+          the scroll position. */}
+      <a
+        href="#main-content"
+        data-testid="skip-to-main"
+        className="focus:bg-background focus:ring-ring sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-md focus:ring-2 focus:outline-none"
+      >
+        Skip to main content
+      </a>
       <AppSidebar
         features={features}
         featureFlags={featureFlags}
@@ -200,28 +235,52 @@ function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProp
       {/* The Control Center's session-tree sub-nav is rendered by the
           (dashboard) layout, which owns the providers it shares with the
           canvas. */}
-      <SidebarInset>
+      <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
         {/* `h-dvh` (not `h-full`) so the full-shell page area has an
             explicit viewport-bound height regardless of child content.
             Without this, the outer `SidebarProvider`'s `min-h-svh`
             allows the tree to GROW past the viewport when a child
             (e.g. the application page's expanded step tracker) exceeds
             viewport height, producing an outer body scrollbar. */}
-        <div className="relative h-dvh">
-          <main className="h-full min-h-0">{children}</main>
+        <div className="relative flex h-dvh flex-col">
+          {isMobile ? (
+            <header className="bg-background flex h-12 shrink-0 items-center gap-2 border-b px-3 md:hidden">
+              <SidebarTrigger className="size-10" />
+              <span className="text-sm font-semibold">Shep</span>
+            </header>
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
           {/* Global chat popup — fixed, visible across pages EXCEPT
               on application routes where the page owns its own
               primary actions and the chat FAB is redundant. */}
           {hideGlobalChat ? null : (
-            <ErrorBoundary fallback={null}>
+            <ErrorBoundary
+              fallback={null}
+              onError={() =>
+                reportOverlayCrash('chat', 'Shep Chat stopped working — reload the page to use it.')
+              }
+            >
               <GlobalChatPopup />
             </ErrorBoundary>
           )}
           {/* Global search dialog — Cmd+K / Ctrl+K */}
-          <ErrorBoundary fallback={null}>
+          <ErrorBoundary
+            fallback={null}
+            onError={() =>
+              reportOverlayCrash('search', 'Search is unavailable — reload the page to use Cmd+K.')
+            }
+          >
             <GlobalSearchDialog />
           </ErrorBoundary>
-          <ErrorBoundary fallback={null}>
+          <ErrorBoundary
+            fallback={null}
+            onError={() =>
+              reportOverlayCrash(
+                'github-import',
+                'The GitHub import dialog stopped working — reload the page to retry.'
+              )
+            }
+          >
             <GitHubImportDialog
               open={githubDialogOpen}
               onOpenChange={setGithubDialogOpen}
@@ -230,7 +289,15 @@ function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProp
           </ErrorBoundary>
         </div>
       </SidebarInset>
-      <ErrorBoundary fallback={null}>
+      <ErrorBoundary
+        fallback={null}
+        onError={() =>
+          reportOverlayCrash(
+            'file-picker',
+            'The file picker stopped working — reload the page to retry.'
+          )
+        }
+      >
         <ReactFileManagerDialog
           open={showReactPicker}
           onOpenChange={(open) => {
@@ -239,7 +306,15 @@ function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProp
           onSelect={handleReactPickerSelect}
         />
       </ErrorBoundary>
-      <ErrorBoundary fallback={null}>
+      <ErrorBoundary
+        fallback={null}
+        onError={() =>
+          reportOverlayCrash(
+            'bulk-file-picker',
+            'The folder picker stopped working — reload the page to retry.'
+          )
+        }
+      >
         <ReactFileManagerDialog
           open={showBulkPicker}
           onOpenChange={(open) => {
@@ -248,7 +323,15 @@ function AppShellInner({ children, sidebarOpen, variant = 'full' }: AppShellProp
           onSelect={handleBulkDirectorySelect}
         />
       </ErrorBoundary>
-      <ErrorBoundary fallback={null}>
+      <ErrorBoundary
+        fallback={null}
+        onError={() =>
+          reportOverlayCrash(
+            'bulk-import',
+            'Bulk import stopped working — reload the page to retry.'
+          )
+        }
+      >
         <BulkImportDialog
           open={bulkDirectory !== ''}
           onOpenChange={(open) => {

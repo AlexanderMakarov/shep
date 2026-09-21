@@ -74,3 +74,84 @@ describe('RepositoryNode', () => {
     expect(sourceHandle).toBeInTheDocument();
   });
 });
+
+describe('RepositoryNode keyboard activation (P0-3)', () => {
+  it('exposes the repository name — not the card — as the activatable control', () => {
+    // Queried by test id, not by accessible name: React Flow leaves an
+    // unmeasured node at `visibility: hidden`, which jsdom never resolves, so
+    // name computation reports the whole card as hidden.
+    renderRepositoryNode({ name: 'shep-ai/shep', onClick: vi.fn() });
+
+    const title = screen.getByTestId('repository-node-name');
+    expect(title).toHaveAttribute('role', 'button');
+    expect(title).toHaveAttribute('tabindex', '0');
+    expect(title).toHaveTextContent('shep-ai/shep');
+    expect(screen.getByTestId('repository-node-card')).not.toHaveAttribute('role', 'button');
+    expect(screen.getByTestId('repository-node-card')).not.toHaveAttribute('tabindex');
+  });
+
+  it('gives the title a visible focus indicator', () => {
+    renderRepositoryNode({ onClick: vi.fn() });
+
+    expect(screen.getByTestId('repository-node-name').className).toMatch(/focus-visible:/);
+  });
+
+  it('never nests a real button inside an element with role="button"', () => {
+    const { container } = renderRepositoryNode({
+      onClick: vi.fn(),
+      onAdd: vi.fn(),
+      id: 'repo-1',
+      onDelete: vi.fn(),
+    });
+
+    const nested = Array.from(container.querySelectorAll('button')).filter((b) =>
+      b.parentElement?.closest('[role="button"]')
+    );
+    expect(nested).toEqual([]);
+  });
+
+  it('opens the repository on Enter', () => {
+    const onClick = vi.fn();
+    renderRepositoryNode({ onClick });
+
+    fireEvent.keyDown(screen.getByTestId('repository-node-name'), { key: 'Enter' });
+
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it('opens the repository on Space', () => {
+    const onClick = vi.fn();
+    renderRepositoryNode({ onClick });
+
+    fireEvent.keyDown(screen.getByTestId('repository-node-name'), { key: ' ' });
+
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it('ignores other keys', () => {
+    const onClick = vi.fn();
+    renderRepositoryNode({ onClick });
+
+    fireEvent.keyDown(screen.getByTestId('repository-node-name'), { key: 'a' });
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mouse path — clicking the card still opens it once', () => {
+    const onClick = vi.fn();
+    renderRepositoryNode({ onClick });
+
+    fireEvent.click(screen.getByTestId('repository-node-card'));
+
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it('does not open the repository when an inner button is clicked', () => {
+    const onClick = vi.fn();
+    renderRepositoryNode({ onClick, onAdd: vi.fn() });
+
+    fireEvent.click(screen.getByTestId('repository-node-add-button'));
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+});

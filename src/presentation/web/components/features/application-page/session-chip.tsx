@@ -8,16 +8,23 @@ import { toast } from 'sonner';
 import type { ChatState } from '@shepai/core/application/ports/output/services/interactive-session-service.interface';
 
 import { cn } from '@/lib/utils';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { chatQueryKey, fetchChatState } from '@/components/features/chat/chat-state-query';
 
 export interface SessionChipProps {
+  menuItem?: boolean;
   featureId: string;
   initialChatState?: ChatState;
   /** Agent session ID persisted on the Application entity — stable across restarts. */
   persistedSessionId?: string;
 }
 
-export function SessionChip({ featureId, initialChatState, persistedSessionId }: SessionChipProps) {
+export function SessionChip({
+  featureId,
+  initialChatState,
+  persistedSessionId,
+  menuItem = false,
+}: SessionChipProps) {
   const { data: chatState } = useQuery({
     queryKey: chatQueryKey(featureId),
     queryFn: () => fetchChatState(featureId),
@@ -44,7 +51,7 @@ export function SessionChip({ featureId, initialChatState, persistedSessionId }:
     }
   }, [sessionId]);
 
-  return (
+  const content = (
     <button
       type="button"
       onClick={handleCopy}
@@ -63,5 +70,12 @@ export function SessionChip({ featureId, initialChatState, persistedSessionId }:
       <span className="text-muted-foreground/50">·</span>
       <span>{shortId ?? '—'}</span>
     </button>
+  );
+  return menuItem ? (
+    <DropdownMenuItem asChild disabled={!sessionId}>
+      {content}
+    </DropdownMenuItem>
+  ) : (
+    content
   );
 }

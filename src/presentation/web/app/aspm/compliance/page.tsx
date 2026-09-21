@@ -49,7 +49,7 @@ export default async function AspmCompliancePage() {
     : [];
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto p-6">
+    <div tabIndex={0} className="flex h-full flex-col gap-4 overflow-y-auto p-6">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Compliance</h1>
         <p className="text-muted-foreground text-sm">

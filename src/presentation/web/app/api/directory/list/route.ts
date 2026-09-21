@@ -2,6 +2,16 @@ import { NextResponse } from 'next/server';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import {
+  isPathInsideAnyRoot,
+  parseRootsList,
+} from '@shepai/core/infrastructure/services/filesystem/path-containment';
+
+/** Extra directories an operator allows the folder picker to browse. */
+const DIRECTORY_ROOTS_ENV = 'SHEP_DIRECTORY_ROOTS';
+
+const HTTP_BAD_REQUEST = 400;
+const HTTP_FORBIDDEN = 403;
 
 interface DirectoryEntry {
   name: string;
@@ -10,21 +20,44 @@ interface DirectoryEntry {
   updatedAt: string;
 }
 
+/**
+ * Directories the folder picker may enumerate: the user's home directory
+ * plus anything `SHEP_DIRECTORY_ROOTS` names.
+ *
+ * `path.isAbsolute` was the only check, which enables rather than restricts —
+ * `?path=/&showHidden=true` walked everything the daemon could read, and that
+ * listing is what makes an arbitrary file read or a traversal write aimable.
+ */
+function browsableRoots(): string[] {
+  return [path.resolve(homedir()), ...parseRootsList(process.env[DIRECTORY_ROOTS_ENV])];
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const rawPath = url.searchParams.get('path') ?? homedir();
   const showHidden = url.searchParams.get('showHidden') === 'true';
 
   if (!path.isAbsolute(rawPath)) {
-    return NextResponse.json({ error: 'Path must be absolute' }, { status: 400 });
+    return NextResponse.json({ error: 'Path must be absolute' }, { status: HTTP_BAD_REQUEST });
   }
 
   const resolvedPath = path.resolve(rawPath);
 
+  // `allowRootItself` so the picker can open the home directory; the
+  // separator-terminated prefix means `<root>-evil` is not `<root>`.
+  if (!isPathInsideAnyRoot(resolvedPath, browsableRoots(), true)) {
+    return NextResponse.json(
+      {
+        error: `Path is outside the browsable directories. Set ${DIRECTORY_ROOTS_ENV} to add more.`,
+      },
+      { status: HTTP_FORBIDDEN }
+    );
+  }
+
   try {
     const dirStat = await stat(resolvedPath);
     if (!dirStat.isDirectory()) {
-      return NextResponse.json({ error: 'Path is not a directory' }, { status: 400 });
+      return NextResponse.json({ error: 'Path is not a directory' }, { status: HTTP_BAD_REQUEST });
     }
   } catch (error: unknown) {
     if (isErrnoException(error) && error.code === 'ENOENT') {

@@ -76,6 +76,16 @@ export default defineConfig({
           ],
           environment: 'node',
           setupFiles: ['tests/unit/setup.ts'],
+          server: {
+            deps: {
+              // Vitest externalizes node_modules by default, which means a
+              // `vi.mock()` factory cannot intercept them — the module under
+              // test resolves the real package through Node's loader while the
+              // test file sees the mock. Inlining lets vitest process the
+              // module so the mock actually applies.
+              inline: ['@ai-sdk/openai-compatible'],
+            },
+          },
           // testTimeout / hookTimeout are sized for the heaviest integration
           // tests, which spawn real git harnesses. On the Windows CI runner
           // git's process startup + filesystem latency can push a single

@@ -44,7 +44,7 @@ Requirements (EARS notation) → Design docs → Task planning → Implementatio
 | **Research phase**    | Not included           | Built-in technical research             |
 | **Approval gates**    | Steering (inline)      | 3 configurable gates (PRD, Plan, Merge) |
 | **Parallel features** | Not highlighted        | Git worktree isolation                  |
-| **Agent choice**      | Claude Sonnet (fixed)  | Claude Code, Cursor CLI, Gemini CLI     |
+| **Agent choice**      | Claude Sonnet (fixed)  | Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline + API providers |
 | **CI integration**    | Not highlighted        | Automatic CI fix loop                   |
 | **Open source**       | No                     | Yes (MIT)                               |
 | **Pricing**           | Free-$39/mo            | Free                                    |

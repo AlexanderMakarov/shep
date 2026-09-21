@@ -21,6 +21,7 @@ import { StartFeatureUseCase } from '@/application/use-cases/features/start-feat
 import { SpawnFeatureAgentUseCase } from '@/application/use-cases/features/spawn-feature-agent.use-case.js';
 import type { Feature, AgentRun } from '@/domain/generated/output.js';
 import { SdlcLifecycle, AgentRunStatus, AgentType, BuildMode } from '@/domain/generated/output.js';
+import { FeatureCapacityService } from '@/application/use-cases/features/capacity/feature-capacity.service.js';
 
 vi.mock('@/infrastructure/services/settings.service.js', () => ({
   getSettings: vi.fn().mockReturnValue({}),
@@ -116,10 +117,17 @@ describe('StartFeatureUseCase (integration)', () => {
       { load: vi.fn().mockResolvedValue(null) } as any,
       { execute: vi.fn().mockResolvedValue(undefined) } as any
     );
-    useCase = new StartFeatureUseCase(featureRepo, runRepo, spawnFeatureAgent, {
-      hasCapacity: vi.fn().mockResolvedValue(true),
-      getQueuePosition: vi.fn().mockResolvedValue(1),
-    } as any);
+    // The REAL capacity service against the real repository: the transition is
+    // written by its atomic claim, so a mocked service here would report a
+    // start that never reached the database.
+    useCase = new StartFeatureUseCase(
+      featureRepo,
+      runRepo,
+      spawnFeatureAgent,
+      new FeatureCapacityService(featureRepo, {
+        load: vi.fn().mockResolvedValue({ workflow: { maxParallelFeatures: 0 } }),
+      } as never)
+    );
     createdFeatureIds = [];
     createdRunIds = [];
   });

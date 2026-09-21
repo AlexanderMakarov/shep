@@ -42,7 +42,7 @@ export function VersionBadge({
       <Tooltip>
         <TooltipTrigger asChild>
           <span
-            className="text-muted-foreground/80 hover:text-muted-foreground relative cursor-default text-[11px] leading-tight transition-colors"
+            className="text-muted-foreground relative cursor-default text-[11px] leading-tight transition-colors"
             data-testid="version-label"
           >
             {displayVersion}

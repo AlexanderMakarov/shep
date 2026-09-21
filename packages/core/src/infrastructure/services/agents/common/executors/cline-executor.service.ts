@@ -22,11 +22,49 @@ import type {
   AgentExecutionStreamEvent,
 } from '../../../../../application/ports/output/agents/agent-executor.interface.js';
 import type { SpawnFunction } from '../types.js';
-import { getCurrentPhase, getLogPrefix } from '../../feature-agent/log-context.js';
+import { EventChannel } from '../../streaming/event-channel.js';
+import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
 import { describeSubprocessFailure } from './subprocess-failure-message.js';
+import {
+  buildSpawnOptions,
+  classifySpawnError,
+  createLineAccumulator,
+  createStderrTail,
+  signalTerminationMessage,
+  terminateWithEscalation,
+} from './process-stream.js';
+import {
+  validateSecurityConstraints,
+  type ExecutorCapabilities,
+} from './security-constraint-validator.js';
+
+/** Binary name on PATH. */
+const CLINE_BINARY = 'cline';
+
+/** Shown when the binary is missing, so the user knows how to fix it. */
+const CLINE_NOT_FOUND_MESSAGE =
+  'Cline CLI ("cline") not found. Please install it: npm install -g cline';
+
+/** Milliseconds per second, for the CLI's seconds-based --timeout flag. */
+const MS_PER_SECOND = 1000;
+
+/** Longest agent text logged verbatim before truncation. */
+const LOG_PREVIEW_CHARS = 200;
 
 /** Features supported by Cline CLI */
 const SUPPORTED_FEATURES = new Set<string>(['streaming', 'system-prompt']);
+
+/** Cline event shape: `{ type: "say"|"ask"|"error", text, ts, partial }`. */
+const EVENT_TYPE_SAY = 'say';
+const EVENT_TYPE_ASK = 'ask';
+const EVENT_TYPE_ERROR = 'error';
+
+/** Render a value that should have been text but may be a structured payload. */
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  return JSON.stringify(value);
+}
 
 /**
  * Executor service for the Cline agentic coding assistant.
@@ -35,115 +73,116 @@ const SUPPORTED_FEATURES = new Set<string>(['streaming', 'system-prompt']);
 export class ClineExecutorService implements IAgentExecutor {
   readonly agentType: AgentType = 'cline' as AgentType;
 
-  /** When true, suppresses debug logging (set per-call via options.silent) */
-  private silent = false;
-
   constructor(private readonly spawn: SpawnFunction) {}
 
-  /** Debug logging — writes to stdout so it appears in the worker log file */
-  private log(message: string): void {
-    if (this.silent) return;
-    const ts = new Date().toISOString();
-    process.stdout.write(`[${ts}] ${getCurrentPhase()}${getLogPrefix()}${message}\n`);
-  }
+  /** Executor capabilities for security constraint validation */
+  private static readonly CAPABILITIES: ExecutorCapabilities = {
+    requiresPermissiveMode: true, // uses -y (approves every tool call up front)
+    executorName: 'cline',
+  };
 
   supportsFeature(feature: AgentFeature): boolean {
     return SUPPORTED_FEATURES.has(feature as string);
   }
 
   async execute(prompt: string, options?: AgentExecutionOptions): Promise<AgentExecutionResult> {
-    this.silent = options?.silent ?? false;
-    const args = this.buildArgs(prompt, options);
-    const spawnOpts = this.buildSpawnOptions(options);
-
-    this.log(
-      `Spawning: cline ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
-    );
-    this.log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
-
-    const proc = this.spawn('cline', args, spawnOpts);
-
-    this.log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
-    this.log(`Prompt length: ${prompt.length} chars`);
+    const log = this.startRun(options);
+    const proc = this.spawnCline(prompt, options, log);
 
     return new Promise<AgentExecutionResult>((resolve, reject) => {
-      let lineBuffer = '';
-      let stderr = '';
-      let timedOut = false;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-      // Accumulated result text from JSON events
+      const stderr = createStderrTail();
+      /** Text carried by structured `say` events — the agent's actual answer. */
       let resultText = '';
+      /** Anything the CLI printed that was not JSON (banners, warnings). */
+      let rawText = '';
+      let timedOut = false;
+      let settled = false;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let cancelEscalation: (() => void) | undefined;
+
+      /** Settle exactly once — a kill may or may not be followed by 'close'. */
+      const settle = (outcome: () => void): void => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        cancelEscalation?.();
+        outcome();
+      };
 
       if (options?.timeout) {
         timeoutId = setTimeout(() => {
           timedOut = true;
-          proc.kill();
+          log(`Timeout after ${options.timeout}ms — terminating agent`);
+          cancelEscalation = terminateWithEscalation(proc);
         }, options.timeout);
       }
 
-      const processLine = (line: string) => {
-        this.logStreamEvent(line);
-        try {
-          const parsed = JSON.parse(line);
-          // Cline JSON output has { type: "say"|"ask", text: "...", ts: ..., partial: bool }
-          if (parsed.type === 'say' && typeof parsed.text === 'string' && !parsed.partial) {
+      const accumulator = createLineAccumulator(
+        (line) => {
+          this.logStreamEvent(line, log);
+          const parsed = parseJsonLine(line);
+          if (parsed === null) {
+            // CLI chatter, not the answer — kept only as a fallback.
+            rawText += `${line}\n`;
+            return;
+          }
+          if (
+            parsed.type === EVENT_TYPE_SAY &&
+            typeof parsed.text === 'string' &&
+            !parsed.partial
+          ) {
             resultText += parsed.text;
           }
-        } catch {
-          // Non-JSON line — accumulate as raw text
-          if (line.trim()) {
-            resultText += line;
-          }
+        },
+        {
+          onOverflow: (dropped) => log(`[warn] discarded ${dropped} bytes of un-terminated output`),
         }
-      };
+      );
 
-      proc.stdout?.on('data', (chunk: Buffer | string) => {
-        lineBuffer += chunk.toString();
-        const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) processLine(trimmed);
-        }
-      });
+      proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
 
       proc.stderr?.on('data', (chunk: Buffer | string) => {
-        const data = chunk.toString();
-        stderr += data;
-        this.log(`stderr: ${data.trimEnd()}`);
+        stderr.push(chunk);
+        log(`stderr: ${chunk.toString().trimEnd()}`);
       });
 
       proc.on('error', (error: Error & { code?: string }) => {
-        this.log(`Process error event: ${error.message}`);
-        if (timeoutId) clearTimeout(timeoutId);
-        if (error.code === 'ENOENT') {
-          reject(
-            new Error('Cline CLI ("cline") not found. Please install it: npm install -g cline')
-          );
-        } else {
-          reject(error);
-        }
+        log(`Process error event: ${error.message}`);
+        settle(() => reject(classifySpawnError(error, CLINE_NOT_FOUND_MESSAGE)));
       });
 
-      proc.on('close', (code: number | null) => {
-        // Flush remaining buffer
-        if (lineBuffer.trim()) processLine(lineBuffer.trim());
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        accumulator.flush();
+        const finalText = resultText || rawText.trim();
+        log(`Process closed with code ${code}, result=${finalText.length} chars`);
 
-        this.log(`Process closed with code ${code}, result=${resultText.length} chars`);
-        if (timeoutId) clearTimeout(timeoutId);
+        settle(() => {
+          if (timedOut) {
+            reject(new Error('Agent execution timed out'));
+            return;
+          }
 
-        if (timedOut) {
-          reject(new Error('Agent execution timed out'));
-          return;
-        }
+          if (code !== 0 && code !== null) {
+            // The CLI's own result text names the cause; stderr carries setup
+            // diagnostics that healthy runs emit too.
+            reject(
+              new Error(
+                describeSubprocessFailure({ code, resultText: finalText, stderr: stderr.text() })
+              )
+            );
+            return;
+          }
 
-        if (code !== 0 && code !== null) {
-          reject(new Error(describeSubprocessFailure({ code, resultText, stderr })));
-          return;
-        }
+          // code === null means a signal killed the agent (OOM killer, an
+          // external kill). Resolving that as success hands the caller an
+          // empty result as if the agent had nothing to say.
+          if (code === null && !finalText) {
+            reject(new Error(signalTerminationMessage(signal, stderr.text())));
+            return;
+          }
 
-        resolve({ result: resultText });
+          resolve({ result: finalText });
+        });
       });
     });
   }
@@ -152,110 +191,144 @@ export class ClineExecutorService implements IAgentExecutor {
     prompt: string,
     options?: AgentExecutionOptions
   ): AsyncIterable<AgentExecutionStreamEvent> {
-    this.silent = options?.silent ?? false;
-    const args = this.buildArgs(prompt, options);
-    const spawnOpts = this.buildSpawnOptions(options);
-    const proc = this.spawn('cline', args, spawnOpts);
+    const log = this.startRun(options);
+    const proc = this.spawnCline(prompt, options, log);
 
-    let lineBuffer = '';
-    let stderr = '';
+    const channel = new EventChannel<AgentExecutionStreamEvent>();
+    const stderr = createStderrTail();
+    /** Accumulated answer: emitted once, at close, never per event. */
+    let resultText = '';
+    let rawText = '';
+    let processClosed = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    const queue: (AgentExecutionStreamEvent | null)[] = [];
-    let resolve: (() => void) | null = null;
-    let error: Error | null = null;
-
-    function enqueue(event: AgentExecutionStreamEvent | null) {
-      queue.push(event);
-      if (resolve) {
-        resolve();
-        resolve = null;
-      }
-    }
-
-    function waitForItem(): Promise<void> {
-      if (queue.length > 0) return Promise.resolve();
-      return new Promise<void>((r) => {
-        resolve = r;
-      });
-    }
-
-    proc.stdout?.on('data', (chunk: Buffer | string) => {
-      lineBuffer += chunk.toString();
-      const lines = lineBuffer.split('\n');
-      lineBuffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        const event = this.parseStreamLine(trimmed);
-        if (event) {
-          enqueue(event);
-        }
-      }
-    });
-
-    proc.stderr?.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    proc.on('error', (err: Error) => {
-      error = err;
-      enqueue(null);
-    });
-
-    proc.on('close', (code: number | null) => {
-      if (lineBuffer.trim()) {
-        const event = this.parseStreamLine(lineBuffer.trim());
-        if (event) enqueue(event);
-      }
-
-      if (code !== 0 && code !== null && stderr.trim()) {
-        enqueue({
+    if (options?.timeout) {
+      timeoutId = setTimeout(() => {
+        log(`Timeout after ${options.timeout}ms — terminating agent`);
+        terminateWithEscalation(proc);
+        channel.push({
           type: 'error',
-          content: stderr.trim(),
+          content: 'Agent execution timed out',
           timestamp: new Date(),
         });
-      }
-      enqueue(null);
-    });
+        channel.close();
+      }, options.timeout);
+    }
 
-    while (true) {
-      await waitForItem();
-      const item = queue.shift();
-      if (item === null || item === undefined) {
-        if (error !== null) {
-          yield {
-            type: 'error' as const,
-            content: (error as Error).message,
-            timestamp: new Date(),
-          };
-        }
+    const accumulator = createLineAccumulator((line) => {
+      const parsed = parseJsonLine(line);
+      if (parsed === null) {
+        rawText += `${line}\n`;
+        channel.push({ type: 'progress', content: line, timestamp: new Date() });
         return;
       }
-      yield item;
+
+      // A non-partial `say` is one chunk of the answer, not the answer itself.
+      // Emitting each as a `result` let the last one ("[checkpoint saved]")
+      // replace the real response for every consumer that keeps the last.
+      if (parsed.type === EVENT_TYPE_SAY && typeof parsed.text === 'string' && !parsed.partial) {
+        resultText += parsed.text;
+        return;
+      }
+
+      const event = toStreamEvent(parsed);
+      if (event) channel.push(event);
+    });
+
+    proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
+    proc.stderr?.on('data', (chunk: Buffer | string) => stderr.push(chunk));
+
+    proc.on('error', (error: Error & { code?: string }) => {
+      processClosed = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      channel.push({
+        type: 'error',
+        content: classifySpawnError(error, CLINE_NOT_FOUND_MESSAGE).message,
+        timestamp: new Date(),
+      });
+      channel.close();
+    });
+
+    proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      processClosed = true;
+      accumulator.flush();
+      if (timeoutId) clearTimeout(timeoutId);
+
+      const finalText = resultText || rawText.trim();
+
+      if (code !== 0 && code !== null && stderr.text().trim()) {
+        channel.push({ type: 'error', content: stderr.text().trim(), timestamp: new Date() });
+      } else if (code === null && !finalText) {
+        channel.push({
+          type: 'error',
+          content: signalTerminationMessage(signal, stderr.text()),
+          timestamp: new Date(),
+        });
+      } else if (code === 0 || code === null) {
+        channel.push({ type: 'result', content: finalText, timestamp: new Date() });
+      }
+      channel.close();
+    });
+
+    try {
+      yield* channel;
+    } finally {
+      // A consumer that breaks out of the loop would otherwise leave the agent
+      // running — holding a worktree, burning tokens — until it exits on its own.
+      if (timeoutId) clearTimeout(timeoutId);
+      if (!processClosed) terminateWithEscalation(proc);
     }
+  }
+
+  /** Validate policy and build the per-call logger shared by both entry points. */
+  private startRun(options?: AgentExecutionOptions): ExecutorLogger {
+    const log = createExecutorLogger(options?.silent);
+    const warning = validateSecurityConstraints(
+      options?.securityConstraints,
+      ClineExecutorService.CAPABILITIES
+    );
+    if (warning) log(warning);
+    return log;
+  }
+
+  private spawnCline(
+    prompt: string,
+    options: AgentExecutionOptions | undefined,
+    log: ExecutorLogger
+  ): ReturnType<SpawnFunction> {
+    const args = this.buildArgs(prompt, options);
+    const spawnOpts = buildSpawnOptions({ cwd: options?.cwd });
+
+    log(
+      `Spawning: ${CLINE_BINARY} ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
+    );
+    log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
+
+    const proc = this.spawn(CLINE_BINARY, args, spawnOpts);
+    log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
+    log(`Prompt length: ${prompt.length} chars`);
+    return proc;
   }
 
   /**
    * Log a Cline JSON line as a human-readable event in the worker log.
    */
-  private logStreamEvent(line: string): void {
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed.type === 'say' && parsed.text) {
-        const preview = parsed.text.length > 200 ? `${parsed.text.slice(0, 197)}...` : parsed.text;
-        this.log(`[text] ${preview.replace(/\n/g, ' ')}`);
-        return;
-      }
-      if (parsed.type === 'ask') {
-        this.log(`[ask] ${(parsed.text ?? '').slice(0, 200).replace(/\n/g, ' ')}`);
-        return;
-      }
-    } catch {
-      if (line.length > 0) {
-        this.log(`[raw] ${line}`);
-      }
+  private logStreamEvent(line: string, log: ExecutorLogger): void {
+    const parsed = parseJsonLine(line);
+    if (parsed === null) {
+      log(`[raw] ${line}`);
+      return;
+    }
+    if (parsed.type === EVENT_TYPE_SAY && typeof parsed.text === 'string') {
+      const preview =
+        parsed.text.length > LOG_PREVIEW_CHARS
+          ? `${parsed.text.slice(0, LOG_PREVIEW_CHARS - 3)}...`
+          : parsed.text;
+      log(`[text] ${preview.replace(/\n/g, ' ')}`);
+      return;
+    }
+    if (parsed.type === EVENT_TYPE_ASK) {
+      log(`[ask] ${asText(parsed.text).slice(0, LOG_PREVIEW_CHARS).replace(/\n/g, ' ')}`);
     }
   }
 
@@ -270,86 +343,60 @@ export class ClineExecutorService implements IAgentExecutor {
 
     if (options?.model) args.push('--model', options.model);
     if (options?.cwd) args.push('--cwd', options.cwd);
-    if (options?.timeout) args.push('--timeout', String(Math.ceil(options.timeout / 1000)));
+    if (options?.timeout)
+      args.push('--timeout', String(Math.ceil(options.timeout / MS_PER_SECOND)));
 
     // The prompt is the last positional argument
     args.push(prompt);
 
     return args;
   }
+}
 
-  private buildSpawnOptions(options?: AgentExecutionOptions): Record<string, unknown> {
-    const spawnOpts: Record<string, unknown> = {};
-    if (options?.cwd) spawnOpts.cwd = options.cwd;
+/** One parsed Cline NDJSON event. */
+interface ClineEvent {
+  type?: string;
+  text?: unknown;
+  message?: unknown;
+  partial?: boolean;
+}
 
-    // Explicitly pipe stdio so streams are available even when parent disconnects
-    spawnOpts.stdio = ['pipe', 'pipe', 'pipe'];
+/** Parse one NDJSON line, or null when the line is not JSON at all. */
+function parseJsonLine(line: string): ClineEvent | null {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (parsed === null || typeof parsed !== 'object') return null;
+    return parsed as ClineEvent;
+  } catch {
+    return null;
+  }
+}
 
-    if (process.platform === 'win32') {
-      spawnOpts.windowsHide = true;
-    }
-
-    // Strip CLAUDECODE env var to prevent nested session errors
-    const { CLAUDECODE: _, ...cleanEnv } = process.env;
-    spawnOpts.env = cleanEnv;
-
-    return spawnOpts;
+/** Map a parsed Cline event to a stream event, or null when it carries nothing. */
+function toStreamEvent(parsed: ClineEvent): AgentExecutionStreamEvent | null {
+  if (parsed.type === EVENT_TYPE_SAY && typeof parsed.text === 'string') {
+    // Only partials reach here; complete `say` text is accumulated by the caller.
+    return { type: 'progress', content: parsed.text, timestamp: new Date() };
   }
 
-  private parseStreamLine(line: string): AgentExecutionStreamEvent | null {
-    try {
-      const parsed = JSON.parse(line);
-
-      // Cline JSON format: { type: "say"|"ask", text: "...", ts: ..., partial: bool }
-      if (parsed.type === 'say' && typeof parsed.text === 'string') {
-        if (parsed.partial) {
-          return {
-            type: 'progress',
-            content: parsed.text,
-            timestamp: new Date(),
-          };
-        }
-        return {
-          type: 'result',
-          content: parsed.text,
-          timestamp: new Date(),
-        };
-      }
-
-      if (parsed.type === 'ask') {
-        return {
-          type: 'progress',
-          content: parsed.text ?? '',
-          timestamp: new Date(),
-        };
-      }
-
-      if (parsed.type === 'error') {
-        return {
-          type: 'error',
-          content: parsed.text ?? parsed.message ?? '',
-          timestamp: new Date(),
-        };
-      }
-
-      // Generic content
-      if (parsed.text || parsed.message) {
-        const rawContent = parsed.text ?? parsed.message;
-        const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-        return {
-          type: 'progress',
-          content,
-          timestamp: new Date(),
-        };
-      }
-
-      return null;
-    } catch {
-      return {
-        type: 'progress',
-        content: line,
-        timestamp: new Date(),
-      };
-    }
+  if (parsed.type === EVENT_TYPE_ASK) {
+    return { type: 'progress', content: asText(parsed.text), timestamp: new Date() };
   }
+
+  if (parsed.type === EVENT_TYPE_ERROR) {
+    // Either field may carry a structured payload; `${object}` would render it
+    // as "[object Object]" and throw away the only diagnostic there was.
+    const detail = parsed.text ?? parsed.message;
+    return { type: 'error', content: asText(detail), timestamp: new Date() };
+  }
+
+  if (parsed.text !== undefined || parsed.message !== undefined) {
+    return {
+      type: 'progress',
+      content: asText(parsed.text ?? parsed.message),
+      timestamp: new Date(),
+    };
+  }
+
+  return null;
 }

@@ -8,6 +8,15 @@
 
 import type { IAgentRunRepository } from '@/application/ports/output/agents/agent-run-repository.interface.js';
 import { AgentRunStatus } from '@/domain/generated/output.js';
+import { ConsoleLogger } from '../../logging/console-logger.js';
+import { TelemetryFailureCounter } from './telemetry-failure-counter.js';
+
+/**
+ * One counter per worker process — the worker runs exactly one feature, so
+ * module scope is the right lifetime. An empty catch here made a run whose
+ * heartbeat writes were failing indistinguishable from one that finished.
+ */
+const heartbeatFailures = new TelemetryFailureCounter('heartbeat', new ConsoleLogger());
 
 let contextRunId: string | undefined;
 let contextRepository: IAgentRunRepository | undefined;
@@ -38,7 +47,6 @@ export function reportNodeStart(nodeName: string): void {
       lastHeartbeat: new Date(),
       updatedAt: new Date(),
     })
-    .catch(() => {
-      // Swallow — DB write failure is non-fatal
-    });
+    .then(() => heartbeatFailures.recordSuccess())
+    .catch((error: unknown) => heartbeatFailures.recordFailure(error));
 }

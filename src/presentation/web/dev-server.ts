@@ -18,6 +18,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createRequestListener } from '@/infrastructure/services/http-request-listener.js';
 import { initializeContainer, container } from '@/infrastructure/di/container.js';
 import type { IDeploymentService } from '@/application/ports/output/services/deployment-service.interface.js';
 import { InitializeSettingsUseCase } from '@/application/use-cases/settings/initialize-settings.use-case.js';
@@ -63,6 +64,13 @@ import {
   getWebhookManager,
   hasWebhookManager,
 } from '@/infrastructure/services/webhook/webhook-manager.service.js';
+import {
+  ALLOW_PUBLIC_BIND_ENV,
+  BIND_HOST_ENV,
+  ENV_FLAG_ON,
+  WEB_PORT_ENV,
+  resolveBindHost,
+} from '@/infrastructure/services/web-server.service.js';
 
 const DEFAULT_PORT = 3000;
 
@@ -242,13 +250,28 @@ async function main() {
   }
 
   // Start Next.js dev server
-  const app = next({ dev: true, dir: import.meta.dirname, hostname: '0.0.0.0', port });
+  // Choose the listen address. The dev server has the same powers as the
+  // production daemon (it spawns shells and installs tools), so it no longer
+  // hard-binds 0.0.0.0 — a public bind needs SHEP_ALLOW_PUBLIC_BIND=1 and is
+  // announced. Next's own hostname stays 'localhost' so it generates correct
+  // relative URLs regardless of the interface.
+  const { host: bindHost, warning: bindWarning } = resolveBindHost(
+    process.env[BIND_HOST_ENV],
+    process.env[ALLOW_PUBLIC_BIND_ENV] === ENV_FLAG_ON
+  );
+  if (bindWarning) {
+    console.warn(`[dev-server] ${bindWarning}`);
+  }
+
+  // Publish the port so `middleware.ts` can reject Host headers naming a
+  // different port (DNS rebinding defence).
+  process.env[WEB_PORT_ENV] = String(port);
+
+  const app = next({ dev: true, dir: import.meta.dirname, hostname: 'localhost', port });
   const handle = app.getRequestHandler();
   await app.prepare();
 
-  const server = http.createServer((req, res) => {
-    handle(req!, res!);
-  });
+  const server = http.createServer(createRequestListener(handle));
 
   // Forward WebSocket upgrades to Next.js for HMR/Fast Refresh
   server.on('upgrade', (req, socket, head) => {
@@ -257,9 +280,9 @@ async function main() {
 
   await new Promise<void>((resolve, reject) => {
     server.on('error', reject);
-    // Bind to 0.0.0.0 so the dev server is reachable from other hosts/containers,
-    // but advertise localhost — 0.0.0.0 is not a routable browser destination.
-    server.listen(port, '0.0.0.0', () => {
+    // Advertise localhost regardless of the bind address — a meta-address
+    // such as 0.0.0.0 is not a routable browser destination.
+    server.listen(port, bindHost, () => {
       console.log(`[dev-server] Ready at http://localhost:${port}`);
       resolve();
     });

@@ -13,6 +13,7 @@ import type Database from 'better-sqlite3';
 import { createInMemoryDatabase } from '../../../helpers/database.helper.js';
 import { runSQLiteMigrations } from '@/infrastructure/persistence/sqlite/migrations.js';
 import { SQLiteFleetRepository } from '@/infrastructure/repositories/sqlite-fleet.repository.js';
+import { normalizeRepositoryPath } from '@/domain/shared/repository-path.js';
 import {
   AgentQuestionKind,
   AgentQuestionStatus,
@@ -24,6 +25,7 @@ import {
 } from '@/domain/generated/output.js';
 
 const REPO_A = '/Users/dev/projects/alpha';
+/** A Windows-style path as a CALLER spells it — stored normalised, like production. */
 const REPO_B = 'C:\\Users\\dev\\projects\\beta';
 const NOW = Date.now();
 const MINUTE = 60_000;
@@ -53,7 +55,11 @@ describe('SQLiteFleetRepository', () => {
       options.id,
       `Feature ${options.id}`,
       `feat-${options.id}`,
-      options.repositoryPath ?? REPO_A,
+      // Paths are canonicalised on write by the feature mapper (and existing
+      // rows by migration 144), so the seeder stores what production stores —
+      // seeding a raw backslash path here would test a row shape the
+      // application can no longer produce.
+      normalizeRepositoryPath(options.repositoryPath ?? REPO_A),
       `feat/${options.id}`,
       options.lifecycle ?? SdlcLifecycle.Implementation,
       options.agentRunId ?? null,

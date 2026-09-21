@@ -11,6 +11,19 @@
  * responsibility of the caller — the `install_deps` graph node — which
  * writes the stamp via the run-plan repository only after `install()`
  * resolves `success: true`.
+ *
+ * SECURITY: `packageManager` is untrusted. It can arrive from a repository's
+ * committed `.shep/dev.json`, i.e. from anyone with commit access, and with
+ * `shell: true` Node joins the file and its args into a single shell line —
+ * so `"true; touch INJECTED; #"` executed (verified with a real subprocess).
+ * It is therefore matched against a closed allowlist before any spawn, the
+ * same way `node-project-build.service.ts` derives its manager from a
+ * lockfile allowlist. `shell: true` itself stays: on Windows every package
+ * manager is a `.cmd` shim that `spawn` cannot resolve without it, and with
+ * the allowlist in place the command word is one of four constants.
+ *
+ * Lifecycle scripts are disabled for the same reason: `npm install` on an
+ * untrusted repository runs that repository's `postinstall` script.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { buildDevServerEnv } from './dev-server-env.js';
@@ -19,6 +32,14 @@ import { IS_WINDOWS } from '../../platform.js';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_TAIL_LINES = 50;
+
+/** The only package managers this installer will ever spawn. */
+const SUPPORTED_PACKAGE_MANAGERS = ['npm', 'pnpm', 'yarn', 'bun'] as const;
+
+type SupportedPackageManager = (typeof SUPPORTED_PACKAGE_MANAGERS)[number];
+
+/** Flag that disables lifecycle scripts, for the managers that accept it. */
+const IGNORE_SCRIPTS_FLAG = '--ignore-scripts';
 
 export interface InstallResult {
   success: boolean;
@@ -32,23 +53,45 @@ export interface DependencyInstallerDeps {
 
 const defaultDeps: DependencyInstallerDeps = { spawn };
 
+/** True when `value` is one of the managers we are willing to run. */
+function isSupportedPackageManager(value: string): value is SupportedPackageManager {
+  return (SUPPORTED_PACKAGE_MANAGERS as readonly string[]).includes(value);
+}
+
 /**
- * Build the non-interactive install args for a given package manager.
- * Unknown package managers fall back to a plain `install`.
+ * Build the non-interactive install args for a supported package manager.
+ *
+ * No `default:` branch by construction — the parameter type is the allowlist,
+ * so adding a manager is a compile error until its args are written down.
+ *
+ * Yarn is the exception to `--ignore-scripts`: Yarn Berry rejects it as an
+ * unknown option and would fail the install outright, so yarn's lifecycle
+ * scripts are disabled through the environment instead
+ * (see {@link buildInstallEnvOverrides}).
  */
-function buildInstallArgs(packageManager: string): string[] {
+function buildInstallArgs(packageManager: SupportedPackageManager): string[] {
   switch (packageManager) {
     case 'npm':
-      return ['install', '--no-audit', '--no-fund'];
+      return ['install', '--no-audit', '--no-fund', IGNORE_SCRIPTS_FLAG];
     case 'pnpm':
-      return ['install'];
+      return ['install', IGNORE_SCRIPTS_FLAG];
     case 'yarn':
       return ['install', '--non-interactive'];
     case 'bun':
-      return ['install'];
-    default:
-      return ['install'];
+      return ['install', IGNORE_SCRIPTS_FLAG];
   }
+}
+
+/**
+ * Environment overrides for the install.
+ *
+ * `YARN_ENABLE_SCRIPTS=false` is Berry's switch and `YARN_IGNORE_SCRIPTS=true`
+ * is Classic's (`YARN_*` maps onto yarn 1's npm-style config), so both are set
+ * and whichever yarn is present honours its own.
+ */
+function buildInstallEnvOverrides(packageManager: SupportedPackageManager): Record<string, string> {
+  if (packageManager !== 'yarn') return { CI: '1' };
+  return { CI: '1', YARN_ENABLE_SCRIPTS: 'false', YARN_IGNORE_SCRIPTS: 'true' };
 }
 
 export class DependencyInstaller {
@@ -69,6 +112,14 @@ export class DependencyInstaller {
     onLogLine: (line: string) => void,
     timeoutMs: number = DEFAULT_TIMEOUT_MS
   ): Promise<InstallResult> {
+    if (!isSupportedPackageManager(packageManager)) {
+      const message =
+        `"${packageManager}" is not a supported package manager — refusing to run it. ` +
+        `Supported: ${SUPPORTED_PACKAGE_MANAGERS.join(', ')}.`;
+      onLogLine(message);
+      return Promise.resolve({ success: false, exitCode: null, tail: [message] });
+    }
+
     return new Promise((resolve) => {
       const tail: string[] = [];
       let settled = false;
@@ -94,7 +145,7 @@ export class DependencyInstaller {
           shell: true,
           cwd: dir,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: buildDevServerEnv(process.env, { CI: '1' }),
+          env: buildDevServerEnv(process.env, buildInstallEnvOverrides(packageManager)),
           ...(IS_WINDOWS ? { windowsHide: true } : {}),
         });
       } catch (err) {

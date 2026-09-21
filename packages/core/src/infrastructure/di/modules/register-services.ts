@@ -1,8 +1,6 @@
 import type { DependencyContainer } from 'tsyringe';
-import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
 
-import { IS_WINDOWS } from '../../platform.js';
+import { createExecFunction } from '../../services/process/exec-function.js';
 
 import type { IAgentValidator } from '../../../application/ports/output/agents/agent-validator.interface.js';
 import { AgentValidatorService } from '../../services/agents/common/agent-validator.service.js';
@@ -80,6 +78,11 @@ import type { IConflictResolutionService } from '../../../application/ports/outp
 import { ConflictResolutionService } from '../../services/agents/conflict-resolution/conflict-resolution.service.js';
 import type { ILogger } from '../../../application/ports/output/services/logger.interface.js';
 import { ConsoleLogger } from '../../services/logging/console-logger.js';
+import { getSettings } from '../../services/settings.service.js';
+import type { ILogFileStore } from '../../../application/ports/output/services/log-file-store.interface.js';
+import { LogFileStoreService } from '../../services/logging/log-file-store.service.js';
+import type { IUsageStatsRepository } from '../../../application/ports/output/repositories/usage-stats-repository.interface.js';
+import { SqliteUsageStatsRepository } from '../../services/usage/sqlite-usage-stats.repository.js';
 import type { IOperationLogService } from '../../../application/ports/output/services/operation-log-service.interface.js';
 import { OperationLogService } from '../../services/operation-log/operation-log.service.js';
 import type { IProcessLivenessProbe } from '../../../application/ports/output/services/process-liveness.interface.js';
@@ -132,6 +135,16 @@ import { WorkingTreeCleanDiagnostic } from '../../../application/use-cases/docto
 import { MigrationStatusDiagnostic } from '../../../application/use-cases/doctor/diagnostics/migration-status.diagnostic.js';
 import { TypespecFreshnessDiagnostic } from '../../../application/use-cases/doctor/diagnostics/typespec-freshness.diagnostic.js';
 import { DiGraphValidationDiagnostic } from '../../../application/use-cases/doctor/diagnostics/di-graph-validation.diagnostic.js';
+import { DaemonReachableDiagnostic } from '../../../application/use-cases/doctor/diagnostics/daemon-reachable.diagnostic.js';
+import { ShepHomePermissionsDiagnostic } from '../../../application/use-cases/doctor/diagnostics/shep-home-permissions.diagnostic.js';
+import { DiskSpaceDiagnostic } from '../../../application/use-cases/doctor/diagnostics/disk-space.diagnostic.js';
+import { WorktreeRootWritableDiagnostic } from '../../../application/use-cases/doctor/diagnostics/worktree-root-writable.diagnostic.js';
+import { LogsSizeDiagnostic } from '../../../application/use-cases/doctor/diagnostics/logs-size.diagnostic.js';
+import type { IShepEnvironmentInspector } from '../../../application/ports/output/services/shep-environment-inspector.interface.js';
+import { ShepEnvironmentInspectorService } from '../../services/diagnostics/shep-environment-inspector.service.js';
+import type { IDaemonHealthProbe } from '../../../application/ports/output/services/daemon-health-probe.interface.js';
+import { DaemonHealthProbeService } from '../../services/diagnostics/daemon-health-probe.service.js';
+import type { IDaemonService } from '../../../application/ports/output/services/daemon-service.interface.js';
 import { RecapChannel } from '../../../domain/generated/output.js';
 
 /**
@@ -142,29 +155,14 @@ import { RecapChannel } from '../../../domain/generated/output.js';
  * or that live in topic-specific modules (agents, cloud deploy, ide/tools).
  */
 export function registerServices(container: DependencyContainer): void {
-  // ExecFunction — on Windows, agent CLIs ship as .cmd/.ps1 scripts (e.g. cursor's
-  // `agent.cmd`). execFile without shell: true cannot resolve .cmd extensions,
-  // causing ENOENT. With shell: true, Node concatenates `file + ' ' + args.join(' ')`
-  // and hands it to cmd.exe — which then re-tokenises on whitespace, splitting any
-  // arg containing a space (e.g. `--description "snake game"` would arrive at gh
-  // as two args). Quote args with whitespace or shell-special chars before joining.
-  const execFileAsync = promisify(execFile);
-  const quoteWindowsArg = (a: string): string => {
-    if (/^[A-Za-z0-9_./:=+@,-]+$/.test(a)) return a;
-    return `"${a.replace(/(["\\])/g, '\\$1')}"`;
-  };
-  const execFn = IS_WINDOWS
-    ? (file: string, args: string[], options?: object) =>
-        execFileAsync(file, args.map(quoteWindowsArg), {
-          ...options,
-          shell: true,
-          windowsHide: true,
-        })
-    : execFileAsync;
-  container.registerInstance('ExecFunction', execFn);
+  // ExecFunction — see `services/process/exec-function.ts` for why Windows
+  // resolves the PATHEXT extension itself instead of using `shell: true`.
+  container.registerInstance('ExecFunction', createExecFunction());
 
   container.registerSingleton<IAgentValidator>('IAgentValidator', AgentValidatorService);
-  container.registerSingleton<IVersionService>('IVersionService', VersionService);
+  // The optional environment/readGitSha options are test seams, not DI tokens.
+  // Construct explicitly so tsc's Object metadata is never resolved as a service.
+  container.registerInstance<IVersionService>('IVersionService', new VersionService());
 
   // IWebServerService is registered as a lazy proxy to avoid importing `next`
   // (~80ms) for non-web commands. The actual service is loaded on first method call.
@@ -321,8 +319,27 @@ export function registerServices(container: DependencyContainer): void {
     ConflictResolutionService
   );
 
-  // Generic logger used by cloud deploy + other infrastructure consumers.
-  container.registerSingleton<ILogger>('ILogger', ConsoleLogger);
+  // Generic logger used by cloud deploy, the daemon-resident background
+  // watchers and other infrastructure consumers.
+  //
+  // Registered as an INSTANCE, not by class: ConsoleLogger needs a reader for
+  // `settings.system.logLevel` (the knob that used to have no effect), and a
+  // function-typed constructor parameter erases to `Object`, which tsyringe
+  // cannot resolve — the same reason DiagnosticRunner is registered as an
+  // instance below. The reader is called per log line and tolerates settings
+  // not being initialised yet, so registration order does not matter.
+  container.registerInstance<ILogger>(
+    'ILogger',
+    new ConsoleLogger({
+      readSettingsLogLevel: () => {
+        try {
+          return getSettings().system.logLevel;
+        } catch {
+          return undefined;
+        }
+      },
+    })
+  );
 
   // Operation log service — orchestrating use cases append structured progress
   // entries here so the UI can render full operation history. Lazy-resolved so
@@ -432,6 +449,31 @@ export function registerServices(container: DependencyContainer): void {
   // (similar to DiscordOutreachPublisher pattern).
   container.registerInstance<IDiagnosticRunner>('IDiagnosticRunner', new DiagnosticRunner());
 
+  // Filesystem facts the runtime diagnostics need (permissions, free disk,
+  // worktree root, log footprint). One adapter, four checks.
+  // Worker log directory access behind `shep logs prune`.
+  container.registerSingleton<ILogFileStore>('ILogFileStore', LogFileStoreService);
+
+  // Windowed phase-timing read behind `shep usage`. Registered here rather
+  // than in register-repositories only because that module was being changed
+  // concurrently; it is an ordinary repository and belongs there.
+  container.registerSingleton<IUsageStatsRepository>(
+    'IUsageStatsRepository',
+    SqliteUsageStatsRepository
+  );
+
+  container.registerSingleton<IShepEnvironmentInspector>(
+    'IShepEnvironmentInspector',
+    ShepEnvironmentInspectorService
+  );
+
+  // Readiness probe for the running daemon. Registered as an instance for
+  // the same reason as DiagnosticRunner: the fetch/timeout constructor
+  // parameters have no resolvable runtime type.
+  container.register<IDaemonHealthProbe>('IDaemonHealthProbe', {
+    useFactory: (c) => new DaemonHealthProbeService(c.resolve<IDaemonService>('IDaemonService')),
+  });
+
   // ─── Doctor diagnostics (feature 097, phase 3) ──────────────────────
   // Each diagnostic is a strategy resolved by string token. The use case
   // injects the array via `resolveAll('IDiagnostic')`. Order is the
@@ -463,4 +505,15 @@ export function registerServices(container: DependencyContainer): void {
       )
   );
   registerDiagnostic((c) => new DiGraphValidationDiagnostic((token) => c.isRegistered(token)));
+
+  // ─── Runtime diagnostics (observability audit) ──────────────────────
+  // The ten checks above are install-time checks: they answer "is this
+  // machine set up?". These five answer "is this install healthy right
+  // now?" — the daemon actually serving, the directory holding plaintext
+  // tokens not being world-readable, disk, worktree root, log growth.
+  registerDiagnostic((c) => c.resolve(DaemonReachableDiagnostic));
+  registerDiagnostic((c) => c.resolve(ShepHomePermissionsDiagnostic));
+  registerDiagnostic((c) => c.resolve(DiskSpaceDiagnostic));
+  registerDiagnostic((c) => c.resolve(WorktreeRootWritableDiagnostic));
+  registerDiagnostic((c) => c.resolve(LogsSizeDiagnostic));
 }

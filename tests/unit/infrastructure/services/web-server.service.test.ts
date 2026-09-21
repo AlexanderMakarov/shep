@@ -21,6 +21,10 @@ vi.mock('@/infrastructure/platform.js', () => ({
 
 import {
   WebServerService,
+  ALLOW_PUBLIC_BIND_ENV,
+  BIND_HOST_ENV,
+  WEB_PORT_ENV,
+  resolveBindHost,
   type WebServerDeps,
 } from '@/infrastructure/services/web-server.service.js';
 
@@ -178,6 +182,95 @@ describe('WebServerService', () => {
 
       expect(chdirSpy).not.toHaveBeenCalled();
       chdirSpy.mockRestore();
+    });
+  });
+
+  describe('bind host validation', () => {
+    const savedEnv: Record<string, string | undefined> = {};
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      for (const key of [BIND_HOST_ENV, ALLOW_PUBLIC_BIND_ENV, WEB_PORT_ENV]) {
+        savedEnv[key] = process.env[key];
+        delete process.env[key];
+      }
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      warnSpy.mockRestore();
+    });
+
+    it('binds loopback by default', async () => {
+      await service.start(4050, '/path/to/web');
+
+      expect(mocks.mockServer.listen).toHaveBeenCalledWith(4050, 'localhost', expect.any(Function));
+    });
+
+    it.each(['127.0.0.1', '::1', 'localhost'])(
+      'accepts the loopback bind host %s',
+      async (host) => {
+        process.env[BIND_HOST_ENV] = host;
+
+        await service.start(4050, '/path/to/web');
+
+        expect(mocks.mockServer.listen).toHaveBeenCalledWith(4050, host, expect.any(Function));
+      }
+    );
+
+    it('refuses a public bind host and falls back to loopback', async () => {
+      // SHEP_BIND_HOST used to be an unvalidated override of the production
+      // loopback bind — 0.0.0.0 exposed an unauthenticated PTY to the LAN.
+      process.env[BIND_HOST_ENV] = '0.0.0.0';
+
+      await service.start(4050, '/path/to/web');
+
+      expect(mocks.mockServer.listen).toHaveBeenCalledWith(4050, 'localhost', expect.any(Function));
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('honours a public bind host only behind the explicit opt-in, loudly', async () => {
+      process.env[BIND_HOST_ENV] = '0.0.0.0';
+      process.env[ALLOW_PUBLIC_BIND_ENV] = '1';
+
+      await service.start(4050, '/path/to/web');
+
+      expect(mocks.mockServer.listen).toHaveBeenCalledWith(4050, '0.0.0.0', expect.any(Function));
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('publishes the listening port so the middleware can validate Host headers', async () => {
+      await service.start(4050, '/path/to/web');
+
+      expect(process.env[WEB_PORT_ENV]).toBe('4050');
+    });
+
+    describe('resolveBindHost (shared with the dev server)', () => {
+      it('defaults to loopback when nothing is requested', () => {
+        expect(resolveBindHost(undefined, false)).toEqual({ host: 'localhost', warning: null });
+      });
+
+      it('reports why a public bind was downgraded', () => {
+        const resolved = resolveBindHost('0.0.0.0', false);
+
+        expect(resolved.host).toBe('localhost');
+        expect(resolved.warning).toContain('0.0.0.0');
+      });
+
+      it('warns but obeys when the public bind is explicitly allowed', () => {
+        const resolved = resolveBindHost('0.0.0.0', true);
+
+        expect(resolved.host).toBe('0.0.0.0');
+        expect(resolved.warning).toBeTruthy();
+      });
+
+      it('never warns for a loopback bind', () => {
+        expect(resolveBindHost('127.0.0.1', true)).toEqual({ host: '127.0.0.1', warning: null });
+      });
     });
   });
 });

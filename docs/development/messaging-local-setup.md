@@ -29,6 +29,10 @@ cloudflared / ngrok  ──►  Gateway (localhost:8080)  ◄──ws──  She
 
 ## 1. Run the Gateway
 
+The Gateway is a **separate project** — the `.env.example` below belongs to that
+repository, not to Shep. (Shep itself has no `.env` file: its settings live in
+SQLite and are edited with `shep settings …`.)
+
 ```bash
 git clone https://github.com/Commands-com/gateway.git
 cd gateway
@@ -115,15 +119,15 @@ A dialog opens showing:
 Because the daemon sees the Gateway on localhost but Telegram needs a
 public URL, rewrite the webhook URL host to your tunnel domain:
 
-```bash
-# Example
-ROUTE_PATH=$(curl -s http://localhost:8080/gateway/v1/integrations/routes \
-  -H "Authorization: Bearer $(cat ~/.shep/.gateway-token)" | jq -r '.routes[0] | "/integrations/\(.route_id)/\(.route_token)"')
-WEBHOOK_URL="${SHEP_GATEWAY_PUBLIC_URL}${ROUTE_PATH}"
-```
+Copy the `route_id` and `route_token` out of the pairing dialog and build the
+URL yourself:
 
-or just copy the route_id/route_token from the dialog and build the URL
-yourself: `${SHEP_GATEWAY_PUBLIC_URL}/integrations/{route_id}/{route_token}`.
+```bash
+# From the pairing dialog's webhook URL
+ROUTE_ID=...
+ROUTE_TOKEN=...
+WEBHOOK_URL="${SHEP_GATEWAY_PUBLIC_URL}/integrations/${ROUTE_ID}/${ROUTE_TOKEN}"
+```
 
 Set the Telegram webhook:
 
@@ -146,6 +150,18 @@ shep _serve
 # or during development:
 pnpm dev:cli _serve
 ```
+
+`pnpm dev:web` does **not** start the messaging service by default — it opens a
+persistent WebSocket tunnel to the gateway, which is not something every
+developer wants running on every dev-server start. Opt in explicitly:
+
+```bash
+SHEP_ENABLE_MESSAGING=1 pnpm dev:web
+```
+
+If messaging is not configured yet, the dev server logs
+`SHEP_ENABLE_MESSAGING=1 but messaging is not configured yet — pair a platform
+in Settings first` and carries on.
 
 The daemon:
 
@@ -215,11 +231,14 @@ The daemon needs your Telegram bot token to call `sendMessage`. You have
 two options:
 
 1. **Settings UI** (recommended for real use) — after pairing, a **Bot API
-   token** field appears below the Telegram row. It's stored as an encrypted
-   string in `settings.db` and loaded by DI on daemon start.
+   token** field appears below the Telegram row. It is stored in the settings
+   row of Shep's SQLite database (`~/.shep/data`, column
+   `messaging_telegram_bot_token`) and loaded by DI on daemon start. Note that
+   it is stored **as plaintext** in that column — protect the file accordingly.
 2. **Environment variable** (quick dev) — export
    `SHEP_TELEGRAM_BOT_TOKEN` before running `shep _serve`. Settings takes
-   precedence when both are set.
+   precedence when both are set
+   (`messagingConfig.telegram?.botToken ?? process.env.SHEP_TELEGRAM_BOT_TOKEN`).
 
 The same pattern applies to the CLI wizard: after `/confirm pairing`, it
 prompts for the bot token and stores it in settings via

@@ -6,11 +6,38 @@
  */
 
 import { test, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { COLD_ROUTE_READY_TIMEOUT_MS, COLD_ROUTE_TEST_TIMEOUT_MS } from './helpers/timeouts';
+
+async function selectLanguage(page: Page, name: string) {
+  const select = page.getByTestId('language-select');
+  await expect(select).toBeEnabled({ timeout: COLD_ROUTE_READY_TIMEOUT_MS });
+  if ((await select.textContent())?.trim() === name) return;
+  await select.click();
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' && !!response.request().headers()['next-action']
+  );
+  await page.getByRole('option', { name, exact: true }).click();
+  const response = await saved;
+  expect(response.ok()).toBe(true);
+  await response.finished();
+}
 
 test.describe('i18n: language switching', () => {
   // First spec to land on /settings, so it may pay the cold route compile.
   test.describe.configure({ timeout: COLD_ROUTE_TEST_TIMEOUT_MS });
+
+  // Language is a persisted singleton setting, so every case must restore it
+  // before handing the server to another browser context or spec.
+  async function resetLanguage(page: Page) {
+    await page.goto('/settings');
+    await selectLanguage(page, 'English');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  }
+
+  test.beforeEach(async ({ page }) => resetLanguage(page));
+  test.afterEach(async ({ page }) => resetLanguage(page));
 
   test('switching to Russian updates UI text immediately', async ({ page }) => {
     // Navigate to settings page
@@ -23,15 +50,7 @@ test.describe('i18n: language switching', () => {
     // The card title should say "Language" in English
     await expect(languageTitle.getByText('Language', { exact: true })).toBeVisible();
 
-    // Open the language select dropdown
-    const languageSelect = page.getByTestId('language-select');
-    await languageSelect.click();
-
-    // Select Russian
-    await page.getByRole('option', { name: 'Русский' }).click();
-
-    // Wait a moment for i18n to update
-    await page.waitForTimeout(500);
+    await selectLanguage(page, 'Русский');
 
     // The card title should now say "Язык" (Russian for "Language")
     await expect(languageTitle.getByText('Язык', { exact: true })).toBeVisible();
@@ -48,12 +67,7 @@ test.describe('i18n: language switching', () => {
   test('switching to Arabic sets RTL direction', async ({ page }) => {
     await page.goto('/settings');
 
-    const languageSelect = page.getByTestId('language-select');
-    await expect(languageSelect).toBeVisible({ timeout: COLD_ROUTE_READY_TIMEOUT_MS });
-    await languageSelect.click();
-
-    await page.getByRole('option', { name: 'العربية' }).click();
-    await page.waitForTimeout(500);
+    await selectLanguage(page, 'العربية');
 
     // Direction should be RTL for Arabic
     const htmlDir = await page.getAttribute('html', 'dir');
@@ -66,12 +80,7 @@ test.describe('i18n: language switching', () => {
   test('switching to Spanish updates navigation text', async ({ page }) => {
     await page.goto('/settings');
 
-    const languageSelect = page.getByTestId('language-select');
-    await expect(languageSelect).toBeVisible({ timeout: COLD_ROUTE_READY_TIMEOUT_MS });
-    await languageSelect.click();
-
-    await page.getByRole('option', { name: 'Español' }).click();
-    await page.waitForTimeout(500);
+    await selectLanguage(page, 'Español');
 
     // Settings section title should be in Spanish
     const languageSection = page.getByTestId('language-settings-section');

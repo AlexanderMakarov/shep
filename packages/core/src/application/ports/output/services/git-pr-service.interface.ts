@@ -269,7 +269,9 @@ export interface IGitPrService {
    * Merge a pull request immediately.
    *
    * The PR must be in a mergeable state (all required checks passed, reviews
-   * approved). If not, this throws GitPrError with MERGE_FAILED code.
+   * approved). Completion is confirmed against GitHub's remote PR state before
+   * branch cleanup. A queued or unconfirmed merge throws GitPrError with
+   * MERGE_FAILED code so callers preserve the branch and worktree.
    *
    * @param cwd - Working directory path
    * @param prNumber - PR number to merge

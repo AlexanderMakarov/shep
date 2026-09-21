@@ -53,7 +53,11 @@ function queuedFeature(id: string, minutesAgo: number, overrides?: Partial<Featu
 
 describe('AdmitQueuedFeaturesUseCase', () => {
   let featureRepo: ReturnType<typeof createMockFeatureRepository>;
-  let capacity: { getLimit: ReturnType<typeof vi.fn>; getRunningCount: ReturnType<typeof vi.fn> };
+  let capacity: {
+    getLimit: ReturnType<typeof vi.fn>;
+    getRunningCount: ReturnType<typeof vi.fn>;
+    claimSlot: ReturnType<typeof vi.fn>;
+  };
   let spawnFeatureAgent: { execute: ReturnType<typeof vi.fn> };
   let useCase: AdmitQueuedFeaturesUseCase;
 
@@ -62,6 +66,8 @@ describe('AdmitQueuedFeaturesUseCase', () => {
     capacity = {
       getLimit: vi.fn().mockResolvedValue(3),
       getRunningCount: vi.fn().mockResolvedValue(0),
+      // Winning the claim is the normal case; the races below override it.
+      claimSlot: vi.fn().mockResolvedValue(true),
     };
     spawnFeatureAgent = { execute: vi.fn().mockResolvedValue({ spawned: true }) };
     useCase = new AdmitQueuedFeaturesUseCase(
@@ -127,14 +133,24 @@ describe('AdmitQueuedFeaturesUseCase', () => {
     expect(capacity.getRunningCount).not.toHaveBeenCalled();
   });
 
-  it('clears queuedAt and transitions the feature before spawning', async () => {
+  it('clears queuedAt and transitions the feature as one atomic claim', async () => {
     featureRepo.listQueued.mockResolvedValue([queuedFeature('a', 30)]);
 
     await useCase.execute();
 
-    const persisted = featureRepo.update.mock.calls[0][0];
-    expect(persisted.queuedAt).toBeUndefined();
-    expect(persisted.lifecycle).toBe(SdlcLifecycle.Requirements);
+    expect(capacity.claimSlot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureId: 'a',
+        targetLifecycle: SdlcLifecycle.Requirements,
+        requireQueued: true,
+      })
+    );
+    // The claim IS the write. A separate full-row update would reintroduce
+    // the read-then-write window the claim exists to close.
+    expect(featureRepo.update).not.toHaveBeenCalled();
+    const spawned = spawnFeatureAgent.execute.mock.calls[0][0].feature;
+    expect(spawned.queuedAt).toBeUndefined();
+    expect(spawned.lifecycle).toBe(SdlcLifecycle.Requirements);
   });
 
   it('sends a fast-mode feature straight to Implementation', async () => {
@@ -144,7 +160,9 @@ describe('AdmitQueuedFeaturesUseCase', () => {
 
     await useCase.execute();
 
-    expect(featureRepo.update.mock.calls[0][0].lifecycle).toBe(SdlcLifecycle.Implementation);
+    expect(capacity.claimSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ targetLifecycle: SdlcLifecycle.Implementation })
+    );
   });
 
   it('sends an exploration feature back to Exploring', async () => {
@@ -154,7 +172,41 @@ describe('AdmitQueuedFeaturesUseCase', () => {
 
     await useCase.execute();
 
-    expect(featureRepo.update.mock.calls[0][0].lifecycle).toBe(SdlcLifecycle.Exploring);
+    expect(capacity.claimSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ targetLifecycle: SdlcLifecycle.Exploring })
+    );
+  });
+
+  describe('double-spawn protection', () => {
+    it('does not spawn when another process already claimed the feature', async () => {
+      featureRepo.listQueued.mockResolvedValue([queuedFeature('a', 30)]);
+      capacity.claimSlot.mockResolvedValue(false);
+
+      const result = await useCase.execute();
+
+      expect(result.admittedFeatureIds).toEqual([]);
+      expect(spawnFeatureAgent.execute).not.toHaveBeenCalled();
+    });
+
+    it('spawns exactly once when two drains see the same queued feature', async () => {
+      featureRepo.listQueued.mockResolvedValue([queuedFeature('a', 30)]);
+      // One claim per drain; only the first can win.
+      capacity.claimSlot.mockResolvedValueOnce(true).mockResolvedValue(false);
+
+      const [first, second] = await Promise.all([useCase.execute(), useCase.execute()]);
+
+      expect([...first.admittedFeatureIds, ...second.admittedFeatureIds]).toEqual(['a']);
+      expect(spawnFeatureAgent.execute).toHaveBeenCalledOnce();
+    });
+
+    it('keeps draining the rest of the queue after losing one claim', async () => {
+      featureRepo.listQueued.mockResolvedValue([queuedFeature('a', 30), queuedFeature('b', 20)]);
+      capacity.claimSlot.mockResolvedValueOnce(false).mockResolvedValue(true);
+
+      const result = await useCase.execute();
+
+      expect(result.admittedFeatureIds).toEqual(['b']);
+    });
   });
 
   describe('dependency gate', () => {
@@ -170,7 +222,7 @@ describe('AdmitQueuedFeaturesUseCase', () => {
       const result = await useCase.execute();
 
       expect(result.admittedFeatureIds).toEqual([]);
-      expect(featureRepo.update).not.toHaveBeenCalled();
+      expect(capacity.claimSlot).not.toHaveBeenCalled();
       expect(spawnFeatureAgent.execute).not.toHaveBeenCalled();
     });
 

@@ -2,6 +2,7 @@
 
 import { resolve } from '@/lib/server-container';
 import { getModelMeta } from '@/lib/model-metadata';
+import { listAgentDescriptors } from '@shepai/core/domain/shared/agent-catalog';
 import type {
   IAgentExecutorFactory,
   AgentModelListing,
@@ -24,30 +25,19 @@ export interface AgentModelGroup {
   models: ModelInfo[];
 }
 
-const AGENT_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  'codex-cli': 'Codex CLI',
-  'copilot-cli': 'Copilot CLI',
-  cursor: 'Cursor CLI',
-  'gemini-cli': 'Gemini CLI',
-  openrouter: 'OpenRouter',
-  'together-ai': 'Together AI',
-  llmproxy: 'LLM Proxy',
-  dev: 'Demo',
-};
+/**
+ * Labels and picker order come from the domain catalog. Both tables used to be
+ * hand-written here and had drifted: `cline` and `ollama` fell through to their
+ * raw enum value as a label, and `kimi-code` was absent entirely.
+ */
+const AGENT_LABELS: Record<string, string> = Object.fromEntries(
+  listAgentDescriptors().map((descriptor) => [descriptor.type as string, descriptor.label])
+);
 
 /** Sort weight — higher = further down. Demo always last. */
-const AGENT_ORDER: Record<string, number> = {
-  'claude-code': 0,
-  'codex-cli': 1,
-  'copilot-cli': 2,
-  cursor: 3,
-  'gemini-cli': 4,
-  openrouter: 5,
-  'together-ai': 6,
-  llmproxy: 7,
-  dev: 99,
-};
+const AGENT_ORDER: Record<string, number> = Object.fromEntries(
+  listAgentDescriptors().map((descriptor) => [descriptor.type as string, descriptor.order])
+);
 
 function firstNonEmpty(...values: (string | undefined)[]): string {
   for (const v of values) {

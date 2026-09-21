@@ -264,12 +264,31 @@ describe('ToolInstallerServiceImpl', () => {
       expect(onOutput).toHaveBeenCalled();
     });
 
+    it('refuses to spawn anything for a tool marked autoInstall: false', async () => {
+      // `docker.json` is autoInstall: false and its command is
+      // `curl … | bash`. The web route reached this method directly, so the
+      // guard lives here as well as in the use case.
+      const result = await service.executeInstall('docker');
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(result.status).toBe('error');
+      expect(result.toolName).toBe('docker');
+      expect(result.errorMessage).toMatch(/automated installation/i);
+    });
+
+    it('refuses to spawn anything for a tool that is not in the catalogue', async () => {
+      const result = await service.executeInstall('not-a-real-tool');
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(result.status).toBe('error');
+    });
+
     it('should handle timeout by killing process and returning error', async () => {
       const mockProc = createMockProcess(0, false); // Don't emit close automatically
       mockSpawn.mockReturnValue(mockProc);
 
-      // Set a very short timeout for testing
-      const resultPromise = service.executeInstall('cursor'); // cursor has 10 min timeout
+      // `vscode` is autoInstall: true with a multi-minute timeout.
+      const resultPromise = service.executeInstall('vscode');
 
       // Manually emit close after a delay to simulate completion
       setTimeout(() => {
@@ -280,6 +299,33 @@ describe('ToolInstallerServiceImpl', () => {
 
       // The timeout logic should have been attempted
       expect(mockProc.kill).toBeDefined();
+    });
+  });
+
+  /**
+   * `TOOL_METADATA[toolName]` is a plain-object lookup, so an inherited key
+   * resolves to something truthy: `TOOL_METADATA['constructor']` is the Object
+   * constructor. `getInstallCommand` then read `metadata.commands[platform]`
+   * off it and threw a TypeError, and `executeInstall` passed the same value
+   * through its `autoInstall` gate on the way to `spawn(command, [], { shell:
+   * true })`. An unknown tool name must be an unknown tool, on every path.
+   */
+  describe('inherited property names are not tools', () => {
+    const INHERITED_KEYS = ['constructor', '__proto__', 'toString', 'hasOwnProperty'];
+
+    it.each(INHERITED_KEYS)('getInstallCommand(%j) returns null', (toolName) => {
+      expect(service.getInstallCommand(toolName)).toBeNull();
+    });
+
+    it.each(INHERITED_KEYS)('executeInstall(%j) errors without spawning', async (toolName) => {
+      const status = await service.executeInstall(toolName);
+
+      expect(status.errorMessage).toMatch(/Unknown tool/);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it.each(INHERITED_KEYS)('getTerminalOpenConfig(%j) returns null', (toolName) => {
+      expect(service.getTerminalOpenConfig(toolName)).toBeNull();
     });
   });
 });

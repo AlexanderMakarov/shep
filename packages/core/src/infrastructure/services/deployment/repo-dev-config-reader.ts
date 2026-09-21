@@ -12,6 +12,17 @@
  * doubt returns `null` ("nothing declared here") with one logged warning and
  * the caller falls through to the next tier (NFR-4).
  *
+ * Validation is not enough for `command`, `setupCommands` and
+ * `packageManager`: they are shell strings spawned with `shell: true` (one of
+ * them `detached: true`), and a shell string cannot be validated, only agreed
+ * to. Tier zero outranks the whole detector chain, so a repository whose real
+ * dev server is an ordinary `npm run dev` could silently redirect the "start
+ * dev server" button. Those three fields therefore require an explicit
+ * approval per repository + command fingerprint — see
+ * `repo-dev-config-approval.ts`. An unapproved file reads as "nothing
+ * declared here", which is the fall-through the contract above already
+ * defines.
+ *
  * Shape and failure behaviour follow `aspm/ownership-yaml-reader.ts`, which
  * already reads `<repo>/.shep/ownership.yaml` under the same contract.
  *
@@ -31,10 +42,16 @@
  */
 
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { isPathInside, toComparablePath } from '@/domain/shared/path-confinement.js';
 import { isValidPort } from '@/domain/shared/port-range.js';
 import { createDeploymentLogger } from './deployment-logger.js';
+import {
+  computeRepoDevConfigFingerprint,
+  createRepoDevConfigApprovalGate,
+  recordRepoDevConfigApproval,
+  type RepoDevConfigApprovalGate,
+} from './repo-dev-config-approval.js';
 import { readJsonManifest } from './detectors/shared/json-manifest.js';
 
 /** Repository-relative location of the committed dev config. */
@@ -55,14 +72,65 @@ export interface RepoDevConfig {
 
 const log = createDeploymentLogger('[repoDevConfig]');
 
+/** Gate used when a caller does not inject one. */
+const persistedApprovalGate = createRepoDevConfigApprovalGate();
+
 /**
- * Read and validate `<repoPath>/.shep/dev.json`.
+ * Read, validate, and check consent for `<repoPath>/.shep/dev.json`.
  *
  * @param repoPath - Absolute path to the repository root.
- * @returns The validated config, or `null` when the file is absent, invalid,
- *          or declares a `cwd` outside the repository.
+ * @param approvals - Consent gate; defaults to the persisted store.
+ * @returns The validated, approved config, or `null` when the file is absent,
+ *          invalid, declares a `cwd` outside the repository, or declares a
+ *          command this machine has not approved.
  */
-export function readRepoDevConfig(repoPath: string): RepoDevConfig | null {
+export function readRepoDevConfig(
+  repoPath: string,
+  approvals: RepoDevConfigApprovalGate = persistedApprovalGate
+): RepoDevConfig | null {
+  const config = readValidatedRepoDevConfig(repoPath);
+  if (config === null) return null;
+
+  const fingerprint = computeRepoDevConfigFingerprint(config);
+  if (!approvals.isApproved(repoPath, fingerprint)) {
+    const setup =
+      config.setupCommands.length > 0
+        ? ` (setup: ${config.setupCommands.map((entry) => JSON.stringify(entry)).join(', ')})`
+        : '';
+    log.warn(
+      `${join(repoPath, REPO_DEV_CONFIG_PATH)} asks to run ${JSON.stringify(config.command)}${setup} — not approved on this machine, so it is being ignored and detection runs instead. Run shep dev approve with --repo pointing to this directory to review and approve it (fingerprint ${fingerprint}).`
+    );
+    return null;
+  }
+
+  return config;
+}
+
+/**
+ * Record consent for whatever the file currently declares.
+ * An expected fingerprint binds consent to previously reviewed executable content.
+ *
+ * @returns `true` when an approval was recorded, `false` when the document
+ *          declares nothing valid to approve or no longer matches the reviewed fingerprint.
+ */
+export function approveRepoDevConfig(repoPath: string, expectedFingerprint?: string): boolean {
+  const config = readValidatedRepoDevConfig(repoPath);
+  if (config === null) return false;
+
+  const fingerprint = computeRepoDevConfigFingerprint(config);
+  if (expectedFingerprint !== undefined && fingerprint !== expectedFingerprint) return false;
+
+  recordRepoDevConfigApproval(repoPath, fingerprint);
+  return true;
+}
+
+/**
+ * The parse-and-validate half, with no consent check.
+ *
+ * Separate so the approval path can fingerprint exactly what the reader would
+ * have returned, rather than re-deriving it from a second parse.
+ */
+export function readValidatedRepoDevConfig(repoPath: string): RepoDevConfig | null {
   const filePath = resolve(repoPath, ...REPO_DEV_CONFIG_PATH.split('/'));
   if (!existsSync(filePath)) return null;
 

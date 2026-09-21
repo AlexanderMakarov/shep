@@ -10,7 +10,10 @@ All code under `src/` MUST work correctly on **Windows, macOS, and Linux**. This
 - **ALWAYS** normalize paths to forward slashes before storing in the database, comparing, or hashing. Windows APIs and dialogs return backslash paths (`C:\Users\...`), while git and many Node.js APIs use forward slashes.
 - **NEVER** use hardcoded path separators in string operations. Use `path.sep` or normalize first.
 - When comparing paths, normalize both sides: `p.replace(/\\/g, '/')`.
-- When storing paths in SQLite, store with forward slashes. When querying, use `REPLACE(column, '\', '/')` to match regardless of what's stored.
+- When storing paths in SQLite, **normalize to forward slashes on write** — see
+  `domain/shared/repository-path.ts`. Do NOT wrap a path column in
+  `REPLACE(column, '\', '/')` in a query: any function around a column makes its
+  index unusable, which is what turned `findByBranch` into a full table scan.
 
 ### Process Spawning
 

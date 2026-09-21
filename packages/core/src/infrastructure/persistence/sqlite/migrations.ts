@@ -18,6 +18,8 @@ import type { RunnableMigration, MigrationParams } from 'umzug';
 import type Database from 'better-sqlite3';
 import { SQLiteMigrationStorage } from './sqlite-migration-storage.js';
 import { LEGACY_MIGRATIONS, LEGACY_MIGRATION_NAMES } from './legacy-migrations.js';
+import { MigrationLock } from './migration-lock.js';
+import { withImmediateTransaction } from './migration-transaction.js';
 
 /**
  * The latest schema version (highest legacy migration version number).
@@ -95,21 +97,23 @@ async function discoverNewMigrations(
 /**
  * Creates a configured Umzug instance for the given database.
  *
- * Combines legacy inline migrations with runtime-discovered new
- * migration files (035+) from the migrations/ directory.
+ * Combines legacy inline migrations with the already-discovered new migration
+ * files (035+). Discovery is done by the caller, before the migration
+ * transaction opens: it imports 130+ modules from disk, and doing that while
+ * holding the database write lock would keep every other process waiting on
+ * filesystem work that has nothing to do with the database.
  */
-function createUmzug(db: Database.Database): Umzug<Database.Database> {
+function createUmzug(
+  db: Database.Database,
+  newMigrations: RunnableMigration<Database.Database>[]
+): Umzug<Database.Database> {
   const storage = new SQLiteMigrationStorage(db, LEGACY_MIGRATION_NAMES);
-  const migrationsDir = getMigrationsDir();
 
   return new Umzug<Database.Database>({
     storage,
     context: db,
-    migrations: async () => {
-      const newMigrations = await discoverNewMigrations(migrationsDir);
-      // Legacy migrations first (001–035), then new migrations (035+) sorted by name
-      return [...LEGACY_MIGRATIONS, ...newMigrations];
-    },
+    // Legacy migrations first (001–035), then new migrations (035+) sorted by name
+    migrations: [...LEGACY_MIGRATIONS, ...newMigrations],
     /* eslint-disable no-console */
     logger: process.env.DEBUG_SQL
       ? {
@@ -124,18 +128,6 @@ function createUmzug(db: Database.Database): Umzug<Database.Database> {
 }
 
 /**
- * Runs all pending database migrations.
- * Safe to call multiple times (idempotent).
- *
- * Internally creates an Umzug instance configured with:
- *   - SQLiteMigrationStorage (custom better-sqlite3 storage adapter)
- *   - 35 legacy inline migrations from legacy-migrations.ts
- *   - Runtime discovery for new migration files (35+)
- *   - Debug-level logger (when DEBUG_SQL is set)
- *
- * @param db - Database instance to run migrations on
- */
-/**
  * Returns the total number of registered migrations (legacy + discovered).
  * Exported for test assertions so they don't hardcode migration counts.
  */
@@ -145,10 +137,45 @@ export async function getTotalMigrationCount(): Promise<number> {
   return LEGACY_MIGRATIONS.length + newMigrations.length;
 }
 
+/**
+ * Runs all pending database migrations.
+ *
+ * Safe to call multiple times, and safe to call from several processes at
+ * once — which matters, because the daemon, the CLI and every detached worker
+ * call it on startup against the same file.
+ *
+ * Two gates make that true:
+ *   1. a cross-process claim, so exactly one process migrates and the others
+ *      wait and then find nothing pending;
+ *   2. one transaction around the whole run, so DDL and the rows recording it
+ *      commit together and a killed process leaves nothing half-applied.
+ *
+ * @param db - Database instance to run migrations on
+ */
 export async function runSQLiteMigrations(db: Database.Database): Promise<void> {
   try {
-    const umzug = createUmzug(db);
-    await umzug.up();
+    // Import the migration modules before anything is claimed or locked —
+    // this is filesystem work, not database work.
+    const newMigrations = await discoverNewMigrations(getMigrationsDir());
+
+    // Gate 1 — the advisory claim. Serialises whole migration RUNS across
+    // processes so a loser waits and then re-reads an up-to-date applied set,
+    // instead of re-executing the same DDL and dying on the log insert.
+    const lock = new MigrationLock(db);
+    await lock.acquire();
+
+    try {
+      // Gate 2 — one transaction around the entire run, so schema changes and
+      // the rows recording them commit together. A process killed mid-upgrade
+      // leaves the database exactly as it found it, which is what makes the
+      // re-run on the next start safe.
+      await withImmediateTransaction(db, async () => {
+        const umzug = createUmzug(db, newMigrations);
+        await umzug.up();
+      });
+    } finally {
+      lock.release();
+    }
   } catch (error) {
     throw new Error(
       `Failed to run database migrations: ${error instanceof Error ? error.message : String(error)}`

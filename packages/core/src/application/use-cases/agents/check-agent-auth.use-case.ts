@@ -18,7 +18,8 @@
 
 import { injectable, inject } from 'tsyringe';
 
-import { AgentType } from '../../../domain/generated/output.js';
+import type { AgentType } from '../../../domain/generated/output.js';
+import { getAgentDescriptor } from '../../../domain/shared/agent-catalog.js';
 import type { IAgentAuthDetectorService } from '../../ports/output/services/agent-auth-detector.interface.js';
 import type { ISettingsRepository } from '../../ports/output/repositories/settings.repository.interface.js';
 import { ListToolsUseCase } from '../tools/list-tools.use-case.js';
@@ -39,37 +40,6 @@ export interface CheckAgentAuthResult {
   /** Hint to show the user when not authenticated (typically the binary name). */
   authCommand: string | null;
 }
-
-interface AgentMetadata {
-  label: string;
-  /** Tool id from the tool installer JSON catalogue, or null if no tool. */
-  toolId: string | null;
-  /** Binary name on PATH, or null if no binary. */
-  binaryName: string | null;
-}
-
-/**
- * Co-located metadata table — pure facts about each AgentType. Lives in
- * the use case because it is the only consumer that needs all three pieces
- * (label + tool id + binary) wired together.
- */
-const AGENT_METADATA: Record<string, AgentMetadata> = {
-  [AgentType.ClaudeCode]: {
-    label: 'Claude Code',
-    toolId: 'claude-code',
-    binaryName: 'claude',
-  },
-  [AgentType.Cursor]: { label: 'Cursor Agent', toolId: 'cursor-cli', binaryName: 'cursor-agent' },
-  [AgentType.GeminiCli]: { label: 'Gemini CLI', toolId: 'gemini-cli', binaryName: 'gemini' },
-  [AgentType.CopilotCli]: { label: 'Copilot CLI', toolId: 'copilot-cli', binaryName: 'copilot' },
-  [AgentType.Aider]: { label: 'Aider', toolId: null, binaryName: null },
-  [AgentType.Continue]: { label: 'Continue', toolId: null, binaryName: null },
-  [AgentType.Dev]: { label: 'Demo', toolId: null, binaryName: null },
-  [AgentType.Cline]: { label: 'Cline', toolId: null, binaryName: 'cline' },
-  [AgentType.OpenRouter]: { label: 'OpenRouter', toolId: null, binaryName: null },
-  [AgentType.TogetherAi]: { label: 'Together AI', toolId: null, binaryName: null },
-  [AgentType.Ollama]: { label: 'Ollama', toolId: null, binaryName: null },
-};
 
 const UNKNOWN_RESULT: CheckAgentAuthResult = {
   agentType: 'unknown',
@@ -103,19 +73,22 @@ export class CheckAgentAuthUseCase {
       return UNKNOWN_RESULT;
     }
 
-    const metadata = AGENT_METADATA[agentType];
-    if (!metadata) {
+    // Facts about each agent come from the single domain catalog. The table
+    // that used to live here silently omitted codex-cli and llmproxy, so users
+    // on either agent were told their agent was "Unknown / not installed".
+    const metadata = getAgentDescriptor(agentType);
+    if (!metadata?.supported) {
       return { ...UNKNOWN_RESULT, agentType };
     }
 
-    // Agents with no associated tool (dev/demo, aider, continue) — assume ready.
+    // Agents with no installable tool (the demo mock, SDK providers) — ready.
     if (!metadata.toolId) {
       return {
         agentType,
         installed: true,
         authenticated: true,
         label: metadata.label,
-        binaryName: metadata.binaryName,
+        binaryName: metadata.binary,
         installCommand: null,
         authCommand: null,
       };
@@ -139,16 +112,16 @@ export class CheckAgentAuthUseCase {
         installed: false,
         authenticated: false,
         label: metadata.label,
-        binaryName: metadata.binaryName,
+        binaryName: metadata.binary,
         installCommand,
-        authCommand: metadata.binaryName ? `Install ${metadata.label} first` : null,
+        authCommand: metadata.binary ? `Install ${metadata.label} first` : null,
       };
     }
 
     // Tool is installed — defer credential detection to the platform adapter.
     const authenticated = await this.authDetector.isAuthenticated(
       agentType as AgentType,
-      metadata.binaryName
+      metadata.binary
     );
 
     return {
@@ -156,9 +129,9 @@ export class CheckAgentAuthUseCase {
       installed: true,
       authenticated,
       label: metadata.label,
-      binaryName: metadata.binaryName,
+      binaryName: metadata.binary,
       installCommand,
-      authCommand: authenticated ? null : metadata.binaryName,
+      authCommand: authenticated ? null : metadata.binary,
     };
   }
 }

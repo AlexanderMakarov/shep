@@ -45,7 +45,7 @@ Idea → Requirements → Research → Plan → Code → Tests → PR → CI →
 | Parallel features via worktrees | Yes                                 | Auto-Claude, Windsurf (Wave 13)                    |
 | Open source CLI                 | Yes (MIT)                           | OpenCode, Aider, Cline, Spec Kitty                 |
 | Web dashboard                   | Yes (React Flow)                    | Auto-Claude (Electron), Spec Kitty (kanban)        |
-| Agent-agnostic | Claude Code, Cursor CLI, Gemini CLI, Codex CLI | [Sakana Fugu](./sakana-fugu.md) (model-level orchestration), Spec Kitty (multi-agent), Gas Town (Claude only)   |
+| Agent-agnostic | Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline | [Sakana Fugu](./sakana-fugu.md) (model-level orchestration), Spec Kitty (multi-agent), Gas Town (Claude only)   |
 
 ---
 

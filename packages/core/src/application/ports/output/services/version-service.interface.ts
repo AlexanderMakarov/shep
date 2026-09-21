@@ -9,6 +9,7 @@
  * - Infrastructure layer provides concrete implementations
  */
 
+import type { BuildIdentity } from '../../../../domain/value-objects/build-identity.js';
 import type { VersionInfo } from '../../../../domain/value-objects/version-info.js';
 
 /**
@@ -25,4 +26,15 @@ export interface IVersionService {
    * @returns Version info with name, version, and description
    */
   getVersion(): VersionInfo;
+
+  /**
+   * Get the full build identity — CLI version, Node version, OS platform /
+   * release / arch and the commit SHA when one can be determined.
+   *
+   * Separate from {@link getVersion} because a bug report needs the
+   * runtime, not just the package: `shep doctor` prints this at the top.
+   *
+   * @returns Build identity; fields degrade rather than throw
+   */
+  getBuildIdentity(): BuildIdentity;
 }

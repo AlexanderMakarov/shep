@@ -143,13 +143,14 @@ export function ProjectDetailClient({
 
   return (
     <div data-testid="project-detail-client" className={cn('space-y-4', className)}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
             className="h-7 w-7 p-0"
             onClick={() => router.push('/projects')}
+            aria-label="Back to projects"
             data-testid="back-to-projects"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -161,7 +162,7 @@ export function ProjectDetailClient({
           </Badge>
           <span className="text-muted-foreground text-[10px]">{workItems.length} items</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <ViewSwitcher activeView={viewMode} onViewChange={setViewMode} />
           <Button
             variant="outline"

@@ -49,6 +49,7 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
 };
 
 export interface AppViewTabsProps {
+  panelIdPrefix?: string;
   active: AppView;
   onChange: (view: AppView) => void;
   /** Tabs that should be visually disabled (e.g. while agent is running). */
@@ -94,6 +95,7 @@ function webTooltip(status: WebStatus, deploy: DeployActionState): string {
 }
 
 export function AppViewTabs({
+  panelIdPrefix,
   active,
   onChange,
   disabledTabs = [],
@@ -132,6 +134,10 @@ export function AppViewTabs({
             const trigger = (
               <TabsTrigger
                 value={view}
+                onClick={() => {
+                  if (view === active) handleTabChange(view);
+                }}
+                aria-controls={panelIdPrefix ? `${panelIdPrefix}-${view}` : undefined}
                 disabled={disabled}
                 className={cn(
                   'text-muted-foreground hover:text-foreground inline-flex h-7 items-center gap-1.5 rounded-[5px] px-2.5 text-[12px] font-medium whitespace-nowrap',

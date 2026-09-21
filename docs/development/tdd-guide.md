@@ -118,7 +118,7 @@ function createFeatureInLifecycle(lifecycle: SdlcLifecycle): Feature {
 ### 1.2 GREEN - Write Minimal Code to Pass
 
 ```typescript
-// src/domain/entities/feature.ts
+// packages/core/src/domain/entities/feature.ts
 export class Feature {
   // ... existing code ...
 
@@ -151,7 +151,7 @@ export class Feature {
 ### 1.3 REFACTOR - Improve While Green
 
 ```typescript
-// src/domain/entities/feature.ts
+// packages/core/src/domain/entities/feature.ts
 export class Feature {
   // Refactor: Extract to value object if needed
   // Refactor: Add domain event emission
@@ -186,7 +186,7 @@ export class Feature {
 // tests/unit/application/use-cases/archive-feature.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ArchiveFeatureUseCase } from '@/application/use-cases/archive-feature';
-import { createMockFeatureRepository } from '@tests/helpers/mocks';
+import { createMockFeatureRepository } from '@tests/helpers/feature-repository.mock';
 import { Feature } from '@/domain/entities/feature';
 
 describe('ArchiveFeatureUseCase', () => {
@@ -238,7 +238,7 @@ describe('ArchiveFeatureUseCase', () => {
 ### 2.2 GREEN - Implement Use Case
 
 ```typescript
-// src/application/use-cases/archive-feature.ts
+// packages/core/src/application/use-cases/archive-feature.ts
 import { IFeatureRepository } from '@/application/ports/output/feature-repository.port';
 import { FeatureNotFoundError } from '@/application/errors';
 
@@ -289,7 +289,8 @@ export class ArchiveFeatureUseCase {
 // tests/integration/repositories/feature-repository.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { SqliteFeatureRepository } from '@/infrastructure/repositories/sqlite/feature.repository';
-import { createTestDatabase, runMigrations } from '@tests/helpers/db';
+import { createInMemoryDatabase } from '@tests/helpers/database.helper';
+import { runSQLiteMigrations } from '@/infrastructure/persistence/sqlite/migrations';
 import { Feature } from '@/domain/entities/feature';
 import { SdlcLifecycle } from '@/domain/value-objects/sdlc-lifecycle';
 
@@ -298,8 +299,8 @@ describe('SqliteFeatureRepository', () => {
   let repository: SqliteFeatureRepository;
 
   beforeEach(async () => {
-    db = createTestDatabase();
-    await runMigrations(db);
+    db = createInMemoryDatabase();
+    await runSQLiteMigrations(db);
     repository = new SqliteFeatureRepository(db);
   });
 
@@ -358,7 +359,7 @@ describe('SqliteFeatureRepository', () => {
 ### 3.2 GREEN - Update Repository Implementation
 
 ```typescript
-// src/infrastructure/repositories/sqlite/feature.repository.ts
+// packages/core/src/infrastructure/repositories/sqlite/feature.repository.ts
 export class SqliteFeatureRepository implements IFeatureRepository {
   // Add new columns to schema
   async save(feature: Feature): Promise<void> {
@@ -410,22 +411,26 @@ export class SqliteFeatureRepository implements IFeatureRepository {
 
 ### 4.1 CLI Command (TDD)
 
+The command group is **`feat`** — `shep feat new <description>` and
+`shep feat archive <id>`. There is no `shep feature` group and no
+`feature create`.
+
 ```typescript
 // tests/e2e/cli/archive-feature.test.ts
 import { describe, it, expect } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync } from 'node:child_process';
 
-describe('shep feature archive', () => {
+describe('shep feat archive', () => {
   it('should archive a feature', () => {
-    // Setup: Create a feature first
-    const createResult = execSync('shep feature create "Test" --lifecycle maintenance');
+    // Setup: create a feature first
+    const createResult = execSync('shep feat new "Test archive target"');
     const featureId = extractFeatureId(createResult);
 
-    // Act
-    const result = execSync(`shep feature archive ${featureId}`);
+    // Act — `-f` skips the confirmation prompt
+    const result = execSync(`shep feat archive ${featureId} --force`);
 
     // Assert
-    expect(result.toString()).toContain('Feature archived successfully');
+    expect(result.toString()).toContain('archived');
   });
 });
 ```
@@ -462,8 +467,8 @@ pnpm test:watch
 # Run specific test file
 pnpm test:single tests/unit/domain/entities/feature.test.ts
 
-# Run tests matching pattern
-pnpm test -- --grep "archive"
+# Run tests matching a test NAME (vitest has no --grep; use -t)
+pnpm test:unit -t "archive"
 
 # Run only unit tests
 pnpm test:unit
@@ -471,12 +476,17 @@ pnpm test:unit
 # Run only integration tests
 pnpm test:int
 
-# Run e2e tests (Playwright)
+# Run e2e tests (builds the CLI first, then runs cli/tui/web suites)
 pnpm test:e2e
 
 # Run tests for changed files only
-pnpm test -- --changed
+pnpm test:unit --changed
 ```
+
+> `pnpm test` is a compound script
+> (`vitest run tests/unit tests/integration … && pnpm run test:e2e`), so flags
+> appended to it do not reach the first Vitest run. Pass flags to `test:unit`,
+> `test:int` or `test:single` instead.
 
 ## TDD Best Practices
 
@@ -521,7 +531,7 @@ it('should set archivedAt timestamp', () => {
 ### 4. Test Factories Over Fixtures
 
 ```typescript
-// tests/helpers/factories.ts
+// e.g. tests/helpers/feature.factory.ts
 export function createFeature(overrides: Partial<FeatureProps> = {}): Feature {
   return Feature.create({
     name: 'Default Name',
@@ -551,7 +561,7 @@ export function createMaintenanceFeature(): Feature {
 
 ### Philosophy
 
-TypeSpec models are the single source of truth. Generated TypeScript types in `src/domain/generated/output.ts` should **never be edited manually**.
+TypeSpec models are the single source of truth. Generated TypeScript types in `packages/core/src/domain/generated/output.ts` should **never be edited manually**.
 
 ### Testing Approach
 
@@ -559,20 +569,20 @@ TypeSpec models are the single source of truth. Generated TypeScript types in `s
 
 - ✅ Test domain logic that uses generated types
 - ✅ Test repository mapping between generated types and database
-- ✅ Verify TypeSpec compilation in CI (`pnpm tsp:compile`)
-- ✅ Import types from generated output: `import type { Settings } from '@/domain/generated/output'`
+- ✅ Verify generated output is current in CI (CI's Type Check job re-runs `pnpm generate` and fails if the result differs from what is committed)
+- ✅ Import types from generated output: `import type { Settings } from '@/domain/generated/output.js'`
 
 **DON'T:**
 
 - ❌ Unit test the generated types themselves (they're generated)
 - ❌ Mock generated types (use real types for type safety)
-- ❌ Manually edit `src/domain/generated/output.ts`
+- ❌ Manually edit `packages/core/src/domain/generated/output.ts`
 
 ### Example: Testing Repository with Generated Types
 
 ```typescript
 // tests/integration/repositories/settings.repository.test.ts
-import type { Settings } from '@/domain/generated/output';
+import type { Settings } from '@/domain/generated/output.js';
 import { SQLiteSettingsRepository } from '@/infrastructure/repositories/sqlite-settings.repository';
 
 describe('SQLiteSettingsRepository', () => {
@@ -618,8 +628,8 @@ describe('SQLiteSettingsRepository', () => {
 # 1. Modify TypeSpec model
 vim tsp/domain/entities/settings.tsp
 
-# 2. Regenerate TypeScript types
-pnpm tsp:compile
+# 2. Regenerate TypeScript types (compile + prettier, exactly as CI does)
+pnpm generate
 
 # 3. Run tests (should fail if breaking change)
 pnpm test
@@ -628,7 +638,7 @@ pnpm test
 # TypeScript will show compile errors
 
 # 5. Tests pass → commit both .tsp and generated files
-git add tsp/ src/domain/generated/
+git add tsp/ packages/core/src/domain/generated/ apis/
 git commit -m "feat(domain): add new field to Settings model"
 ```
 
@@ -673,7 +683,7 @@ import type Database from 'better-sqlite3';
 import { createInMemoryDatabase, tableExists } from '@tests/helpers/database.helper';
 import { runSQLiteMigrations } from '@/infrastructure/persistence/sqlite/migrations';
 import { SQLiteSettingsRepository } from '@/infrastructure/repositories/sqlite-settings.repository';
-import type { Settings } from '@/domain/generated/output';
+import type { Settings } from '@/domain/generated/output.js';
 
 describe('SQLiteSettingsRepository', () => {
   let db: Database.Database;

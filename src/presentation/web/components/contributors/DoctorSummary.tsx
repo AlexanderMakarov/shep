@@ -94,7 +94,7 @@ function DiagnosticRow({ result }: { result: DoctorSummaryResult }) {
         <p className="text-muted-foreground text-xs">{result.detail}</p>
         {result.fixHint ? (
           <p
-            className="text-muted-foreground/80 text-xs italic"
+            className="text-muted-foreground text-xs italic"
             data-testid={`doctor-row-fix-${result.name}`}
           >
             Hint: {result.fixHint}

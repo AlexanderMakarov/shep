@@ -165,11 +165,11 @@ export const EditorPane = React.memo(function EditorPane({
     <div className="flex h-full min-h-0 flex-col">
       {/* Tab strip */}
       <div
-        role="tablist"
+        role={openFiles.length > 0 ? 'tablist' : 'group'}
         aria-label="Open files"
         className="border-border bg-muted/30 flex h-8 shrink-0 items-center border-b"
       >
-        <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
+        <div tabIndex={0} className="flex min-w-0 flex-1 items-center overflow-x-auto">
           {openFiles.length === 0 ? (
             <div className="text-muted-foreground px-3 text-[11px]">No file open</div>
           ) : (

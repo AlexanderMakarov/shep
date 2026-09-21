@@ -29,24 +29,48 @@ export const shepTheme = {
 
 ### Select with Disabled Options
 
-Used for lists where some options are not yet available:
+Used for lists where some options are not yet available. A choice with a
+`disabled` string is rendered dimmed and cannot be selected; the string is shown
+to the user as the reason.
 
 ```typescript
-import { select, Separator } from '@inquirer/prompts';
+import { select } from '@inquirer/prompts';
 
 const choice = await select({
   message: 'Select your AI coding agent',
   choices: [
     { name: 'Claude Code', value: 'claude-code', description: 'Anthropic AI coding assistant' },
-    { name: 'Cursor', value: 'cursor', description: 'Cursor AI coding agent' },
     { name: 'Gemini CLI', value: 'gemini-cli', description: 'Google Gemini CLI agent' },
-    new Separator('─── Tracked in shep-ai/shep#618 ───'),
-    { name: 'Aider', value: 'aider', disabled: '(tracked in shep-ai/shep#618)' },
-    { name: 'Continue', value: 'continue', disabled: '(tracked in shep-ai/shep#618)' },
+    { name: 'Aider', value: 'aider', disabled: '(Coming Soon)' },
   ],
   theme: shepTheme,
 });
 ```
+
+**Do not hand-write the agent list.** `src/presentation/tui/prompts/agent-select.prompt.ts`
+builds its choices from `listAgentDescriptors()` — the domain agent catalog at
+`packages/core/src/domain/shared/agent-catalog.ts` — so a newly supported agent
+appears automatically and nothing can silently omit one. The catalog currently
+yields twelve selectable agents, in catalog order:
+
+| Agent          | Value          | Kind |
+| -------------- | -------------- | ---- |
+| Claude Code    | `claude-code`  | cli  |
+| Kimi Code      | `kimi-code`    | cli  |
+| Codex CLI      | `codex-cli`    | cli  |
+| Copilot CLI    | `copilot-cli`  | cli  |
+| Cursor CLI     | `cursor`       | cli  |
+| Gemini CLI     | `gemini-cli`   | cli  |
+| Cline          | `cline`        | cli  |
+| OpenRouter     | `openrouter`   | sdk  |
+| Together AI    | `together-ai`  | sdk  |
+| Ollama         | `ollama`       | sdk  |
+| LLM Proxy      | `llmproxy`     | sdk  |
+| Demo           | `dev`          | mock |
+
+Two further enum members — **Aider** (`aider`) and **Continue** (`continue`) —
+carry `supported: false` in the catalog and are rendered disabled with a
+`(Coming Soon)` badge.
 
 ### Masked Password Input
 
@@ -80,7 +104,7 @@ const proceed = await confirm({
 
 1. **Clear messages**: Prompt messages should be concise action-oriented questions
 2. **Descriptions**: Use `description` field on select choices to provide context
-3. **Disabled feedback**: Always include a reason string for disabled options (e.g., `'(tracked in shep-ai/shep#618)'`)
+3. **Disabled feedback**: Always include a reason string for disabled options (e.g., `'(Coming Soon)'`)
 4. **Separators**: Use separators to visually group related options
 5. **Defaults**: Set sensible defaults to minimize keystrokes for common paths
 6. **Masking**: Always mask sensitive inputs (tokens, passwords)

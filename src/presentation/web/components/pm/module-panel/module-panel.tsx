@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Plus, Trash2, Package } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -61,6 +62,8 @@ export function ModulePanel({ projectId, modules, onModulesChange, className }: 
       const result = await deleteModule(moduleId);
       if (!result.error) {
         onModulesChange?.(modules.filter((m) => m.id !== moduleId));
+      } else {
+        toast.error(result.error);
       }
     },
     [modules, onModulesChange]
@@ -111,6 +114,7 @@ export function ModulePanel({ projectId, modules, onModulesChange, className }: 
                 size="sm"
                 className="text-destructive h-6 px-2 text-[10px]"
                 onClick={() => handleDelete(mod.id)}
+                data-testid={`delete-module-${mod.id}`}
               >
                 <Trash2 className="h-3 w-3" />
               </Button>

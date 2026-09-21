@@ -9,6 +9,28 @@ import type {
   IDiagnostic,
   IDiagnosticRunner,
 } from '@/application/ports/output/services/diagnostic.interface.js';
+import type { IVersionService } from '@/application/ports/output/services/version-service.interface.js';
+import type { BuildIdentity } from '@/domain/value-objects/build-identity.js';
+
+const BUILD_IDENTITY: BuildIdentity = {
+  cliVersion: '1.6.1',
+  nodeVersion: 'v22.5.1',
+  platform: 'linux',
+  osRelease: '6.8.0-generic',
+  arch: 'x64',
+  gitSha: '3f9a1c2',
+};
+
+function fakeVersionService(identity: BuildIdentity = BUILD_IDENTITY): IVersionService {
+  return {
+    getVersion: () => ({
+      version: identity.cliVersion,
+      name: '@shepai/cli',
+      description: 'test',
+    }),
+    getBuildIdentity: () => identity,
+  };
+}
 
 function fakeDiagnostic(name: string, status: DiagnosticStatus): IDiagnostic {
   return {
@@ -44,7 +66,7 @@ describe('RunDoctorUseCase', () => {
       totalDurationMs: 12,
     };
     const runner = fakeRunner(report);
-    const useCase = new RunDoctorUseCase(runner, diagnostics);
+    const useCase = new RunDoctorUseCase(runner, diagnostics, fakeVersionService());
 
     const result = await useCase.execute();
 
@@ -60,7 +82,7 @@ describe('RunDoctorUseCase', () => {
       overallStatus: DiagnosticStatus.Ok,
       totalDurationMs: 0,
     };
-    const useCase = new RunDoctorUseCase(fakeRunner(report), []);
+    const useCase = new RunDoctorUseCase(fakeRunner(report), [], fakeVersionService());
     const result = await useCase.execute();
     expect(result.summary).toEqual({ ok: 0, warn: 0, fail: 0 });
   });
@@ -71,14 +93,52 @@ describe('RunDoctorUseCase', () => {
       overallStatus: DiagnosticStatus.Ok,
       totalDurationMs: 1,
     };
-    const useCase = new RunDoctorUseCase(fakeRunner(report), [
-      fakeDiagnostic('a', DiagnosticStatus.Ok),
-    ]);
+    const useCase = new RunDoctorUseCase(
+      fakeRunner(report),
+      [fakeDiagnostic('a', DiagnosticStatus.Ok)],
+      fakeVersionService()
+    );
     const result = await useCase.execute();
     expect(result).toMatchObject({
       results: report.results,
       overallStatus: DiagnosticStatus.Ok,
     });
     expect(typeof result).toBe('object');
+  });
+});
+
+describe('RunDoctorUseCase build identity', () => {
+  const emptyReport: DoctorReport = {
+    results: [],
+    overallStatus: DiagnosticStatus.Ok,
+    totalDurationMs: 0,
+  };
+
+  it('includes the build identity so the CLI does not have to assemble it', async () => {
+    const useCase = new RunDoctorUseCase(fakeRunner(emptyReport), [], fakeVersionService());
+    const result = await useCase.execute();
+    expect(result.buildIdentity).toEqual(BUILD_IDENTITY);
+  });
+
+  it('includes the paste-ready one-line form of it', async () => {
+    const useCase = new RunDoctorUseCase(fakeRunner(emptyReport), [], fakeVersionService());
+    const result = await useCase.execute();
+    expect(result.buildIdentityLine).toContain('shep 1.6.1');
+    expect(result.buildIdentityLine).toContain('3f9a1c2');
+  });
+
+  it('still produces a report when the version service throws', async () => {
+    const broken: IVersionService = {
+      getVersion: () => {
+        throw new Error('package.json unreadable');
+      },
+      getBuildIdentity: () => {
+        throw new Error('package.json unreadable');
+      },
+    };
+    const useCase = new RunDoctorUseCase(fakeRunner(emptyReport), [], broken);
+    const result = await useCase.execute();
+    expect(result.buildIdentity).toBeNull();
+    expect(result.summary).toEqual({ ok: 0, warn: 0, fail: 0 });
   });
 });

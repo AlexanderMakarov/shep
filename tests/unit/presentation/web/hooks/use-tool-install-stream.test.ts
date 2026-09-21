@@ -1,65 +1,54 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import { useToolInstallStream } from '../../../../../src/presentation/web/hooks/use-tool-install-stream';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { useToolInstallStream } from '@/hooks/use-tool-install-stream';
 
-// Mock EventSource
-class MockEventSource {
-  static instances: MockEventSource[] = [];
-  url: string;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  listeners: Record<string, ((event: MessageEvent) => void)[]> = {};
-  readyState = 0;
+/**
+ * The hook POSTs rather than opening an `EventSource`, because installation
+ * runs the tool's shell command and a GET with a side effect is reachable
+ * from any page the operator visits via `<img src=…>`.
+ */
+function sseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    },
+  });
 
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.instances.push(this);
-    setTimeout(() => {
-      this.readyState = 1;
-    }, 0);
-  }
-
-  addEventListener(type: string, listener: (event: MessageEvent) => void) {
-    if (!this.listeners[type]) this.listeners[type] = [];
-    this.listeners[type].push(listener);
-  }
-
-  removeEventListener(type: string, listener: (event: MessageEvent) => void) {
-    if (this.listeners[type]) {
-      this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
-    }
-  }
-
-  close = vi.fn();
-
-  // Test helpers
-  simulateMessage(data: string) {
-    this.onmessage?.(new MessageEvent('message', { data }));
-  }
-
-  simulateEvent(type: string, data: string) {
-    this.listeners[type]?.forEach((l) => l(new MessageEvent(type, { data })));
-  }
+  return new Response(stream, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
 }
 
 describe('useToolInstallStream', () => {
+  const originalFetch = globalThis.fetch;
+
   beforeEach(() => {
-    MockEventSource.instances = [];
-    vi.stubGlobal('EventSource', MockEventSource);
+    vi.restoreAllMocks();
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
+    globalThis.fetch = originalFetch;
   });
 
   it('starts in idle state', () => {
+    globalThis.fetch = vi.fn();
     const { result } = renderHook(() => useToolInstallStream('tmux'));
+
     expect(result.current.status).toBe('idle');
     expect(result.current.logs).toEqual([]);
     expect(result.current.result).toBeNull();
   });
 
-  it('connects to SSE endpoint on startInstall', () => {
+  it('POSTs to the install endpoint on startInstall', () => {
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+    globalThis.fetch = fetchMock;
+
     const { result } = renderHook(() => useToolInstallStream('tmux'));
 
     act(() => {
@@ -67,70 +56,99 @@ describe('useToolInstallStream', () => {
     });
 
     expect(result.current.status).toBe('streaming');
-    expect(MockEventSource.instances).toHaveLength(1);
-    expect(MockEventSource.instances[0].url).toBe('/api/tools/tmux/install/stream');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/tools/tmux/install/stream',
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 
-  it('appends log lines from SSE data events', () => {
+  it('appends log lines from streamed data events', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(sseResponse(['data: Installing tmux...\n\n', 'data: Done.\n\n']));
+
     const { result } = renderHook(() => useToolInstallStream('tmux'));
 
     act(() => {
       result.current.startInstall();
     });
 
-    const es = MockEventSource.instances[0];
-    act(() => {
-      es.simulateMessage('Installing tmux...');
+    await waitFor(() => {
+      expect(result.current.logs).toEqual(['Installing tmux...', 'Done.']);
     });
-    act(() => {
-      es.simulateMessage('Done.');
-    });
-
-    expect(result.current.logs).toEqual(['Installing tmux...', 'Done.']);
   });
 
-  it('transitions to done on done event', () => {
+  it('transitions to done on the done event', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          `event: done\ndata: ${JSON.stringify({ status: 'available', toolName: 'tmux' })}\n\n`,
+        ])
+      );
+
     const { result } = renderHook(() => useToolInstallStream('tmux'));
 
     act(() => {
       result.current.startInstall();
     });
 
-    const es = MockEventSource.instances[0];
-    act(() => {
-      es.simulateEvent('done', JSON.stringify({ status: 'available', toolName: 'tmux' }));
+    await waitFor(() => {
+      expect(result.current.status).toBe('done');
     });
-
-    expect(result.current.status).toBe('done');
     expect(result.current.result).toEqual({ status: 'available', toolName: 'tmux' });
-    expect(es.close).toHaveBeenCalled();
   });
 
-  it('transitions to error state on onerror', () => {
+  it('surfaces an install refusal as an error without logging it as output', async () => {
+    // What the autoInstall guard returns for e.g. `docker`.
+    const refusal = {
+      status: 'error',
+      toolName: 'docker',
+      errorMessage: 'Docker does not support automated installation.',
+    };
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(sseResponse([`event: done\ndata: ${JSON.stringify(refusal)}\n\n`]));
+
+    const { result } = renderHook(() => useToolInstallStream('docker'));
+
+    act(() => {
+      result.current.startInstall();
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('error');
+    });
+    expect(result.current.result).toEqual(refusal);
+    expect(result.current.logs).toEqual([]);
+  });
+
+  it('transitions to error when the request is refused', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('nope', { status: 401 }));
+
     const { result } = renderHook(() => useToolInstallStream('tmux'));
 
     act(() => {
       result.current.startInstall();
     });
 
-    const es = MockEventSource.instances[0];
-    act(() => {
-      es.onerror?.(new Event('error'));
+    await waitFor(() => {
+      expect(result.current.status).toBe('error');
     });
-
-    expect(result.current.status).toBe('error');
-    expect(es.close).toHaveBeenCalled();
   });
 
-  it('closes EventSource on unmount', () => {
+  it('aborts the request on unmount', () => {
+    const abortSpy = vi.spyOn(AbortController.prototype, 'abort');
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    globalThis.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
+
     const { result, unmount } = renderHook(() => useToolInstallStream('tmux'));
 
     act(() => {
       result.current.startInstall();
     });
-
-    const es = MockEventSource.instances[0];
     unmount();
-    expect(es.close).toHaveBeenCalled();
+
+    expect(abortSpy).toHaveBeenCalled();
   });
 });

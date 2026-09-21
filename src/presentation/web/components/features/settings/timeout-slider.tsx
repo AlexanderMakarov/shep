@@ -91,6 +91,8 @@ export function TimeoutSlider({
     <div className="flex w-55 items-center gap-2">
       <Slider
         id={id}
+        aria-labelledby={`${id}-label`}
+        aria-valuetext={formatDuration(PRESETS[localIndex])}
         data-testid={testId}
         min={0}
         max={SLIDER_MAX}

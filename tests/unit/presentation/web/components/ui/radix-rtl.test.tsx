@@ -90,7 +90,7 @@ describe('Radix UI components in RTL mode', () => {
       expect(header.className).not.toContain('text-left');
     });
 
-    it('positions close button with logical end-4 class', async () => {
+    it('positions the enlarged close target with a logical end inset', async () => {
       const user = userEvent.setup();
       render(
         <Dialog>
@@ -105,8 +105,8 @@ describe('Radix UI components in RTL mode', () => {
 
       await user.click(screen.getByRole('button', { name: /open/i }));
       const closeButton = screen.getByRole('button', { name: /close/i });
-      expect(closeButton.className).toContain('end-4');
-      expect(closeButton.className).not.toContain('right-4');
+      expect(closeButton).toHaveClass('end-2', 'size-8');
+      expect(closeButton.className).not.toMatch(/(?:^|\s)right-/);
     });
   });
 

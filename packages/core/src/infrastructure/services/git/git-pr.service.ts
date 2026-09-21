@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { PrStatus } from '../../../domain/generated/output.js';
+import { assertSafeGitRef } from '../../../domain/shared/git-ref-argument.js';
 import type { ExecFunction } from './worktree.service.js';
 import { applyPrBranding, applyCommitBranding } from './pr-branding.js';
 
@@ -143,6 +144,9 @@ export class GitPrService implements IGitPrService {
   }
 
   async revParse(cwd: string, ref: string): Promise<string> {
+    // `git rev-parse -- <x>` means "pathspec", so a separator would change
+    // the meaning; the guard is the whole defence here.
+    assertSafeGitRef(ref, 'ref');
     const { stdout } = await this.execFile('git', ['rev-parse', ref], { cwd });
     return stdout.trim();
   }
@@ -168,9 +172,11 @@ export class GitPrService implements IGitPrService {
   }
 
   async push(cwd: string, branch: string, setUpstream?: boolean): Promise<void> {
+    assertSafeGitRef(branch, 'branch');
+
     const args = ['push'];
     if (setUpstream) args.push('--set-upstream');
-    args.push('origin', branch);
+    args.push('origin', '--', branch);
 
     try {
       await this.execFile('git', args, { cwd });
@@ -223,6 +229,19 @@ export class GitPrService implements IGitPrService {
       await this.execFile('gh', ['pr', 'merge', String(prNumber), `--${strategy}`], {
         cwd,
       });
+      // A successful command can mean "queued" or "auto-merge enabled".
+      // Confirm the remote state before callers destroy the worktree or branch.
+      const { stdout } = await this.execFile(
+        'gh',
+        ['pr', 'view', String(prNumber), '--json', 'state', '--jq', '.state'],
+        { cwd }
+      );
+      if (stdout.trim() !== 'MERGED') {
+        throw new Error(
+          `PR #${prNumber} has not been confirmed merged (state: ${stdout.trim() || 'unknown'}). ` +
+            'It may be waiting in the merge queue. The branch and worktree have been preserved.'
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const cause = error instanceof Error ? error : undefined;
@@ -263,6 +282,9 @@ export class GitPrService implements IGitPrService {
     commitMessage: string,
     hasRemote = false
   ): Promise<void> {
+    assertSafeGitRef(featureBranch, 'featureBranch');
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     try {
       // Clean up any stale merge/rebase state and dirty index BEFORE checkout.
       // A previous failed merge may have left the repo in a merge state, causing
@@ -309,7 +331,7 @@ export class GitPrService implements IGitPrService {
       // error.message from execFile won't contain "CONFLICT". We must check
       // error.stdout to detect conflicts and include it in diagnostics.
       try {
-        await this.execFile('git', ['merge', '--squash', featureBranch], { cwd });
+        await this.execFile('git', ['merge', '--squash', '--', featureBranch], { cwd });
       } catch (mergeError: unknown) {
         // Abort the in-progress merge to leave the repo clean
         try {
@@ -372,7 +394,7 @@ export class GitPrService implements IGitPrService {
 
       // Delete the feature branch after successful merge
       try {
-        await this.execFile('git', ['branch', '-d', featureBranch], { cwd });
+        await this.execFile('git', ['branch', '-d', '--', featureBranch], { cwd });
       } catch {
         // Branch deletion failure is non-fatal (branch may have already been deleted)
       }
@@ -391,9 +413,12 @@ export class GitPrService implements IGitPrService {
   }
 
   async mergeBranch(cwd: string, sourceBranch: string, targetBranch: string): Promise<void> {
+    assertSafeGitRef(sourceBranch, 'sourceBranch');
+    assertSafeGitRef(targetBranch, 'targetBranch');
+
     try {
       await this.execFile('git', ['checkout', targetBranch], { cwd });
-      await this.execFile('git', ['merge', sourceBranch], { cwd });
+      await this.execFile('git', ['merge', '--', sourceBranch], { cwd });
       await this.execFile('git', ['push'], { cwd });
     } catch (error) {
       throw this.parseGitError(error);
@@ -401,6 +426,8 @@ export class GitPrService implements IGitPrService {
   }
 
   async getCiStatus(cwd: string, branch: string): Promise<CiStatusResult> {
+    assertSafeGitRef(branch, 'branch');
+
     try {
       const workflowStatus = await this.getWorkflowRunStatus(cwd, branch);
       const prCheckStatus = await this.getPrChecksStatus(cwd, branch);
@@ -445,7 +472,10 @@ export class GitPrService implements IGitPrService {
     try {
       const { stdout } = await this.execFile(
         'gh',
-        ['pr', 'checks', branch, '--json', 'bucket,state,name'],
+        // `--` must come AFTER the flags: gh uses Go's pflag, where every
+        // argument following `--` is positional, so a `--json` placed after
+        // it would be swallowed as an operand.
+        ['pr', 'checks', '--json', 'bucket,state,name', '--', branch],
         { cwd }
       );
 
@@ -554,10 +584,12 @@ export class GitPrService implements IGitPrService {
   }
 
   async deleteBranch(cwd: string, branch: string, deleteRemote?: boolean): Promise<void> {
+    assertSafeGitRef(branch, 'branch');
+
     try {
-      await this.execFile('git', ['branch', '-d', branch], { cwd });
+      await this.execFile('git', ['branch', '-d', '--', branch], { cwd });
       if (deleteRemote) {
-        await this.execFile('git', ['push', 'origin', '--delete', branch], { cwd });
+        await this.execFile('git', ['push', 'origin', '--delete', '--', branch], { cwd });
       }
     } catch (error) {
       throw this.parseGitError(error);
@@ -565,6 +597,11 @@ export class GitPrService implements IGitPrService {
   }
 
   async getPrDiffSummary(cwd: string, baseBranch: string): Promise<DiffSummary> {
+    // `<base>...HEAD` is one argv entry, so a base starting with "-" makes the
+    // whole entry an option. `git diff -- <x>` means pathspec, so the guard is
+    // the only available defence.
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     const { stdout: diffStat } = await this.execFile(
       'git',
       ['diff', '--stat', `${baseBranch}...HEAD`],
@@ -580,6 +617,8 @@ export class GitPrService implements IGitPrService {
   }
 
   async getFileDiffs(cwd: string, baseBranch: string): Promise<FileDiff[]> {
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     try {
       const { stdout } = await this.execFile(
         'git',
@@ -746,6 +785,9 @@ export class GitPrService implements IGitPrService {
     baseBranch: string,
     premergeBaseSha?: string
   ): Promise<boolean> {
+    assertSafeGitRef(featureBranch, 'featureBranch');
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     // Resolve the feature branch ref — the local branch may have been deleted
     // after a squash merge (git branch -d succeeds when pushed to remote).
     // Fall back to the remote tracking branch if the local ref is gone.
@@ -754,7 +796,7 @@ export class GitPrService implements IGitPrService {
 
     // First try: true merge (feature branch is ancestor of base)
     try {
-      await this.execFile('git', ['merge-base', '--is-ancestor', resolvedRef, baseBranch], {
+      await this.execFile('git', ['merge-base', '--is-ancestor', '--', resolvedRef, baseBranch], {
         cwd,
       });
       return true;
@@ -795,6 +837,8 @@ export class GitPrService implements IGitPrService {
    * tracking branch if the local ref has been deleted.
    */
   private async resolveRef(cwd: string, branch: string): Promise<string | null> {
+    assertSafeGitRef(branch, 'branch');
+
     // Try local ref first
     try {
       await this.execFile('git', ['rev-parse', '--verify', branch], { cwd });
@@ -999,6 +1043,12 @@ export class GitPrService implements IGitPrService {
   // --- Rebase & Sync operations ---
 
   async syncMain(cwd: string, baseBranch: string): Promise<void> {
+    // `git pull` forwards option-shaped operands to fetch even after `--`
+    // (measured against git 2.53.0 for `--`, and for `--end-of-options` in
+    // both positions), so no separator can protect the pull below — the
+    // guard is what stops `--upload-pack=<binary>` from executing.
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     try {
       // Detect current branch
       const { stdout } = await this.execFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd });
@@ -1012,7 +1062,7 @@ export class GitPrService implements IGitPrService {
         // We intentionally do NOT update the local <baseBranch> ref because it may be
         // checked out in another worktree, which causes git to refuse the update with:
         //   "fatal: refusing to fetch into branch 'refs/heads/main' checked out at ..."
-        await this.execFile('git', ['fetch', 'origin', baseBranch], { cwd });
+        await this.execFile('git', ['fetch', 'origin', '--', baseBranch], { cwd });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1041,6 +1091,9 @@ export class GitPrService implements IGitPrService {
   }
 
   async rebaseOnMain(cwd: string, featureBranch: string, baseBranch: string): Promise<void> {
+    assertSafeGitRef(featureBranch, 'featureBranch');
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     // Check for dirty worktree before starting
     const dirty = await this.hasUncommittedChanges(cwd);
     if (dirty) {
@@ -1081,7 +1134,7 @@ export class GitPrService implements IGitPrService {
     // 2. The local <baseBranch> may be checked out in another worktree and stale
     const rebaseTarget = `origin/${baseBranch}`;
     try {
-      await this.execFile('git', ['rebase', rebaseTarget], { cwd });
+      await this.execFile('git', ['rebase', '--', rebaseTarget], { cwd });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const cause = error instanceof Error ? error : undefined;
@@ -1114,6 +1167,9 @@ export class GitPrService implements IGitPrService {
   }
 
   async rebaseOnBranch(cwd: string, featureBranch: string, targetBranch: string): Promise<void> {
+    assertSafeGitRef(featureBranch, 'featureBranch');
+    assertSafeGitRef(targetBranch, 'targetBranch');
+
     // Check for dirty worktree before starting
     const dirty = await this.hasUncommittedChanges(cwd);
     if (dirty) {
@@ -1126,7 +1182,7 @@ export class GitPrService implements IGitPrService {
 
     // Fetch the target branch from remote — it may not be locally available
     try {
-      await this.execFile('git', ['fetch', 'origin', targetBranch], { cwd });
+      await this.execFile('git', ['fetch', 'origin', '--', targetBranch], { cwd });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const cause = error instanceof Error ? error : undefined;
@@ -1164,7 +1220,7 @@ export class GitPrService implements IGitPrService {
     // Rebase onto origin/<targetBranch>
     const rebaseTarget = `origin/${targetBranch}`;
     try {
-      await this.execFile('git', ['rebase', rebaseTarget], { cwd });
+      await this.execFile('git', ['rebase', '--', rebaseTarget], { cwd });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const cause = error instanceof Error ? error : undefined;
@@ -1282,6 +1338,9 @@ export class GitPrService implements IGitPrService {
     featureBranch: string,
     baseBranch: string
   ): Promise<{ ahead: number; behind: number }> {
+    assertSafeGitRef(featureBranch, 'featureBranch');
+    assertSafeGitRef(baseBranch, 'baseBranch');
+
     try {
       const remoteRef = `origin/${baseBranch}`;
       const [aheadResult, behindResult] = await Promise.all([

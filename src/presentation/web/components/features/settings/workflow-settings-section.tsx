@@ -496,7 +496,9 @@ export function WorkflowSettingsSection({ workflow }: WorkflowSettingsSectionPro
           </h4>
           {FEATURE_AGENT_FIELDS.map((field) => (
             <div key={field.key} className="flex items-center justify-between gap-4">
-              <Label htmlFor={`stage-timeout-${field.key}`}>{field.label}</Label>
+              <Label id={`stage-timeout-${field.key}-label`} htmlFor={`stage-timeout-${field.key}`}>
+                {field.label}
+              </Label>
               <TimeoutSlider
                 id={`stage-timeout-${field.key}`}
                 testId={`stage-timeout-${field.key}-input`}
@@ -512,7 +514,9 @@ export function WorkflowSettingsSection({ workflow }: WorkflowSettingsSectionPro
           </h4>
           {ANALYZE_REPO_FIELDS.map((field) => (
             <div key={field.key} className="flex items-center justify-between gap-4">
-              <Label htmlFor={`stage-timeout-${field.key}`}>{field.label}</Label>
+              <Label id={`stage-timeout-${field.key}-label`} htmlFor={`stage-timeout-${field.key}`}>
+                {field.label}
+              </Label>
               <TimeoutSlider
                 id={`stage-timeout-${field.key}`}
                 testId={`stage-timeout-${field.key}-input`}

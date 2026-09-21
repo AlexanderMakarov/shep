@@ -3,6 +3,11 @@ import { render, screen } from '@testing-library/react';
 import { EmptyState } from '@/components/common/empty-state';
 
 describe('EmptyState', () => {
+  it('supports a second-level title directly below a page heading', () => {
+    render(<EmptyState title="No results" headingLevel={2} />);
+    expect(screen.getByRole('heading', { level: 2, name: 'No results' })).toBeInTheDocument();
+  });
+
   it('renders title text', () => {
     render(<EmptyState title="No items found" />);
     expect(screen.getByText('No items found')).toBeInTheDocument();

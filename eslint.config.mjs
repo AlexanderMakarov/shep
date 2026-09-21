@@ -69,6 +69,10 @@ export default tseslint.config(
       // Spec artifacts (auto-generated YAML/MD, evidence PNGs)
       'specs/**',
 
+      // Local agent-tooling scratch (gitignored; not project source)
+      '.coding-agent/**',
+      '.swd/**',
+
       // Claude Code skills (third-party)
       '.claude/skills/**',
 

@@ -90,7 +90,11 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
         setError(t('memory.errors.emptyContent'));
         return;
       }
-      const result = await updateProjectMemory(id, content);
+      setError(null);
+      const result = await updateProjectMemory(id, content).catch((cause: unknown) => ({
+        memory: undefined,
+        error: cause instanceof Error ? cause.message : t('memory.errors.updateFailed'),
+      }));
       if (result.error || !result.memory) {
         setError(result.error ?? t('memory.errors.updateFailed'));
         return;
@@ -106,7 +110,10 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
-    const result = await deleteProjectMemory(id);
+    setError(null);
+    const result = await deleteProjectMemory(id).catch((cause: unknown) => ({
+      error: cause instanceof Error ? cause.message : 'Unable to delete memory. Try again.',
+    }));
     setPendingDelete(null);
     if (result.error) {
       setError(result.error);
@@ -118,28 +125,17 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
   const toggleScope = useCallback(async (entry: ProjectMemory) => {
     const next =
       entry.scope === MemoryScope.Organization ? MemoryScope.Project : MemoryScope.Organization;
-    const result = await setProjectMemoryScope(entry.id, next);
+    setError(null);
+    const result = await setProjectMemoryScope(entry.id, next).catch((cause: unknown) => ({
+      memory: undefined,
+      error: cause instanceof Error ? cause.message : 'Unable to update scope. Try again.',
+    }));
     if (result.error || !result.memory) {
       setError(result.error ?? 'Failed to update scope.');
       return;
     }
     setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, scope: next } : e)));
   }, []);
-
-  if (entries.length === 0) {
-    return (
-      <div
-        data-testid="project-memory-empty"
-        className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16 text-center"
-      >
-        <Brain className="size-8 opacity-50" />
-        <div>
-          <p className="text-sm font-medium">{t('memory.empty.title')}</p>
-          <p className="text-xs">{t('memory.empty.description')}</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div data-testid="project-memory-panel" className="mx-auto w-full max-w-3xl space-y-6 p-4">
@@ -151,8 +147,21 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
         </div>
       </header>
 
+      {entries.length === 0 ? (
+        <div
+          data-testid="project-memory-empty"
+          className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16 text-center"
+        >
+          <Brain aria-hidden="true" className="size-8" />
+          <div className="space-y-1">
+            <h2 className="text-foreground text-sm font-medium">{t('memory.empty.title')}</h2>
+            <p className="text-sm">{t('memory.empty.description')}</p>
+          </div>
+        </div>
+      ) : null}
+
       {error ? (
-        <p data-testid="project-memory-error" className="text-destructive text-xs">
+        <p role="alert" data-testid="project-memory-error" className="text-destructive text-xs">
           {error}
         </p>
       ) : null}
@@ -173,6 +182,7 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
                   <div className="space-y-2">
                     <Textarea
                       autoFocus
+                      aria-label={t('memory.actions.edit')}
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
                       className="min-h-16 text-sm"
@@ -193,8 +203,8 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
                   </div>
                 ) : (
                   <div className="flex items-start gap-2">
-                    <p className="flex-1 text-sm">{entry.content}</p>
-                    <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <p className="min-w-0 flex-1 text-sm wrap-break-word">{entry.content}</p>
+                    <div className="flex shrink-0 gap-1">
                       <Button
                         variant="ghost"
                         size="icon-xs"
@@ -240,7 +250,7 @@ export function ProjectMemoryPanel({ entries: initialEntries }: ProjectMemoryPan
                       {t('memory.scope.organization')}
                     </Badge>
                   ) : null}
-                  <span className="font-mono">{entry.repositoryPath}</span>
+                  <span className="font-mono break-all">{entry.repositoryPath}</span>
                   {entry.sourceFeatureId ? (
                     <Badge variant="outline" className="text-[10px]">
                       {entry.sourceFeatureId}

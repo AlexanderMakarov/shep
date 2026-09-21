@@ -29,6 +29,14 @@ import type {
 /** Default timeout in milliseconds (5 minutes) */
 const DEFAULT_TIMEOUT_MS = 300_000;
 
+/**
+ * Finish reason meaning the model ran out of output tokens mid-answer.
+ *
+ * The text that comes back is a fragment, not an answer. Returning it as a
+ * normal result lets a truncated run be read downstream as a completed one.
+ */
+const TRUNCATED_FINISH_REASON = 'length';
+
 /** Features supported by all SDK-based executors */
 const SDK_SUPPORTED_FEATURES = new Set<string>(['streaming', 'structured-output', 'system-prompt']);
 
@@ -72,6 +80,15 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
         system: options?.systemPrompt,
         timeout,
       });
+
+      // enhanceError() in the catch below prefixes the provider name.
+      if (response.finishReason === TRUNCATED_FINISH_REASON) {
+        throw new Error(
+          `Response was truncated at the output token limit ` +
+            `(finishReason=${TRUNCATED_FINISH_REASON}). The result is incomplete and must not ` +
+            `be treated as a finished run.`
+        );
+      }
 
       return {
         result: response.text,

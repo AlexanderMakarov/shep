@@ -252,8 +252,12 @@ model SystemConfig {
  *
  * ## Agent Selection
  *
- * Users select their preferred agent via `shep settings agent`. Currently
- * only Claude Code is fully supported; other agents appear as "Coming Soon".
+ * Users select their preferred agent via `shep settings agent`. Twelve agents
+ * are fully supported — Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor,
+ * Gemini CLI, Cline, OpenRouter, Together AI, Ollama, LLMProxy and the `dev`
+ * mock. Aider and Continue are listed for future extensibility and appear as
+ * "Coming Soon". `packages/core/src/domain/shared/agent-catalog.ts` is the
+ * single source of truth for each agent's binary, tool id and model list.
  *
  * ## Authentication
  *
@@ -514,7 +518,7 @@ model WorkflowConfig {
 model AgentConfig {
   /**
    * The AI coding agent tool to use.
-   * Defaults to Claude Code as the only currently supported agent.
+   * Defaults to Claude Code; see `AGENT_CATALOG` for every supported agent.
    */
   @doc("Selected AI coding agent")
   type: AgentType = AgentType.ClaudeCode;

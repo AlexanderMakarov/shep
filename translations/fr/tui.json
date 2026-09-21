@@ -50,6 +50,14 @@
         "continue": {
           "name": "Continue",
           "disabled": "(Bientôt disponible)"
+        },
+        "kimiCode": {
+          "name": "Kimi Code",
+          "description": "Agent de terminal Kimi Code CLI de Moonshot AI (modèles Kimi K)"
+        },
+        "llmProxy": {
+          "name": "LLM Proxy",
+          "description": "Proxy local compatible OpenAI (généralement sur le port 4000)"
         }
       }
     },

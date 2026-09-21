@@ -12,10 +12,31 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InstallToolUseCase } from '@/application/use-cases/tools/install-tool.use-case.js';
 import type { ToolInstallationStatus } from '@/domain/generated/output.js';
 import type { IToolInstallerService } from '@/application/ports/output/services/index.js';
+import type {
+  IToolMetadataProvider,
+  ToolMetadata,
+} from '@/application/ports/output/services/tool-metadata-provider.interface.js';
+
+function makeMetadata(overrides: Partial<ToolMetadata> = {}): ToolMetadata {
+  return {
+    name: 'Test Tool',
+    summary: 'summary',
+    description: 'description',
+    tags: ['ide'],
+    binary: 'test-tool',
+    packageManager: 'brew',
+    commands: { linux: 'echo install', darwin: 'echo install', win32: 'echo install' },
+    timeout: 1000,
+    documentationUrl: 'https://example.invalid',
+    verifyCommand: 'test-tool --version',
+    ...overrides,
+  };
+}
 
 describe('InstallToolUseCase', () => {
   let useCase: InstallToolUseCase;
   let mockService: IToolInstallerService;
+  let mockMetadata: IToolMetadataProvider;
 
   beforeEach(() => {
     mockService = {
@@ -33,7 +54,12 @@ describe('InstallToolUseCase', () => {
       getTerminalOpenConfig: vi.fn(),
     };
 
-    useCase = new InstallToolUseCase(mockService);
+    mockMetadata = {
+      getToolById: vi.fn().mockReturnValue(makeMetadata()),
+      getAllEntries: vi.fn().mockReturnValue([]),
+    };
+
+    useCase = new InstallToolUseCase(mockService, mockMetadata);
   });
 
   describe('tool installation', () => {
@@ -113,6 +139,48 @@ describe('InstallToolUseCase', () => {
       await useCase.execute('cursor');
 
       // Assert
+      expect(mockService.executeInstall).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('autoInstall guard', () => {
+    // The guard used to live only in the CLI command, so the HTTP route
+    // reached `executeInstall` — and its `spawn(cmd, [], { shell: true })` —
+    // for tools the catalogue marks as manual-install-only.
+
+    it('refuses to install a tool whose metadata sets autoInstall: false', async () => {
+      vi.mocked(mockMetadata.getToolById).mockReturnValue(makeMetadata({ autoInstall: false }));
+
+      const result = await useCase.execute('cursor');
+
+      expect(mockService.executeInstall).not.toHaveBeenCalled();
+      expect(result.status).toBe('error');
+      expect(result.toolName).toBe('cursor');
+      expect(result.errorMessage).toMatch(/automated installation/i);
+    });
+
+    it('refuses to install a tool that is not in the catalogue at all', async () => {
+      vi.mocked(mockMetadata.getToolById).mockReturnValue(undefined);
+
+      const result = await useCase.execute('../../etc/passwd');
+
+      expect(mockService.executeInstall).not.toHaveBeenCalled();
+      expect(result.status).toBe('error');
+    });
+
+    it('installs when metadata omits autoInstall (defaults to allowed)', async () => {
+      vi.mocked(mockMetadata.getToolById).mockReturnValue(makeMetadata());
+
+      await useCase.execute('vscode');
+
+      expect(mockService.executeInstall).toHaveBeenCalledWith('vscode', undefined);
+    });
+
+    it('installs when metadata sets autoInstall: true', async () => {
+      vi.mocked(mockMetadata.getToolById).mockReturnValue(makeMetadata({ autoInstall: true }));
+
+      await useCase.execute('vscode');
+
       expect(mockService.executeInstall).toHaveBeenCalledOnce();
     });
   });

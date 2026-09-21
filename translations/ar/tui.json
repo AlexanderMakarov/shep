@@ -50,6 +50,14 @@
         "continue": {
           "name": "Continue",
           "disabled": "(قريبًا)"
+        },
+        "kimiCode": {
+          "name": "Kimi Code",
+          "description": "وكيل طرفية Kimi Code CLI من Moonshot AI (نماذج Kimi K)"
+        },
+        "llmProxy": {
+          "name": "LLM Proxy",
+          "description": "وكيل محلي متوافق مع OpenAI (عادةً على المنفذ 4000)"
         }
       }
     },

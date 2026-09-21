@@ -78,3 +78,56 @@ describe('Button', () => {
     expect(link).toHaveAttribute('href', '/test');
   });
 });
+
+describe('Button focus indicator (WCAG 2.4.11 non-text contrast)', () => {
+  // The old indicator was `focus-visible:border-ring` + `ring-ring/50`. The
+  // border utility is a no-op on every variant that carries no `border` at
+  // all (default / secondary / ghost / link), which left a 1.83:1 ring as the
+  // only focus affordance. WCAG 2.4.11 requires 3:1, so the ring must be
+  // full-opacity and separated from the control by an offset.
+  const variants = ['default', 'destructive', 'outline', 'secondary', 'ghost', 'link'] as const;
+
+  it.each(variants)('variant "%s" renders a 2px offset focus ring', (variant) => {
+    render(<Button variant={variant}>{variant}</Button>);
+    const button = screen.getByRole('button', { name: variant });
+
+    expect(button).toHaveClass('focus-visible:ring-2');
+    expect(button).toHaveClass('focus-visible:ring-offset-2');
+    expect(button).toHaveClass('focus-visible:ring-offset-background');
+  });
+
+  it.each(variants)('variant "%s" keeps a full-opacity ring colour', (variant) => {
+    render(<Button variant={variant}>{variant}</Button>);
+    const cls = screen.getByRole('button', { name: variant }).className;
+
+    // destructive re-colours its ring; every other variant uses --color-ring.
+    const expected =
+      variant === 'destructive' ? 'focus-visible:ring-destructive' : 'focus-visible:ring-ring';
+    expect(cls.split(/\s+/)).toContain(expected);
+  });
+
+  it.each(variants)('variant "%s" drops the sub-3:1 translucent ring', (variant) => {
+    render(<Button variant={variant}>{variant}</Button>);
+    const cls = screen.getByRole('button', { name: variant }).className;
+
+    expect(cls).not.toMatch(/focus-visible:ring-ring\/50/);
+    expect(cls).not.toMatch(/focus-visible:ring-\[3px\]/);
+    // A translucent destructive ring is equally invisible.
+    expect(cls).not.toMatch(/focus-visible:ring-destructive\/\d/);
+  });
+
+  const iconSizes = ['icon', 'icon-xs', 'icon-sm', 'icon-lg'] as const;
+
+  it.each(iconSizes)('icon-only size "%s" still renders the offset ring', (size) => {
+    render(
+      <Button size={size} aria-label={`icon ${size}`}>
+        <svg />
+      </Button>
+    );
+    const button = screen.getByRole('button', { name: `icon ${size}` });
+
+    expect(button).toHaveClass('focus-visible:ring-2');
+    expect(button).toHaveClass('focus-visible:ring-offset-2');
+    expect(button.className.split(/\s+/)).toContain('focus-visible:ring-ring');
+  });
+});

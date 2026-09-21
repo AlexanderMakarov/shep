@@ -68,7 +68,7 @@ export function SdlcBoardClient({ initialEpics }: SdlcBoardClientProps) {
       >
         <KanbanSquare className="text-muted-foreground/30 mb-3 h-10 w-10" />
         <p className="text-muted-foreground text-sm font-medium">No active agent work yet</p>
-        <p className="text-muted-foreground/70 mt-1 text-xs">
+        <p className="text-muted-foreground mt-1 text-xs">
           Start a feature to see tasks appear here.
         </p>
       </div>

@@ -3,7 +3,8 @@
  *
  * Extracts structured Evidence records from free-form agent text output.
  * Looks for a fenced JSON code block containing an array of evidence objects.
- * Returns empty array gracefully on any parsing failure.
+ * The result says WHY it is empty: an agent that reported no evidence and an
+ * agent whose answer we failed to read are two different events.
  *
  * Also provides validation to ensure UI-related evidence includes app-level
  * proof (not just Storybook screenshots), evidence completeness by task type,
@@ -14,9 +15,14 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import type { Evidence } from '../../../../../domain/generated/output.js';
 import { EvidenceType } from '../../../../../domain/generated/output.js';
+import { extractFencedJsonArray, type FencedJsonFailure } from './fenced-json.js';
 
-// Matches a fenced JSON code block: ```json ... ```
-const JSON_BLOCK_RE = /```json\s*\n([\s\S]*?)\n\s*```/;
+export interface ParsedEvidenceRecords {
+  /** Valid Evidence records found. */
+  records: Evidence[];
+  /** Set only when no JSON array could be read from the output at all. */
+  failure?: FencedJsonFailure;
+}
 
 const VALID_EVIDENCE_TYPES = new Set<string>(Object.values(EvidenceType));
 
@@ -39,22 +45,13 @@ function isValidRecord(record: unknown): record is Evidence {
 /**
  * Extract Evidence records from agent text output.
  * Looks for a fenced JSON code block containing a JSON array of evidence objects.
- * Returns empty array when no block found, JSON is malformed, or no valid records exist.
+ *
+ * @returns the valid records plus, when nothing could be read, the reason
  */
-export function parseEvidenceRecords(output: string): Evidence[] {
-  const match = output.match(JSON_BLOCK_RE);
-  if (!match) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(match[1]);
-  } catch {
-    return [];
-  }
-
-  if (!Array.isArray(parsed)) return [];
-
-  return parsed.filter(isValidRecord);
+export function parseEvidenceRecords(output: string): ParsedEvidenceRecords {
+  const extracted = extractFencedJsonArray(output);
+  if (!extracted.found) return { records: [], failure: extracted.failure };
+  return { records: extracted.items.filter(isValidRecord) };
 }
 
 /**
@@ -168,8 +165,12 @@ export interface TaskForValidation {
 
 export type TaskType = 'ui' | 'test' | 'cli';
 
+/** Reported when tasks.yaml is missing or unparseable and one was expected. */
+export const MISSING_TASK_LIST_MESSAGE =
+  'Could not read the task list (tasks.yaml missing or unparseable) — evidence completeness cannot be verified.';
+
 export interface ValidationError {
-  type: 'ui' | 'completeness' | 'fileExistence';
+  type: 'ui' | 'completeness' | 'fileExistence' | 'taskList';
   taskId?: string;
   taskTitle?: string;
   message: string;
@@ -221,9 +222,26 @@ export function inferTaskTypes(task: TaskForValidation): TaskType[] {
  */
 export function validateEvidenceCompleteness(
   evidence: Evidence[],
-  tasks: TaskForValidation[]
+  tasks: TaskForValidation[] | null
 ): ValidationResult {
   const errors: ValidationError[] = [];
+
+  // `null` means the task list could not be read at all (missing or
+  // unparseable tasks.yaml) — as opposed to `[]`, a spec that genuinely
+  // declares no tasks. With no requirements to check against, the loop below
+  // would iterate over nothing and pass, accepting zero evidence as proof.
+  // Fail closed instead.
+  if (tasks === null) {
+    return {
+      valid: false,
+      errors: [
+        {
+          type: 'taskList',
+          message: MISSING_TASK_LIST_MESSAGE,
+        },
+      ],
+    };
+  }
 
   for (const task of tasks) {
     const types = inferTaskTypes(task);
@@ -330,7 +348,7 @@ export async function validateFileExistence(
  */
 export async function validateEvidence(
   evidence: Evidence[],
-  tasks: TaskForValidation[],
+  tasks: TaskForValidation[] | null,
   baseDir?: string
 ): Promise<ValidationResult> {
   const completenessResult = validateEvidenceCompleteness(evidence, tasks);

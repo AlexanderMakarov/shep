@@ -1,5 +1,5 @@
 import type { ComponentType, SVGProps } from 'react';
-import Image from 'next/image';
+import { createBrandIcon } from '@/components/common/brand-icon';
 import { Code, Rocket } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -10,57 +10,10 @@ function DefaultEditorIcon(props: IconProps) {
   return <Code className={cn('h-4 w-4', props.className)} {...(props as object)} />;
 }
 
-function VsCodeIcon({ className }: IconProps) {
-  return (
-    <Image
-      src="/icons/editors/vscode.svg"
-      alt="VS Code"
-      width={24}
-      height={24}
-      className={cn('rounded-sm object-contain', className)}
-    />
-  );
-}
-VsCodeIcon.displayName = 'VsCodeIcon';
-
-function CursorEditorIcon({ className }: IconProps) {
-  return (
-    <Image
-      src="/icons/agents/cursor.jpeg"
-      alt="Cursor"
-      width={24}
-      height={24}
-      className={cn('rounded-sm object-contain', className)}
-    />
-  );
-}
-CursorEditorIcon.displayName = 'CursorEditorIcon';
-
-function WindsurfIcon({ className }: IconProps) {
-  return (
-    <Image
-      src="/icons/editors/windsurf.svg"
-      alt="Windsurf"
-      width={24}
-      height={24}
-      className={cn('rounded-sm object-contain', className)}
-    />
-  );
-}
-WindsurfIcon.displayName = 'WindsurfIcon';
-
-function ZedIcon({ className }: IconProps) {
-  return (
-    <Image
-      src="/icons/editors/zed.svg"
-      alt="Zed"
-      width={24}
-      height={24}
-      className={cn('rounded-sm object-contain', className)}
-    />
-  );
-}
-ZedIcon.displayName = 'ZedIcon';
+const VsCodeIcon = createBrandIcon('/icons/editors/vscode.svg', 'VS Code');
+const CursorEditorIcon = createBrandIcon('/icons/agents/cursor.jpeg', 'Cursor');
+const WindsurfIcon = createBrandIcon('/icons/editors/windsurf.svg', 'Windsurf', true);
+const ZedIcon = createBrandIcon('/icons/editors/zed.svg', 'Zed', true);
 
 function AntigravityIcon({ className, ...props }: IconProps) {
   return <Rocket className={cn('h-4 w-4', className)} {...(props as object)} />;

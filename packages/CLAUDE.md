@@ -10,7 +10,14 @@ All code under `packages/` MUST work correctly on **Windows, macOS, and Linux**.
 - **ALWAYS** normalize paths to forward slashes before storing in the database, comparing, or hashing. Windows APIs and dialogs return backslash paths (`C:\Users\...`), while git and many Node.js APIs use forward slashes.
 - **NEVER** use hardcoded path separators in string operations. Use `path.sep` or normalize first.
 - When comparing paths, normalize both sides: `p.replace(/\\/g, '/')`.
-- When storing paths in SQLite, store with forward slashes. When querying, use `REPLACE(column, '\', '/')` to match regardless of what's stored.
+- When storing paths in SQLite, **normalize to forward slashes on write** — see
+  `domain/shared/repository-path.ts`, and do it in the mapper so every INSERT and
+  UPDATE goes through one place.
+- **Do NOT wrap a path column in `REPLACE(column, '\', '/')` in a query.** Any
+  function around a column makes its index unusable: that pattern turned
+  `findByBranch` into a full table scan (`SCAN features`) and silently disabled
+  `idx_features_repo`. Normalize on write, compare the column directly, and add a
+  migration to back-fill rows written before the normalizer existed.
 
 ### Process Spawning
 
@@ -52,6 +59,6 @@ If a feature genuinely cannot work on a specific platform:
 
 ## Testing
 
-- All tests MUST pass on all platforms. CI runs on both `ubuntu-latest` and `windows-latest`.
+- All tests MUST pass on all platforms. The unit/integration and E2E CLI jobs run on both `ubuntu-latest` and `windows-latest`; the two Electron jobs additionally run on `macos-latest`.
 - In test assertions, normalize paths before comparing: `tempRepo.replace(/\\/g, '/')`.
 - When computing path-dependent hashes in tests, normalize the input path first.

@@ -125,10 +125,10 @@ describe('ToolInstallerServiceImpl - Integration Tests', () => {
       const mockProc = createMockProcess(1);
       mockSpawn.mockReturnValue(mockProc);
 
-      const result = await service.executeInstall('cursor');
+      const result = await service.executeInstall('cursor-cli');
 
       expect(result.status).toBe('error');
-      expect(result.toolName).toBe('cursor');
+      expect(result.toolName).toBe('cursor-cli');
       expect(result.errorMessage).toBeDefined();
       expect(result.errorMessage).toContain('exit code 1');
     });
@@ -174,7 +174,7 @@ describe('ToolInstallerServiceImpl - Integration Tests', () => {
       mockSpawn.mockReturnValue(mockProc);
 
       // Use a tool that has an install command on the current platform
-      const toolName = service.getInstallCommand('cursor') ? 'cursor' : 'vscode';
+      const toolName = 'cursor-cli';
       const result = await service.executeInstall(toolName);
 
       expect(result.status).toBe('error');
@@ -226,7 +226,8 @@ describe('ToolInstallerServiceImpl - Integration Tests', () => {
 
       expect(result.status).toBe('error');
       expect(result.toolName).toBe('unknown-tool-xyz-123');
-      expect(result.errorMessage).toContain('No installation command');
+      expect(result.errorMessage).toContain('Unknown tool: unknown-tool-xyz-123');
+      expect(mockSpawn).not.toHaveBeenCalled();
     });
   });
 

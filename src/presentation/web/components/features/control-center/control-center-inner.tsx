@@ -10,6 +10,8 @@ import { CanvasToolbar } from '@/components/features/features-canvas/canvas-tool
 import { WorkspaceSelector } from '@/components/features/features-canvas/workspace-selector';
 import { ManageWorkspaceDialog } from '@/components/features/features-canvas/manage-workspace-dialog';
 import { WorkspaceNameDialog } from '@/components/features/features-canvas/workspace-name-dialog';
+import { VisuallyHidden } from 'radix-ui';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,6 +72,7 @@ interface ControlCenterInnerProps {
 }
 
 export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenterInnerProps) {
+  const { t } = useTranslation('web');
   const router = useRouter();
   const pathname = usePathname();
   const selectedFeatureId = useSelectedFeatureId();
@@ -531,6 +534,15 @@ export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenter
 
   // ── Full-screen create prompt overlay ────────────────────────────────
   const [showCreatePrompt, setShowCreatePrompt] = useState(false);
+  /** Control that opened the create prompt, so focus can be handed back to it
+   *  on close. The dialog has no DialogTrigger (it opens from the FAB menu),
+   *  so Radix's own trigger-based restore has nothing to return focus to. */
+  const createPromptOpenerRef = useRef<HTMLElement | null>(null);
+
+  const openCreatePrompt = useCallback(() => {
+    createPromptOpenerRef.current = (document.activeElement as HTMLElement | null) ?? null;
+    setShowCreatePrompt(true);
+  }, []);
 
   const featureFlags = useFeatureFlags();
 
@@ -597,7 +609,7 @@ export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenter
     guardedNavigate,
     handlePickFolder,
     onNewProject: () => setWorkspaceNewProjectOpen(true),
-    onNewApplication: () => setShowCreatePrompt(true),
+    onNewApplication: openCreatePrompt,
     ...(selectedApplicationId !== undefined && { selectedApplicationId }),
     ...(selectedApplicationName !== undefined && { selectedApplicationName }),
   });
@@ -626,6 +638,7 @@ export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenter
 
   return (
     <>
+      {showCanvas || workspaceFilteredEmpty ? <h1 className="sr-only">Control Center</h1> : null}
       <FeaturesCanvas
         nodes={showCanvas ? displayNodes : []}
         edges={showCanvas ? workspaceFilteredEdges : []}
@@ -643,8 +656,12 @@ export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenter
         showToolbarOnEmpty={workspaceFilteredEmpty}
         emptyState={emptyStateNode}
       />
-      {/* Collaboration onboarding — top-right overlay, shown once per browser profile */}
-      {featureFlags.collaboration ? (
+      {/* Collaboration onboarding — top-right overlay, shown once per browser
+          profile. Gated on canvas content: with an empty canvas the first-run
+          setup wizard owns the screen, and this card's links were the only
+          clickable things on it — a feature announcement outcompeting the
+          setup the user is actually blocked on. */}
+      {featureFlags.collaboration && hasCanvasContent ? (
         <div className="pointer-events-none absolute inset-x-0 top-14 z-10 flex justify-end px-4">
           <CollaborationOnboarding
             apps={collaborationApps}
@@ -721,9 +738,36 @@ export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenter
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Full-screen create prompt overlay (replaces the old dialog) */}
-      {showCreatePrompt ? (
-        <div className="absolute inset-0 z-50">
+      {/* Full-screen create prompt. It is a real modal now: the hand-rolled
+          `absolute inset-0` div had no dialog semantics, no focus trap and no
+          focus restore, so screen-reader and keyboard users were dropped into
+          an unannounced layer they could tab straight out of. The ui/ Dialog
+          primitive supplies role/aria-modal, Escape, trap and restore; the
+          class overrides make it full-bleed and hide its built-in close button
+          in favour of the empty state's own (same `[&>button:last-child]`
+          escape hatch used by EvidenceLightbox). */}
+      <Dialog
+        open={showCreatePrompt}
+        onOpenChange={(open) => {
+          if (!open) setShowCreatePrompt(false);
+        }}
+      >
+        <DialogContent
+          data-testid="create-prompt-overlay"
+          aria-modal="true"
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            const opener = createPromptOpenerRef.current;
+            if (opener?.isConnected) {
+              event.preventDefault();
+              opener.focus();
+            }
+          }}
+          className="top-0 left-0 flex h-full max-h-none w-full max-w-none translate-x-0 translate-y-0 gap-0 rounded-none border-0 p-0 sm:rounded-none [&>button:last-child]:hidden"
+        >
+          <VisuallyHidden.Root>
+            <DialogTitle>{t('fab.newApplication')}</DialogTitle>
+          </VisuallyHidden.Root>
           <ControlCenterEmptyState
             onRepositorySelect={(path) => {
               setShowCreatePrompt(false);
@@ -737,8 +781,8 @@ export function ControlCenterInner({ initialNodes, initialEdges }: ControlCenter
             onClose={() => setShowCreatePrompt(false)}
             className="bg-background"
           />
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -319,6 +319,20 @@ export function FeatureDrawerTabs({
   }, []);
   const [activeTab, setActiveTab] = useState<FeatureTabKey>(effectiveInitial);
 
+  // Has the user ever opened the Chat tab in this drawer?
+  //
+  // Chat must STAY mounted once visited, because an inactive `TabsContent`
+  // drops its children and with them the unsent draft, the staged attachments
+  // and the model override. But mounting it unconditionally would open a chat
+  // runtime for every drawer the user opens, including the ones where they
+  // never touch chat — the same cost the log tab deliberately avoids just
+  // below. Sticky-on-first-visit gets the draft preservation without paying
+  // for it on drawers that never use chat.
+  const [chatVisited, setChatVisited] = useState(effectiveInitial === 'chat');
+  useEffect(() => {
+    if (activeTab === 'chat') setChatVisited(true);
+  }, [activeTab]);
+
   // Only subscribe to log SSE when the log tab is active to avoid
   // opening an EventSource connection on every drawer open.
   const featureLogs = useFeatureLogs(activeTab === 'log' ? featureId : null);
@@ -790,9 +804,20 @@ export function FeatureDrawerTabs({
           </TabsContent>
         ) : null}
 
-        {/* Chat tab — always visible when interactive agent is enabled (FR-1, FR-17) */}
+        {/* Chat tab — always visible when interactive agent is enabled (FR-1, FR-17).
+            `forceMount` once visited: Radix renders `present && children`, so an
+            inactive panel drops its CHILDREN — taking the unsent draft, the
+            staged attachments and the model override with them. Keeping it
+            mounted is the only way switching tabs stops destroying the user's
+            typing. `TabsContent` pairs the opt-in with
+            `data-[state=inactive]:hidden`, so the panel is still hidden from
+            sight, from assistive tech and from the tab order while inactive. */}
         {visibleTabs.includes('chat') ? (
-          <TabsContent value="chat" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <TabsContent
+            value="chat"
+            forceMount={chatVisited || undefined}
+            className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
             <ChatTab featureId={featureId} worktreePath={featureNode.worktreePath} />
           </TabsContent>
         ) : null}

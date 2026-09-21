@@ -63,3 +63,7 @@ playwright-report/
 
 # Local editor/IDE settings (may be machine-specific)
 .claude/settings.local.json
+
+# Local agent-tooling scratch (not project source)
+.coding-agent/
+.swd/

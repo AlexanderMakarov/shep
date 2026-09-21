@@ -59,6 +59,13 @@ export function RepositoryDrawerClient({ data, initialTab }: RepositoryDrawerCli
   const pathname = usePathname();
   const isOpen = pathname.startsWith('/repository/');
   const [activeTab, setActiveTab] = useState<string>(initialTab ?? 'overview');
+  // Sticky once visited — see feature-drawer-tabs.tsx. Chat has to stay mounted
+  // to keep the draft, but mounting it before the user ever opens the tab would
+  // start a chat runtime for every repository drawer.
+  const [chatVisited, setChatVisited] = useState(activeTab === 'chat');
+  useEffect(() => {
+    if (activeTab === 'chat') setChatVisited(true);
+  }, [activeTab]);
   const [pathCopied, setPathCopied] = useState(false);
   const repoActions = useRepositoryActions(
     data.repositoryPath ? { repositoryId: data.id, repositoryPath: data.repositoryPath } : null
@@ -317,8 +324,15 @@ export function RepositoryDrawerClient({ data, initialTab }: RepositoryDrawerCli
           <RepoOverview data={data} syncError={repoActions.syncError} />
         </TabsContent>
 
-        {/* Chat tab */}
-        <TabsContent value="chat" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* Chat tab. `forceMount` once visited — see feature-drawer-tabs.tsx:
+            an inactive TabsContent drops its children, which would discard the
+            unsent draft, the staged attachments and the model override every
+            time the user looks at another tab. */}
+        <TabsContent
+          value="chat"
+          forceMount={chatVisited || undefined}
+          className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
           <ChatTab featureId={repoSessionId} worktreePath={data.repositoryPath} />
         </TabsContent>
 

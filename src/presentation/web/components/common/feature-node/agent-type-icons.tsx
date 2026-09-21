@@ -1,41 +1,19 @@
 import type { ComponentType, SVGProps } from 'react';
-import Image from 'next/image';
+import type { AgentType } from '@shepai/core/domain/generated/output';
 import { cn } from '@/lib/utils';
+import { createBrandIcon } from '@/components/common/brand-icon';
 
-/** Agent type values mirroring the TypeSpec AgentType enum. */
-export type AgentTypeValue =
-  | 'claude-code'
-  | 'codex-cli'
-  | 'copilot-cli'
-  | 'cursor'
-  | 'cline'
-  | 'gemini-cli'
-  | 'aider'
-  | 'continue'
-  | 'openrouter'
-  | 'together-ai'
-  | 'ollama'
-  | 'llmproxy'
-  | 'dev';
+/**
+ * Agent type values.
+ *
+ * This was a hand-written union that "mirrored" the TypeSpec AgentType enum and
+ * had to be edited every time an agent was added. Aliasing the generated enum
+ * makes drift impossible — and because the maps below are total `Record`s over
+ * it, a new agent is a compile error here until it has an icon and a label.
+ */
+export type AgentTypeValue = `${AgentType}`;
 
 type IconProps = SVGProps<SVGSVGElement> & { className?: string };
-
-/** Create a stable image-based icon component for a brand. */
-function createBrandIcon(src: string, alt: string): ComponentType<IconProps> {
-  function BrandIcon({ className }: IconProps) {
-    return (
-      <Image
-        src={src}
-        alt={alt}
-        width={24}
-        height={24}
-        className={cn('rounded-sm object-contain', className)}
-      />
-    );
-  }
-  BrandIcon.displayName = `BrandIcon(${alt})`;
-  return BrandIcon;
-}
 
 /** Fallback icon when agent type is unknown or undefined. */
 export function DefaultAgentIcon(props: IconProps) {
@@ -97,23 +75,25 @@ DevAgentIcon.displayName = 'DevAgentIcon';
 
 const agentTypeIconMap: Record<AgentTypeValue, ComponentType<IconProps>> = {
   'claude-code': createBrandIcon('/icons/agents/claude-ai-icon.svg', 'Claude Code'),
-  'codex-cli': createBrandIcon('/icons/agents/openai.svg', 'Codex CLI'),
-  'copilot-cli': createBrandIcon('/icons/agents/copilot.svg', 'Copilot CLI'),
+  'kimi-code': createBrandIcon('/icons/agents/kimi.svg', 'Kimi Code', true),
+  'codex-cli': createBrandIcon('/icons/agents/openai.svg', 'Codex CLI', true),
+  'copilot-cli': createBrandIcon('/icons/agents/copilot.svg', 'Copilot CLI', true),
   cursor: createBrandIcon('/icons/agents/cursor.jpeg', 'Cursor'),
-  cline: createBrandIcon('/icons/agents/cline.svg', 'Cline'),
-  'gemini-cli': createBrandIcon('/icons/agents/gemini.svg', 'Gemini CLI'),
+  cline: createBrandIcon('/icons/agents/cline.svg', 'Cline', true),
+  'gemini-cli': createBrandIcon('/icons/agents/gemini.svg', 'Gemini CLI', true),
   aider: createBrandIcon('/icons/agents/aider.png', 'Aider'),
   continue: createBrandIcon('/icons/agents/continue.jpeg', 'Continue'),
-  openrouter: createBrandIcon('/icons/agents/openrouter.svg', 'OpenRouter'),
+  openrouter: createBrandIcon('/icons/agents/openrouter.svg', 'OpenRouter', true),
   'together-ai': createBrandIcon('/icons/agents/together-ai.svg', 'Together AI'),
-  ollama: createBrandIcon('/icons/agents/ollama.svg', 'Ollama'),
-  llmproxy: createBrandIcon('/icons/agents/openai.svg', 'LLM Proxy'),
+  ollama: createBrandIcon('/icons/agents/ollama.svg', 'Ollama', true),
+  llmproxy: createBrandIcon('/icons/agents/openai.svg', 'LLM Proxy', true),
   dev: DevAgentIcon,
 };
 
 /** Human-readable labels for agent types. */
 export const agentTypeLabels: Record<AgentTypeValue, string> = {
   'claude-code': 'Claude Code',
+  'kimi-code': 'Kimi Code',
   'codex-cli': 'Codex CLI',
   'copilot-cli': 'Copilot CLI',
   cursor: 'Cursor',

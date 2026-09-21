@@ -71,7 +71,7 @@ export function SdlcColumn({ status, title, tasks, onCardClick }: SdlcColumnProp
 
           {tasks.length === 0 ? (
             <div className="flex flex-1 items-center justify-center">
-              <p className="text-muted-foreground/50 text-[10px]">No tasks</p>
+              <p className="text-muted-foreground text-[10px]">No tasks</p>
             </div>
           ) : null}
         </div>

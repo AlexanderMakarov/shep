@@ -32,7 +32,7 @@ import type {
   SupervisorEvaluateInput,
 } from '../../../../application/ports/output/agents/supervisor-agent.interface.js';
 import { SUPERVISOR_EVALUATOR_SOFT_TIMEOUT_MS } from '../../../../application/ports/output/agents/supervisor-agent.interface.js';
-import { SupervisorVerdict, type SupervisorPolicy } from '../../../../domain/generated/output.js';
+import { type SupervisorPolicy } from '../../../../domain/generated/output.js';
 import {
   buildEvaluatorPrompt,
   resolveEvaluatorModelId,
@@ -40,6 +40,7 @@ import {
   SUPERVISOR_EVALUATOR_SYSTEM_HEADER,
   SUPERVISOR_TIMEOUT_DECISION,
 } from './evaluator-prompt.js';
+import { parseEvaluatorResponse } from './verdict-parser.js';
 
 /** Stable slot key for the supervisor evaluator system header. */
 const EVALUATOR_PROMPT_SLOT = {
@@ -101,34 +102,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-/**
- * Try to extract a structured verdict + rationale from the executor's
- * raw response. The executor returns free-form text; we look for an
- * explicit "verdict: <value>" line and fall back to `advise` if the
- * model failed to comply.
- */
-function parseEvaluatorResponse(raw: string): { verdict: SupervisorVerdict; rationale: string } {
-  const verdicts: SupervisorVerdict[] = [
-    SupervisorVerdict.approve,
-    SupervisorVerdict.reject,
-    SupervisorVerdict.escalate,
-    SupervisorVerdict.advise,
-  ];
-  const lower = raw.toLowerCase();
-  let parsed: SupervisorVerdict = SupervisorVerdict.advise;
-  for (const candidate of verdicts) {
-    if (lower.includes(`verdict: ${candidate}`) || lower.includes(`verdict:${candidate}`)) {
-      parsed = candidate;
-      break;
-    }
-  }
-  const rationale = raw.trim().slice(0, 4000);
-  return {
-    verdict: parsed,
-    rationale: rationale.length > 0 ? rationale : 'no rationale supplied',
-  };
 }
 
 function ingestEventNode(

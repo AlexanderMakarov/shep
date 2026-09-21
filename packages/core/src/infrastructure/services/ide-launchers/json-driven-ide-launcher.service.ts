@@ -11,6 +11,7 @@ import { injectable } from 'tsyringe';
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
 import { checkBinaryExists } from '../tool-installer/binary-exists.js';
+import { isShellEmbeddablePath, quoteShellPath } from './shell-path-argument.js';
 import type {
   IIdeLauncherService,
   LaunchIdeResult,
@@ -88,10 +89,28 @@ export class JsonDrivenIdeLauncherService implements IIdeLauncherService {
       };
     }
 
-    const resolved = openCmd.replace('{dir}', directoryPath);
-
     // Terminal commands always use shell mode and detach
     const useShell = useTerminal || entry.spawnOptions?.shell === true;
+
+    // `{dir}` lands inside a shell command string on the shell path, so the
+    // path is quoted — and a path that cannot be quoted safely is refused
+    // rather than interpolated raw (C6). The argv path below never builds a
+    // command string, so it needs neither.
+    if (useShell && !isShellEmbeddablePath(directoryPath)) {
+      return {
+        ok: false,
+        code: 'launch_failed',
+        message:
+          `Refusing to launch "${editorId}": the directory path contains characters ` +
+          `that cannot be safely embedded in a shell command ("${directoryPath}"). ` +
+          `Rename the branch or open the directory manually.`,
+      };
+    }
+
+    const resolved = useShell
+      ? openCmd.replace('{dir}', quoteShellPath(directoryPath, platform() === 'win32'))
+      : openCmd.replace('{dir}', directoryPath);
+
     const opts = {
       detached: useTerminal ? true : (entry.spawnOptions?.detached ?? !useShell),
       stdio: (useTerminal ? 'ignore' : (entry.spawnOptions?.stdio ?? 'ignore')) as

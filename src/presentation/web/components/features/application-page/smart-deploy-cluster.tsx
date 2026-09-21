@@ -542,7 +542,7 @@ export function SmartDeployCluster({
         aria-label="Open activity log"
         title="Smart Deploy activity log"
         onClick={handleOpenLogs}
-        className="text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:ring-ring mr-1 inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md bg-transparent transition-colors duration-150 ease-out focus-visible:ring-2 focus-visible:ring-offset-0 focus-visible:outline-none"
+        className="text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:ring-ring mr-1 inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-transparent transition-colors duration-150 ease-out focus-visible:ring-2 focus-visible:ring-offset-0 focus-visible:outline-none"
       >
         <ScrollText className="size-4" />
       </button>

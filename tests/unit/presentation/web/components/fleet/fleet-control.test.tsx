@@ -1,26 +1,35 @@
 /**
  * FleetControl — unit tests (spec 111).
  *
- * The container owns three behaviours that are easy to get wrong: hide itself
- * when there is no fleet, fall back to loading on the client when the server
- * could not supply a snapshot, and surface a retry instead of a blank corner
- * when the read fails.
+ * The container owns four behaviours that are easy to get wrong: stay live off
+ * the shared SSE stream rather than the snapshot it was handed, keep a seat on
+ * the dashboard when the fleet is empty so it comes back the moment work
+ * exists, fall back to loading on the client when the server could not supply a
+ * snapshot, and surface a retry instead of a blank corner when the read fails.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FleetControl } from '@/components/fleet/fleet-control';
+import { AgentEventsContext } from '@/hooks/agent-events-provider';
+import type { UseAgentEventsResult } from '@/hooks/use-agent-events';
 import {
   FleetTriageCategory,
   FleetTriagePriority,
+  NotificationEventType,
   type FleetOverview,
   type FleetTriageItem,
+  type NotificationEvent,
 } from '@shepai/core/domain/generated/output';
 
 const getFleetData = vi.fn();
 
 vi.mock('@/app/actions/fleet-data', () => ({
   getFleetData: (...args: unknown[]) => getFleetData(...args),
+}));
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 const NOW = '2026-09-11T12:00:00.000Z';
@@ -41,6 +50,20 @@ const OVERVIEW: FleetOverview = {
   timestamp: NOW,
 };
 
+const EMPTY_OVERVIEW: FleetOverview = {
+  ...OVERVIEW,
+  counts: {
+    total: 0,
+    cruising: 0,
+    queued: 0,
+    attentionNeeded: 0,
+    failed: 0,
+    waitingApproval: 0,
+    blockedQuestions: 0,
+  },
+  activeTriageCount: 0,
+};
+
 const ITEMS: FleetTriageItem[] = [
   {
     featureId: 'feat-1',
@@ -55,9 +78,36 @@ const ITEMS: FleetTriageItem[] = [
   },
 ];
 
+/**
+ * A minimal SSE context. Only `lastEvent` matters to the fleet bar; the rest of
+ * `UseAgentEventsResult` is filled in so the shape stays honest as the hook grows.
+ */
+function eventsContext(lastEvent: NotificationEvent | null): UseAgentEventsResult {
+  return {
+    events: lastEvent ? [lastEvent] : [],
+    lastEvent,
+    agentMessages: [],
+    lastAgentMessage: null,
+    agentQuestions: [],
+    lastAgentQuestion: null,
+    supervisorDecisions: [],
+    lastSupervisorDecision: null,
+    connectionStatus: 'connected',
+  };
+}
+
+/** A fresh object per call — the hook re-parses each frame, so identity moves. */
+function notification(): NotificationEvent {
+  return {
+    eventType: NotificationEventType.ApplicationUpdated,
+    timestamp: NOW,
+  } as NotificationEvent;
+}
+
 describe('FleetControl', () => {
   beforeEach(() => {
     getFleetData.mockReset();
+    getFleetData.mockResolvedValue({ overview: OVERVIEW, triageItems: ITEMS });
   });
 
   it('paints the server snapshot without calling the action', () => {
@@ -68,33 +118,7 @@ describe('FleetControl', () => {
     expect(getFleetData).not.toHaveBeenCalled();
   });
 
-  it('renders nothing at all when the fleet has no features', () => {
-    const { container } = render(
-      <FleetControl
-        initialData={{
-          overview: {
-            ...OVERVIEW,
-            counts: {
-              total: 0,
-              cruising: 0,
-              queued: 0,
-              attentionNeeded: 0,
-              failed: 0,
-              waitingApproval: 0,
-              blockedQuestions: 0,
-            },
-          },
-          triageItems: [],
-        }}
-      />
-    );
-
-    expect(container.firstChild).toBeNull();
-  });
-
   it('loads on the client when the server supplied no snapshot', async () => {
-    getFleetData.mockResolvedValue({ overview: OVERVIEW, triageItems: ITEMS });
-
     render(<FleetControl />);
 
     expect(screen.getByTestId('fleet-status-bar')).toHaveAttribute('data-state', 'loading');
@@ -105,6 +129,7 @@ describe('FleetControl', () => {
   });
 
   it('shows a retryable error instead of a blank corner when the read fails', async () => {
+    getFleetData.mockReset();
     getFleetData.mockRejectedValueOnce(new Error('container unavailable'));
     getFleetData.mockResolvedValueOnce({ overview: OVERVIEW, triageItems: ITEMS });
 
@@ -129,5 +154,119 @@ describe('FleetControl', () => {
     await waitFor(() =>
       expect(screen.getByText('Waiting on the plan approval gate')).toBeInTheDocument()
     );
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Live — the bar must not disagree with the canvas beside it       */
+  /* ---------------------------------------------------------------- */
+
+  describe('live refresh', () => {
+    it('re-reads the fleet when a new agent event arrives', async () => {
+      const { rerender } = render(
+        <AgentEventsContext.Provider value={eventsContext(null)}>
+          <FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />
+        </AgentEventsContext.Provider>
+      );
+
+      expect(getFleetData).not.toHaveBeenCalled();
+
+      getFleetData.mockResolvedValue({
+        overview: { ...OVERVIEW, counts: { ...OVERVIEW.counts, attentionNeeded: 5 } },
+        triageItems: ITEMS,
+      });
+      rerender(
+        <AgentEventsContext.Provider value={eventsContext(notification())}>
+          <FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />
+        </AgentEventsContext.Provider>
+      );
+
+      await waitFor(() => expect(getFleetData).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(screen.getByTestId('fleet-count-attention')).toHaveTextContent('5')
+      );
+    });
+
+    it('re-reads again on each subsequent event', async () => {
+      const first = notification();
+      const { rerender } = render(
+        <AgentEventsContext.Provider value={eventsContext(first)}>
+          <FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />
+        </AgentEventsContext.Provider>
+      );
+      await waitFor(() => expect(getFleetData).toHaveBeenCalledTimes(1));
+
+      rerender(
+        <AgentEventsContext.Provider value={eventsContext(notification())}>
+          <FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />
+        </AgentEventsContext.Provider>
+      );
+
+      await waitFor(() => expect(getFleetData).toHaveBeenCalledTimes(2));
+    });
+
+    it('does not re-read when nothing on the stream changed', async () => {
+      const ctx = eventsContext(notification());
+      const { rerender } = render(
+        <AgentEventsContext.Provider value={ctx}>
+          <FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />
+        </AgentEventsContext.Provider>
+      );
+      await waitFor(() => expect(getFleetData).toHaveBeenCalledTimes(1));
+
+      // Three unrelated re-renders with the same event: `load` is stable, so
+      // the subscription must not fire again (and must not loop).
+      for (let i = 0; i < 3; i += 1) {
+        rerender(
+          <AgentEventsContext.Provider value={ctx}>
+            <FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />
+          </AgentEventsContext.Provider>
+        );
+      }
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(getFleetData).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders bare, with no SSE provider mounted, instead of throwing', () => {
+      expect(() =>
+        render(<FleetControl initialData={{ overview: OVERVIEW, triageItems: ITEMS }} />)
+      ).not.toThrow();
+      expect(screen.getByTestId('fleet-status-bar')).toHaveAttribute('data-state', 'ready');
+    });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Zero state — the bar keeps its seat and comes back               */
+  /* ---------------------------------------------------------------- */
+
+  describe('when the fleet is empty', () => {
+    it('keeps its seat and says so rather than vanishing', () => {
+      render(<FleetControl initialData={{ overview: EMPTY_OVERVIEW, triageItems: [] }} />);
+
+      const bar = screen.getByTestId('fleet-status-bar');
+      expect(bar).toHaveAttribute('data-state', 'empty');
+      expect(bar).toHaveTextContent('No active features');
+    });
+
+    it('comes back with counts as soon as the first feature exists', async () => {
+      const { rerender } = render(
+        <AgentEventsContext.Provider value={eventsContext(null)}>
+          <FleetControl initialData={{ overview: EMPTY_OVERVIEW, triageItems: [] }} />
+        </AgentEventsContext.Provider>
+      );
+
+      expect(screen.getByTestId('fleet-status-bar')).toHaveAttribute('data-state', 'empty');
+
+      rerender(
+        <AgentEventsContext.Provider value={eventsContext(notification())}>
+          <FleetControl initialData={{ overview: EMPTY_OVERVIEW, triageItems: [] }} />
+        </AgentEventsContext.Provider>
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId('fleet-status-bar')).toHaveAttribute('data-state', 'ready')
+      );
+      expect(screen.getByTestId('fleet-count-attention')).toHaveTextContent('2');
+    });
   });
 });

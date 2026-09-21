@@ -3,8 +3,14 @@
     "selectAgent": {
       "message": "Wählen Sie Ihren KI-Coding-Agenten",
       "choices": {
-        "claudeCode": { "name": "Claude Code", "description": "Anthropic Claude Code CLI" },
-        "geminiCli": { "name": "Gemini CLI", "description": "Google Gemini CLI" },
+        "claudeCode": {
+          "name": "Claude Code",
+          "description": "Anthropic Claude Code CLI"
+        },
+        "geminiCli": {
+          "name": "Gemini CLI",
+          "description": "Google Gemini CLI"
+        },
         "codexCli": {
           "name": "Codex CLI",
           "description": "OpenAI Codex CLI Terminal-Agent (GPT-Modelle)"
@@ -13,7 +19,10 @@
           "name": "Copilot CLI",
           "description": "GitHub Copilot CLI (Standard: Claude Sonnet 4.5, erfordert Copilot-Abonnement)"
         },
-        "cursor": { "name": "Cursor", "description": "Cursor KI-Coding-Agent" },
+        "cursor": {
+          "name": "Cursor",
+          "description": "Cursor KI-Coding-Agent"
+        },
         "cline": {
           "name": "Cline",
           "description": "Multi-provider agentic coding assistant with full tool use (requires cline CLI)"
@@ -34,11 +43,27 @@
           "name": "Ollama",
           "description": "Lokale LLMs über Ollama ausführen (kein API-Schlüssel erforderlich, läuft auf localhost)"
         },
-        "aider": { "name": "Aider", "disabled": "(Demnächst verfügbar)" },
-        "continue": { "name": "Continue", "disabled": "(Demnächst verfügbar)" }
+        "aider": {
+          "name": "Aider",
+          "disabled": "(Demnächst verfügbar)"
+        },
+        "continue": {
+          "name": "Continue",
+          "disabled": "(Demnächst verfügbar)"
+        },
+        "kimiCode": {
+          "name": "Kimi Code",
+          "description": "Kimi Code CLI-Terminal-Agent von Moonshot AI (Kimi-K-Modelle)"
+        },
+        "llmProxy": {
+          "name": "LLM Proxy",
+          "description": "Lokaler OpenAI-kompatibler Proxy (üblicherweise auf Port 4000)"
+        }
       }
     },
-    "selectIde": { "message": "Wählen Sie Ihre bevorzugte IDE" },
+    "selectIde": {
+      "message": "Wählen Sie Ihre bevorzugte IDE"
+    },
     "selectAuthMethod": {
       "message": "Wählen Sie die Authentifizierungsmethode",
       "choices": {
@@ -64,7 +89,9 @@
       "feedbackPrompt": "Was muss geändert werden? (Feedback zur Überarbeitung)",
       "feedbackRequired": "Feedback ist für eine Ablehnung erforderlich"
     },
-    "selectLanguage": { "message": "Anzeigesprache auswählen" }
+    "selectLanguage": {
+      "message": "Anzeigesprache auswählen"
+    }
   },
   "wizards": {
     "onboarding": {
@@ -77,7 +104,9 @@
       "installUrl": "https://cli.github.com/",
       "setupComplete": "Einrichtung abgeschlossen! Sie können Shep jetzt verwenden."
     },
-    "agentConfig": { "enterApiKey": "Geben Sie Ihren Anthropic API-Schlüssel ein" },
+    "agentConfig": {
+      "enterApiKey": "Geben Sie Ihren Anthropic API-Schlüssel ein"
+    },
     "githubImport": {
       "methodMessage": "Wie möchten Sie ein GitHub-Repository hinzufügen?",
       "pasteUrl": "Eine GitHub-URL einfügen",

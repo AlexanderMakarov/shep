@@ -43,7 +43,7 @@ const {
   mockRecordPhaseEnd: vi.fn().mockResolvedValue(undefined),
   mockBuildEvidencePrompt: vi.fn().mockReturnValue('evidence collection prompt'),
   mockBuildEvidenceRetryPrompt: vi.fn().mockReturnValue('evidence retry prompt with feedback'),
-  mockParseEvidenceRecords: vi.fn().mockReturnValue([]),
+  mockParseEvidenceRecords: vi.fn().mockReturnValue({ records: [] }),
   mockValidateUiEvidenceHasAppProof: vi.fn().mockReturnValue({
     valid: true,
     hasScreenshots: false,
@@ -219,7 +219,7 @@ describe('createEvidenceNode', () => {
   // --- Evidence parsing ---
   describe('evidence parsing', () => {
     it('should parse evidence records from executor result', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       const node = createEvidenceNode(executor);
       const result = await node(baseState());
 
@@ -228,7 +228,7 @@ describe('createEvidenceNode', () => {
     });
 
     it('should return evidence array in state update', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       const node = createEvidenceNode(executor);
       const result = await node(baseState());
 
@@ -238,7 +238,7 @@ describe('createEvidenceNode', () => {
     });
 
     it('should return empty evidence array when parser returns empty', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       const node = createEvidenceNode(executor);
       const result = await node(baseState());
 
@@ -265,7 +265,7 @@ describe('createEvidenceNode', () => {
     });
 
     it('should include evidence count in completion message', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       const node = createEvidenceNode(executor);
       const result = await node(baseState());
 
@@ -431,7 +431,7 @@ describe('createEvidenceNode', () => {
   // --- UI evidence app-level proof validation ---
   describe('ui evidence app-level proof validation', () => {
     it('should call validateUiEvidenceHasAppProof with parsed evidence', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       const node = createEvidenceNode(executor);
       await node(baseState());
 
@@ -447,7 +447,7 @@ describe('createEvidenceNode', () => {
           relativePath: '.shep/evidence/storybook-toggle.png',
         },
       ];
-      mockParseEvidenceRecords.mockReturnValueOnce(storybookOnlyEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: storybookOnlyEvidence });
       mockValidateUiEvidenceHasAppProof.mockReturnValueOnce({
         valid: false,
         hasScreenshots: true,
@@ -466,7 +466,7 @@ describe('createEvidenceNode', () => {
     });
 
     it('should not include validation warnings when app-level evidence is present', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateUiEvidenceHasAppProof.mockReturnValueOnce({
         valid: true,
         hasScreenshots: true,
@@ -493,7 +493,7 @@ describe('createEvidenceNode', () => {
           relativePath: '.shep/evidence/storybook.png',
         },
       ];
-      mockParseEvidenceRecords.mockReturnValueOnce(storybookEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: storybookEvidence });
       mockValidateUiEvidenceHasAppProof.mockReturnValueOnce({
         valid: false,
         hasScreenshots: true,
@@ -554,8 +554,55 @@ describe('createEvidenceNode', () => {
       });
     });
 
+    // ── tasks.yaml: "unknown" must not masquerade as "no requirements" ──
+    it('passes null tasks to validateEvidence when tasks.yaml is missing', async () => {
+      mockReadSpecFile.mockReturnValue('');
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
+
+      const node = createEvidenceNode(executor);
+      await node(baseState());
+
+      expect(mockValidateEvidence).toHaveBeenCalledWith(sampleEvidence, null, '/tmp/worktree');
+    });
+
+    it('passes null tasks to validateEvidence when tasks.yaml is unparseable', async () => {
+      mockReadSpecFile.mockImplementation((_d: string, filename: string) =>
+        filename === 'tasks.yaml' ? 'tasks: [ this is: not: valid yaml' : ''
+      );
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
+
+      const node = createEvidenceNode(executor);
+      await node(baseState());
+
+      expect(mockValidateEvidence).toHaveBeenCalledWith(sampleEvidence, null, '/tmp/worktree');
+    });
+
+    it('passes an empty array when tasks.yaml declares an empty task list', async () => {
+      mockReadSpecFile.mockImplementation((_d: string, filename: string) =>
+        filename === 'tasks.yaml' ? 'name: x\ntasks: []\n' : ''
+      );
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
+
+      const node = createEvidenceNode(executor);
+      await node(baseState());
+
+      expect(mockValidateEvidence).toHaveBeenCalledWith(sampleEvidence, [], '/tmp/worktree');
+    });
+
+    it('passes an empty array when the caller does not expect a task list (fast mode)', async () => {
+      // Fast mode never writes tasks.yaml, so its absence is correct there and
+      // must not fail the gate.
+      mockReadSpecFile.mockReturnValue('');
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
+
+      const node = createEvidenceNode(executor, { requireTaskList: false });
+      await node(baseState());
+
+      expect(mockValidateEvidence).toHaveBeenCalledWith(sampleEvidence, [], '/tmp/worktree');
+    });
+
     it('should call validateEvidence after parsing evidence on first attempt', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -571,7 +618,7 @@ describe('createEvidenceNode', () => {
     });
 
     it('should not retry when validation passes on first attempt', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -604,11 +651,11 @@ describe('createEvidenceNode', () => {
       ];
 
       // First attempt: parse returns insufficient evidence, validation fails
-      mockParseEvidenceRecords.mockReturnValueOnce(attempt1Evidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: attempt1Evidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
       // Second attempt: parse returns good evidence, validation passes
-      mockParseEvidenceRecords.mockReturnValueOnce(attempt2Evidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: attempt2Evidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -632,10 +679,10 @@ describe('createEvidenceNode', () => {
     });
 
     it('should use buildEvidenceRetryPrompt with validation errors on retry', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -666,7 +713,7 @@ describe('createEvidenceNode', () => {
 
       // All 3 attempts fail validation
       for (let i = 0; i < 3; i++) {
-        mockParseEvidenceRecords.mockReturnValueOnce(insufficientEvidence);
+        mockParseEvidenceRecords.mockReturnValueOnce({ records: insufficientEvidence });
         mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
       }
 
@@ -702,10 +749,10 @@ describe('createEvidenceNode', () => {
     });
 
     it('should record phase end after each attempt regardless of success or failure', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -729,10 +776,10 @@ describe('createEvidenceNode', () => {
     });
 
     it('should update evidenceRetries state with attempt count', async () => {
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -760,10 +807,10 @@ describe('createEvidenceNode', () => {
         },
       ];
 
-      mockParseEvidenceRecords.mockReturnValueOnce(attempt1Evidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: attempt1Evidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce(attempt2Evidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: attempt2Evidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -805,10 +852,10 @@ describe('createEvidenceNode', () => {
         },
       ];
 
-      mockParseEvidenceRecords.mockReturnValueOnce(sharedEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sharedEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce(attempt2Evidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: attempt2Evidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -833,10 +880,10 @@ describe('createEvidenceNode', () => {
 
     it('should call markPhaseComplete only once after loop completes', async () => {
       // Two attempts: fail then succeed
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce(sampleEvidence);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: sampleEvidence });
       mockValidateEvidence.mockResolvedValueOnce({ valid: true, errors: [] });
 
       const node = createEvidenceNode(executor);
@@ -852,7 +899,7 @@ describe('createEvidenceNode', () => {
 
     it('should call markPhaseComplete after exhausting retries (graceful degradation)', async () => {
       for (let i = 0; i < 3; i++) {
-        mockParseEvidenceRecords.mockReturnValueOnce([]);
+        mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
         mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
       }
 
@@ -872,10 +919,10 @@ describe('createEvidenceNode', () => {
       // Configure 2 retries (instead of default 3)
       mockGetSettings.mockReturnValue({ workflow: { commitEvidence: false, evidenceRetries: 2 } });
 
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
-      mockParseEvidenceRecords.mockReturnValueOnce([]);
+      mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
       mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
 
       const node = createEvidenceNode(executor);
@@ -888,7 +935,7 @@ describe('createEvidenceNode', () => {
 
     it('should log ERROR level warnings when retries are exhausted', async () => {
       for (let i = 0; i < 3; i++) {
-        mockParseEvidenceRecords.mockReturnValueOnce([]);
+        mockParseEvidenceRecords.mockReturnValueOnce({ records: [] });
         mockValidateEvidence.mockResolvedValueOnce({ valid: false, errors: validationErrors });
       }
 

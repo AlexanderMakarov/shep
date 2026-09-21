@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Plus, Trash2, Layers } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -85,6 +86,8 @@ export function EpicPanel({ projectId, epics, onEpicsChange, className }: EpicPa
       const result = await deleteEpic(epicId);
       if (!result.error) {
         onEpicsChange?.(epics.filter((e) => e.id !== epicId));
+      } else {
+        toast.error(result.error);
       }
     },
     [epics, onEpicsChange]
@@ -152,6 +155,7 @@ export function EpicPanel({ projectId, epics, onEpicsChange, className }: EpicPa
                 size="sm"
                 className="text-destructive h-6 px-2 text-[10px]"
                 onClick={() => handleDelete(epic.id)}
+                data-testid={`delete-epic-${epic.id}`}
               >
                 <Trash2 className="h-3 w-3" />
               </Button>

@@ -41,14 +41,30 @@ const TabsTrigger = React.forwardRef<
 ));
 TabsTrigger.displayName = TabsPrimitive.Trigger.displayName;
 
+/**
+ * Radix keeps the panel element mounted but drops its CHILDREN whenever the
+ * tab is inactive, which destroys anything the panel was holding — a chat
+ * draft, its attachments, a model override. `forceMount` opts a panel out of
+ * that, at the cost of Radix no longer setting the `hidden` attribute: an
+ * inactive force-mounted panel would otherwise stay visible AND stay in the
+ * a11y tree and the tab order.
+ *
+ * So the primitive pairs the opt-in with `display: none` while inactive,
+ * which hides it from sight and from assistive tech in one step. Panels that
+ * do not opt in are completely unaffected.
+ *
+ *     <TabsContent value="chat" forceMount>…</TabsContent>
+ */
 const TabsContent = React.forwardRef<
   React.ComponentRef<typeof TabsPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
+>(({ className, forceMount, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
+    forceMount={forceMount}
     className={cn(
       'ring-offset-background focus-visible:ring-ring mt-2 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+      forceMount && 'data-[state=inactive]:hidden',
       className
     )}
     {...props}

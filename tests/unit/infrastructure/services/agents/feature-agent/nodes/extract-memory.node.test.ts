@@ -94,6 +94,39 @@ describe('extract_memory node', () => {
     expect(result.messages?.[0]).toContain('No memory entries');
   });
 
+  // ── "agent found nothing" must not look like "we could not read it" ──────
+  it('reports an explicitly empty list as a plain no-entries outcome', async () => {
+    vi.mocked(executor.execute).mockResolvedValue({
+      result: 'Nothing durable.\n```json\n[]\n```',
+    } as never);
+    const node = createExtractMemoryNode({ executor, recordProjectMemory });
+
+    const result = await node(createState());
+
+    expect(result.messages?.[0]).toContain('No memory entries extracted');
+    expect(result.messages?.[0]).not.toContain('unreadable');
+  });
+
+  it('flags unreadable agent output distinctly from an empty list', async () => {
+    vi.mocked(executor.execute).mockResolvedValue({ result: 'no json here' } as never);
+    const node = createExtractMemoryNode({ executor, recordProjectMemory });
+
+    const result = await node(createState());
+
+    expect(result.messages?.[0]).toContain('unreadable');
+  });
+
+  it('still reads entries from an uppercase ```JSON fence', async () => {
+    vi.mocked(executor.execute).mockResolvedValue({
+      result: '```JSON\n[{"category":"Library","entryKey":"k","content":"c"}]\n```',
+    } as never);
+    const node = createExtractMemoryNode({ executor, recordProjectMemory });
+
+    await node(createState());
+
+    expect(recordProjectMemory.execute).toHaveBeenCalled();
+  });
+
   it('swallows executor errors without throwing', async () => {
     vi.mocked(executor.execute).mockRejectedValue(new Error('agent boom'));
     const node = createExtractMemoryNode({ executor, recordProjectMemory });

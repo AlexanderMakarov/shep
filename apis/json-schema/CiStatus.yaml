@@ -5,4 +5,5 @@ enum:
   - Pending
   - Success
   - Failure
+  - Indeterminate
 description: CI pipeline status

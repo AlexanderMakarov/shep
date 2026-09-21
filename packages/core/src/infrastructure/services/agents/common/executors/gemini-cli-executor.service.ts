@@ -20,10 +20,62 @@ import type {
   AgentExecutionStreamEvent,
 } from '../../../../../application/ports/output/agents/agent-executor.interface.js';
 import type { SpawnFunction } from '../types.js';
-import { getCurrentPhase, getLogPrefix } from '../../feature-agent/log-context.js';
+import { EventChannel } from '../../streaming/event-channel.js';
+import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
+import {
+  buildSpawnOptions,
+  classifySpawnError,
+  createLineAccumulator,
+  createStderrTail,
+  signalTerminationMessage,
+  terminateWithEscalation,
+  writePromptToStdin,
+} from './process-stream.js';
+import {
+  validateSecurityConstraints,
+  type ExecutorCapabilities,
+} from './security-constraint-validator.js';
+
+/** Binary name on PATH. */
+const GEMINI_BINARY = 'gemini';
+
+/** Shown when the binary is missing, so the user knows how to fix it. */
+const GEMINI_NOT_FOUND_MESSAGE =
+  'Gemini CLI ("gemini") not found. Please install it: https://github.com/google-gemini/gemini-cli';
+
+/** Environment variable carrying the API key for token auth. */
+const GEMINI_API_KEY_ENV = 'GEMINI_API_KEY';
+
+/**
+ * Recent gemini-cli versions exit (code 55) in headless mode when the cwd is
+ * not on the user's trusted-folders list, even with -y — the trust check
+ * overrides YOLO. shep always runs gemini against worktrees it just created.
+ */
+const GEMINI_TRUST_WORKSPACE_ENV = 'GEMINI_CLI_TRUST_WORKSPACE';
+
+/** Longest stderr summary carried into an error message. */
+const STDERR_SUMMARY_CHARS = 300;
+
+/** Number of stderr lines summarised in an error message. */
+const STDERR_SUMMARY_LINES = 3;
 
 /** Features supported by Gemini CLI */
 const SUPPORTED_FEATURES = new Set<string>(['session-resume', 'streaming', 'tool-scoping']);
+
+/** Gemini stream-json event types. */
+const EVENT_TYPE_INIT = 'init';
+const EVENT_TYPE_MESSAGE = 'message';
+const EVENT_TYPE_TOOL_USE = 'tool_use';
+const EVENT_TYPE_TOOL_RESULT = 'tool_result';
+const EVENT_TYPE_RESULT = 'result';
+const EVENT_TYPE_ERROR = 'error';
+
+/** Render a value that should have been text but may be a structured payload. */
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  return JSON.stringify(value);
+}
 
 /**
  * Executor service for Gemini CLI agent.
@@ -32,120 +84,134 @@ const SUPPORTED_FEATURES = new Set<string>(['session-resume', 'streaming', 'tool
 export class GeminiCliExecutorService implements IAgentExecutor {
   readonly agentType: AgentType = 'gemini-cli' as AgentType;
 
-  /** When true, suppresses debug logging (set per-call via options.silent) */
-  private silent = false;
-
   constructor(
     private readonly spawn: SpawnFunction,
     private readonly authConfig?: AgentConfig
   ) {}
 
-  /** Debug logging — writes to stdout so it appears in the worker log file */
-  private log(message: string): void {
-    if (this.silent) return;
-    const ts = new Date().toISOString();
-    process.stdout.write(`[${ts}] ${getCurrentPhase()}${getLogPrefix()}${message}\n`);
-  }
+  /** Executor capabilities for security constraint validation */
+  private static readonly CAPABILITIES: ExecutorCapabilities = {
+    requiresPermissiveMode: true, // uses -y (YOLO: approves every tool call)
+    executorName: 'gemini-cli',
+  };
 
   supportsFeature(feature: AgentFeature): boolean {
     return SUPPORTED_FEATURES.has(feature as string);
   }
 
   async execute(prompt: string, options?: AgentExecutionOptions): Promise<AgentExecutionResult> {
-    this.silent = options?.silent ?? false;
-    const args = this.buildArgs(prompt, options, 'json');
-    const spawnOpts = this.buildSpawnOptions(options);
-
-    this.log(
-      `Spawning: gemini ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
-    );
-    this.log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
-
-    const proc = this.spawn('gemini', args, spawnOpts);
-    this.log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
-    this.log(`Prompt length: ${prompt.length} chars (piped via stdin)`);
-
-    // Pipe the prompt via stdin to avoid ENAMETOOLONG on Windows.
-    if (proc.stdin) {
-      proc.stdin.write(prompt);
-      proc.stdin.end();
-    }
+    const log = this.startRun(options);
+    const proc = this.spawnGemini(prompt, options, 'json', log);
 
     return new Promise<AgentExecutionResult>((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
+      const stderr = createStderrTail();
+      const stdoutLines: string[] = [];
       let timedOut = false;
+      let settled = false;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let cancelEscalation: (() => void) | undefined;
+
+      const settle = (outcome: () => void): void => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        cancelEscalation?.();
+        outcome();
+      };
 
       if (options?.timeout) {
         timeoutId = setTimeout(() => {
           timedOut = true;
-          proc.kill();
+          log(`Timeout after ${options.timeout}ms — terminating agent`);
+          cancelEscalation = terminateWithEscalation(proc);
         }, options.timeout);
       }
 
-      proc.stdout?.on('data', (chunk: Buffer | string) => {
-        stdout += chunk.toString();
+      // A single JSON document, read through the decoder so a multi-byte
+      // character straddling two reads is reassembled rather than corrupted.
+      // JSON never contains a raw newline inside a string, so rejoining the
+      // lines reproduces the document exactly as far as a parser cares.
+      const accumulator = createLineAccumulator((line) => stdoutLines.push(line), {
+        onOverflow: (dropped) => log(`[warn] discarded ${dropped} bytes of un-terminated output`),
       });
 
+      proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
+
       proc.stderr?.on('data', (chunk: Buffer | string) => {
-        const data = chunk.toString();
-        stderr += data;
-        this.log(`stderr: ${data.trimEnd()}`);
+        stderr.push(chunk);
+        log(`stderr: ${chunk.toString().trimEnd()}`);
       });
 
       proc.on('error', (error: Error & { code?: string }) => {
-        this.log(`Process error event: ${error.message}`);
-        if (timeoutId) clearTimeout(timeoutId);
-        if (error.code === 'ENOENT') {
-          reject(
-            new Error(
-              'Gemini CLI ("gemini") not found. Please install it: https://github.com/google-gemini/gemini-cli'
-            )
-          );
-        } else {
-          reject(error);
-        }
+        log(`Process error event: ${error.message}`);
+        settle(() => reject(classifySpawnError(error, GEMINI_NOT_FOUND_MESSAGE)));
       });
 
-      proc.on('close', (code: number | null) => {
-        this.log(`Process closed with code ${code}, stdout=${stdout.length} chars`);
-        if (timeoutId) clearTimeout(timeoutId);
+      proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        accumulator.flush();
+        const stdout = stdoutLines.join('\n');
+        log(`Process closed with code ${code}, stdout=${stdout.length} chars`);
 
-        if (timedOut) {
-          reject(new Error('Agent execution timed out'));
-          return;
-        }
+        settle(() => {
+          if (timedOut) {
+            reject(new Error('Agent execution timed out'));
+            return;
+          }
 
-        if (code !== 0 && code !== null) {
-          const message = stderr.trim()
-            ? `Process exited with code ${code}: ${stderr.trim()}`
-            : `Process exited with code ${code}`;
-          reject(new Error(message));
-          return;
-        }
+          if (code !== 0 && code !== null) {
+            const detail = stderr.text().trim();
+            reject(
+              new Error(
+                detail
+                  ? `Process exited with code ${code}: ${detail}`
+                  : `Process exited with code ${code}`
+              )
+            );
+            return;
+          }
 
-        // Gemini CLI may exit 0 despite fatal API errors (e.g. 429 rate limits).
-        // Check stderr for known fatal patterns before trusting the output.
-        const fatalError = this.detectFatalStderrError(stderr);
-        if (fatalError) {
-          reject(new Error(fatalError));
-          return;
-        }
+          const parsed = parseJsonDocument(stdout);
+          const response = typeof parsed?.response === 'string' ? parsed.response : '';
 
-        try {
-          const parsed = JSON.parse(stdout);
-          const result: AgentExecutionResult = { result: parsed.response ?? '' };
+          // A complete answer IS the run's outcome. stderr noise about an API
+          // call the CLI retried (or recovered from) must not discard work the
+          // agent already finished — that is how successful runs were lost.
+          if (parsed && response) {
+            const result: AgentExecutionResult = { result: response };
+            if (typeof parsed.session_id === 'string') result.sessionId = parsed.session_id;
+            const usage = extractUsage(parsed);
+            if (usage) result.usage = usage;
+            resolve(result);
+            return;
+          }
 
-          if (parsed.session_id) result.sessionId = parsed.session_id;
+          // No answer: now stderr is the only diagnosis available.
+          const diagnosis = diagnoseStderr(stderr.text());
+          if (diagnosis) {
+            reject(new Error(diagnosis));
+            return;
+          }
 
-          const usage = this.extractUsage(parsed);
+          if (code === null) {
+            reject(new Error(signalTerminationMessage(signal, stderr.text())));
+            return;
+          }
+
+          if (!parsed) {
+            reject(
+              new Error(
+                `Failed to parse Gemini JSON output: ${stdout.slice(0, STDERR_SUMMARY_CHARS)}`
+              )
+            );
+            return;
+          }
+
+          const result: AgentExecutionResult = { result: response };
+          if (typeof parsed.session_id === 'string') result.sessionId = parsed.session_id;
+          const usage = extractUsage(parsed);
           if (usage) result.usage = usage;
-
           resolve(result);
-        } catch {
-          reject(new Error(`Failed to parse Gemini JSON output: ${stdout.slice(0, 200)}`));
-        }
+        });
       });
     });
   }
@@ -154,217 +220,137 @@ export class GeminiCliExecutorService implements IAgentExecutor {
     prompt: string,
     options?: AgentExecutionOptions
   ): AsyncIterable<AgentExecutionStreamEvent> {
-    this.silent = options?.silent ?? false;
-    const args = this.buildArgs(prompt, options, 'stream-json');
-    const spawnOpts = this.buildSpawnOptions(options);
-    const proc = this.spawn('gemini', args, spawnOpts);
+    const log = this.startRun(options);
+    const proc = this.spawnGemini(prompt, options, 'stream-json', log);
 
-    // Pipe the prompt via stdin to avoid ENAMETOOLONG on Windows.
-    if (proc.stdin) {
-      proc.stdin.write(prompt);
-      proc.stdin.end();
-    }
-
-    let lineBuffer = '';
-    let stderr = '';
+    const channel = new EventChannel<AgentExecutionStreamEvent>();
+    const stderr = createStderrTail();
+    let sawResult = false;
+    let processClosed = false;
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const queue: (AgentExecutionStreamEvent | null)[] = [];
-    let resolve: (() => void) | null = null;
-    let error: Error | null = null;
-
-    function enqueue(event: AgentExecutionStreamEvent | null) {
-      queue.push(event);
-      if (resolve) {
-        resolve();
-        resolve = null;
-      }
-    }
-
-    function waitForItem(): Promise<void> {
-      if (queue.length > 0) return Promise.resolve();
-      return new Promise<void>((r) => {
-        resolve = r;
-      });
-    }
 
     if (options?.timeout) {
       timeoutId = setTimeout(() => {
         timedOut = true;
-        proc.kill();
-        enqueue({ type: 'error', content: 'Agent execution timed out', timestamp: new Date() });
-        enqueue(null);
+        log(`Timeout after ${options.timeout}ms — terminating agent`);
+        terminateWithEscalation(proc);
+        channel.push({
+          type: 'error',
+          content: 'Agent execution timed out',
+          timestamp: new Date(),
+        });
+        channel.close();
       }, options.timeout);
     }
 
-    proc.stdout?.on('data', (chunk: Buffer | string) => {
-      lineBuffer += chunk.toString();
-      const lines = lineBuffer.split('\n');
-      lineBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const event = this.parseStreamEvent(trimmed);
-        if (event) enqueue(event);
-      }
+    const accumulator = createLineAccumulator((line) => {
+      const event = parseStreamEvent(line);
+      if (!event) return;
+      if (event.type === 'result') sawResult = true;
+      channel.push(event);
     });
 
-    proc.stderr?.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
+    proc.stdout?.on('data', (chunk: Buffer | string) => accumulator.push(chunk));
+    proc.stderr?.on('data', (chunk: Buffer | string) => stderr.push(chunk));
 
-    proc.on('error', (err: Error) => {
+    proc.on('error', (error: Error & { code?: string }) => {
+      processClosed = true;
       if (timeoutId) clearTimeout(timeoutId);
-      error = err;
-      enqueue(null);
+      channel.push({
+        type: 'error',
+        content: classifySpawnError(error, GEMINI_NOT_FOUND_MESSAGE).message,
+        timestamp: new Date(),
+      });
+      channel.close();
     });
 
-    proc.on('close', (code: number | null) => {
+    proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      processClosed = true;
       if (timeoutId) clearTimeout(timeoutId);
-      if (timedOut) return; // already handled by timeout callback
+      if (timedOut) return; // already reported by the timeout callback
 
-      if (lineBuffer.trim()) {
-        const event = this.parseStreamEvent(lineBuffer.trim());
-        if (event) enqueue(event);
-      }
+      accumulator.flush();
+
       if (code !== 0 && code !== null) {
-        const msg = stderr.trim()
-          ? `Process exited with code ${code}: ${stderr.trim()}`
-          : `Process exited with code ${code}`;
-        enqueue({ type: 'error', content: msg, timestamp: new Date() });
-      } else {
-        // Gemini CLI may exit 0 despite fatal API errors (e.g. 429 rate limits)
-        const fatalError = this.detectFatalStderrError(stderr);
-        if (fatalError) {
-          enqueue({ type: 'error', content: fatalError, timestamp: new Date() });
+        const detail = stderr.text().trim();
+        channel.push({
+          type: 'error',
+          content: detail
+            ? `Process exited with code ${code}: ${detail}`
+            : `Process exited with code ${code}`,
+          timestamp: new Date(),
+        });
+      } else if (!sawResult) {
+        // Same rule as execute(): stderr only gets to fail the run when the
+        // agent produced no result of its own.
+        const diagnosis = diagnoseStderr(stderr.text());
+        if (diagnosis) {
+          channel.push({ type: 'error', content: diagnosis, timestamp: new Date() });
+        } else if (code === null) {
+          channel.push({
+            type: 'error',
+            content: signalTerminationMessage(signal, stderr.text()),
+            timestamp: new Date(),
+          });
         }
       }
-      enqueue(null);
+      channel.close();
     });
 
-    while (true) {
-      await waitForItem();
-      const item = queue.shift();
-      if (item === null || item === undefined) {
-        if (error !== null) {
-          yield {
-            type: 'error' as const,
-            content: (error as Error).message,
-            timestamp: new Date(),
-          };
-        }
-        return;
-      }
-      yield item;
-    }
-  }
-
-  /**
-   * Parse a single stream-JSON line into an AgentExecutionStreamEvent.
-   * Returns null for events that should be skipped (init, user messages, unknown types).
-   */
-  private parseStreamEvent(line: string): AgentExecutionStreamEvent | null {
     try {
-      const parsed = JSON.parse(line) as Record<string, unknown>;
-      const type = parsed.type as string;
-
-      switch (type) {
-        case 'init':
-          return null;
-        case 'message':
-          if (parsed.role === 'user') return null;
-          if (parsed.role === 'assistant' && parsed.delta) {
-            return {
-              type: 'progress',
-              content: (parsed.content as string) ?? '',
-              timestamp: new Date(),
-            };
-          }
-          return null;
-        case 'tool_use':
-          return {
-            type: 'progress',
-            content: `[tool_use: ${parsed.tool_name}]`,
-            timestamp: new Date(),
-          };
-        case 'tool_result':
-          return {
-            type: 'progress',
-            content: `[tool_result: ${parsed.status}]`,
-            timestamp: new Date(),
-          };
-        case 'result':
-          return {
-            type: 'result',
-            content: (parsed.response as string) ?? '',
-            timestamp: new Date(),
-          };
-        case 'error':
-          return {
-            type: 'error',
-            content: (parsed.message as string) ?? '',
-            timestamp: new Date(),
-          };
-        default:
-          return null;
-      }
-    } catch {
-      // Non-JSON line — emit as raw progress
-      return { type: 'progress', content: line, timestamp: new Date() };
+      yield* channel;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      // A consumer that breaks out of the loop would otherwise leave the agent
+      // running until it finished on its own.
+      if (!processClosed) terminateWithEscalation(proc);
     }
   }
 
-  /**
-   * Patterns in stderr that indicate a fatal API error even when exit code is 0.
-   * Gemini CLI sometimes exits 0 after exhausting retries on 429/5xx errors.
-   */
-  private static readonly FATAL_STDERR_PATTERNS = [
-    /RESOURCE_EXHAUSTED/i,
-    /failed with status 4\d{2}\. Retrying/i,
-    /failed with status 5\d{2}\. Retrying/i,
-  ];
-
-  /**
-   * Check stderr for patterns indicating fatal API errors.
-   * Returns an error message if fatal patterns are found, null otherwise.
-   */
-  private detectFatalStderrError(stderr: string): string | null {
-    for (const pattern of GeminiCliExecutorService.FATAL_STDERR_PATTERNS) {
-      if (pattern.test(stderr)) {
-        // Extract a concise summary from the noisy stderr
-        const lines = stderr.split('\n').filter((l) => l.trim());
-        const summary = lines.slice(0, 3).join(' | ').slice(0, 300);
-        return `Gemini CLI exited 0 but fatal error detected in stderr: ${summary}`;
-      }
-    }
-    return null;
+  /** Validate policy and build the per-call logger shared by both entry points. */
+  private startRun(options?: AgentExecutionOptions): ExecutorLogger {
+    const log = createExecutorLogger(options?.silent);
+    const warning = validateSecurityConstraints(
+      options?.securityConstraints,
+      GeminiCliExecutorService.CAPABILITIES
+    );
+    if (warning) log(warning);
+    return log;
   }
 
-  /**
-   * Extract token usage from Gemini stats structure.
-   * Returns undefined if stats are missing (does not throw).
-   */
-  private extractUsage(
-    parsed: Record<string, unknown>
-  ): { inputTokens: number; outputTokens: number } | undefined {
-    const stats = parsed.stats as Record<string, unknown> | undefined;
-    if (!stats?.models) return undefined;
+  private spawnGemini(
+    prompt: string,
+    options: AgentExecutionOptions | undefined,
+    outputFormat: string,
+    log: ExecutorLogger
+  ): ReturnType<SpawnFunction> {
+    const args = this.buildArgs(options, outputFormat, log);
+    const spawnOpts = this.buildSpawnOptions(options);
 
-    const models = stats.models as Record<string, Record<string, unknown>>;
-    const firstModel = Object.values(models)[0];
-    if (!firstModel?.tokens) return undefined;
+    log(
+      `Spawning: ${GEMINI_BINARY} ${args.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(' ')}`
+    );
+    log(`Spawn cwd: ${(spawnOpts.cwd as string) ?? '(inherited)'}`);
 
-    const tokens = firstModel.tokens as Record<string, number>;
-    if (tokens.prompt === undefined || tokens.candidates === undefined) return undefined;
+    const proc = this.spawn(GEMINI_BINARY, args, spawnOpts);
+    log(`Subprocess PID: ${proc.pid ?? 'undefined (spawn may have failed)'}`);
+    log(`Prompt length: ${prompt.length} chars (piped via stdin)`);
 
-    return { inputTokens: tokens.prompt, outputTokens: tokens.candidates };
+    // Pipe the prompt via stdin to avoid ENAMETOOLONG on Windows. The error
+    // handler matters: a CLI that rejects its flags exits before reading, and
+    // the resulting EPIPE would otherwise take the whole worker down.
+    writePromptToStdin(proc, prompt, (error) =>
+      log(`stdin closed before the prompt was written (${error.code ?? error.message})`)
+    );
+
+    return proc;
   }
 
   private buildArgs(
-    _prompt: string,
-    options?: AgentExecutionOptions,
-    outputFormat = 'json'
+    options: AgentExecutionOptions | undefined,
+    outputFormat: string,
+    log: ExecutorLogger
   ): string[] {
     // Prompt is piped via stdin — not passed as a CLI argument — to avoid
     // ENAMETOOLONG on Windows when prompts exceed the ~32 KB arg-length limit.
@@ -378,45 +364,133 @@ export class GeminiCliExecutorService implements IAgentExecutor {
 
     // Unsupported options silently omitted: maxTurns, disableMcp
     if (options?.systemPrompt) {
-      this.log('systemPrompt option is not supported by Gemini CLI — ignoring');
+      log('systemPrompt option is not supported by Gemini CLI — ignoring');
     }
     if (options?.outputSchema) {
-      this.log('outputSchema option is not supported by Gemini CLI — ignoring');
+      log('outputSchema option is not supported by Gemini CLI — ignoring');
     }
 
     return args;
   }
 
   private buildSpawnOptions(options?: AgentExecutionOptions): Record<string, unknown> {
-    const spawnOpts: Record<string, unknown> = {};
-    if (options?.cwd) spawnOpts.cwd = options.cwd;
-
-    // Explicitly pipe stdio so streams are available even when parent disconnects
-    spawnOpts.stdio = ['pipe', 'pipe', 'pipe'];
-
-    // On Windows: windowsHide=true to prevent blank console windows.
-    // Gemini CLI is a native binary, so shell=true is NOT needed.
-    if (process.platform === 'win32') {
-      spawnOpts.windowsHide = true;
-    }
-
-    // Strip CLAUDECODE env var to prevent "nested session" error when shep
-    // is invoked from within a Claude Code session.
-    const { CLAUDECODE: _, ...cleanEnv } = process.env;
-
-    // Auto-trust the workspace. Recent gemini-cli versions exit (code 55) in
-    // headless mode when the cwd isn't on the user's trusted-folders list,
-    // even with -y (YOLO) — the trust check overrides YOLO. shep always runs
-    // gemini against worktrees we just created, so the trust prompt is moot.
-    const baseEnv = { ...cleanEnv, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
+    const extraEnv: Record<string, string> = { [GEMINI_TRUST_WORKSPACE_ENV]: 'true' };
 
     // Inject GEMINI_API_KEY when using token auth
     if (this.authConfig?.authMethod === 'token' && this.authConfig.token) {
-      spawnOpts.env = { ...baseEnv, GEMINI_API_KEY: this.authConfig.token };
-    } else {
-      spawnOpts.env = baseEnv;
+      extraEnv[GEMINI_API_KEY_ENV] = this.authConfig.token;
     }
 
-    return spawnOpts;
+    return buildSpawnOptions({ cwd: options?.cwd, extraEnv });
   }
+}
+
+/** Parse a whole JSON document, or null when it is not valid JSON. */
+function parseJsonDocument(text: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed === null || typeof parsed !== 'object') return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a single stream-JSON line into an AgentExecutionStreamEvent.
+ * Returns null for events that should be skipped (init, user messages, unknown types).
+ */
+function parseStreamEvent(line: string): AgentExecutionStreamEvent | null {
+  const parsed = parseJsonDocument(line);
+  if (!parsed) {
+    // Non-JSON line — emit as raw progress
+    return { type: 'progress', content: line, timestamp: new Date() };
+  }
+
+  switch (parsed.type as string) {
+    case EVENT_TYPE_INIT:
+      return null;
+    case EVENT_TYPE_MESSAGE:
+      if (parsed.role === 'user') return null;
+      if (parsed.role === 'assistant' && parsed.delta) {
+        return { type: 'progress', content: asText(parsed.content), timestamp: new Date() };
+      }
+      return null;
+    case EVENT_TYPE_TOOL_USE:
+      return {
+        type: 'progress',
+        content: `[tool_use: ${asText(parsed.tool_name)}]`,
+        timestamp: new Date(),
+      };
+    case EVENT_TYPE_TOOL_RESULT:
+      return {
+        type: 'progress',
+        content: `[tool_result: ${asText(parsed.status)}]`,
+        timestamp: new Date(),
+      };
+    case EVENT_TYPE_RESULT:
+      return { type: 'result', content: asText(parsed.response), timestamp: new Date() };
+    case EVENT_TYPE_ERROR:
+      // Gemini puts the detail in `error` on some paths and `message` on
+      // others; reading only one produced an error event with empty content.
+      return {
+        type: 'error',
+        content: asText(parsed.message ?? parsed.error),
+        timestamp: new Date(),
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Patterns in stderr that explain why a run produced nothing.
+ *
+ * These are *diagnostic*, not fail-closed: "Attempt N failed with status 429.
+ * Retrying" is printed when the CLI retries, and a retry that then succeeds
+ * exits 0 with a full response. Applying these to a run that produced an answer
+ * rejected completed work, so they are consulted only when there is no answer.
+ */
+const DIAGNOSTIC_STDERR_PATTERNS = [
+  /RESOURCE_EXHAUSTED/i,
+  /quota.*exceeded/i,
+  /failed with status \d{3}/i,
+];
+
+/**
+ * Summarise stderr when it explains an empty run.
+ * Returns null when stderr carries nothing recognisable.
+ */
+function diagnoseStderr(stderr: string): string | null {
+  for (const pattern of DIAGNOSTIC_STDERR_PATTERNS) {
+    if (pattern.test(stderr)) {
+      const lines = stderr.split('\n').filter((l) => l.trim());
+      const summary = lines
+        .slice(0, STDERR_SUMMARY_LINES)
+        .join(' | ')
+        .slice(0, STDERR_SUMMARY_CHARS);
+      return `Gemini CLI exited without a result; stderr reports a fatal error: ${summary}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract token usage from Gemini stats structure.
+ * Returns undefined if stats are missing (does not throw).
+ */
+function extractUsage(
+  parsed: Record<string, unknown>
+): { inputTokens: number; outputTokens: number } | undefined {
+  const stats = parsed.stats as Record<string, unknown> | undefined;
+  if (!stats?.models) return undefined;
+
+  const models = stats.models as Record<string, Record<string, unknown>>;
+  const firstModel = Object.values(models)[0];
+  if (!firstModel?.tokens) return undefined;
+
+  const tokens = firstModel.tokens as Record<string, number>;
+  if (tokens.prompt === undefined || tokens.candidates === undefined) return undefined;
+
+  return { inputTokens: tokens.prompt, outputTokens: tokens.candidates };
 }

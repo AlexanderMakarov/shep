@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
 import { TimeoutSlider } from './timeout-slider';
 
@@ -17,15 +17,18 @@ function TimeoutSliderDemo({
   label?: string;
   defaultSeconds?: number;
 }) {
+  const id = useId();
   const [value, setValue] = useState(String(defaultSeconds));
   return (
     <div style={{ maxWidth: 500 }}>
       <div
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}
       >
-        <span style={{ fontSize: 14 }}>{label}</span>
+        <label id={`${id}-label`} style={{ fontSize: 14 }}>
+          {label}
+        </label>
         <TimeoutSlider
-          id="demo-slider"
+          id={id}
           testId="demo-slider-input"
           value={value}
           onChange={setValue}

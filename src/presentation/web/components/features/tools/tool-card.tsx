@@ -18,6 +18,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils';
 import { ToolDetailDrawer } from './tool-detail-drawer';
 import type { ToolItem } from '@shepai/core/application/use-cases/tools/list-tools.use-case';
+import { listAgentDescriptors } from '@shepai/core/domain/shared/agent-catalog';
+import { getAgentTypeIcon } from '@/components/common/feature-node/agent-type-icons';
 
 export interface ToolCardProps {
   tool: ToolItem;
@@ -36,6 +38,10 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [autoStartInstall, setAutoStartInstall] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [imageFailed, setImageFailed] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const agent = listAgentDescriptors().find((entry) => entry.toolId === tool.id);
+  const AgentIcon = agent ? getAgentTypeIcon(agent.type) : null;
 
   const isInstalled = tool.status.status === 'available';
   const isError = tool.status.status === 'error';
@@ -43,8 +49,17 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
 
   function handleLaunch(e: React.MouseEvent) {
     e.stopPropagation();
+    setLaunchError(null);
     startTransition(async () => {
-      await fetch(`/api/tools/${tool.id}/launch`, { method: 'POST' });
+      try {
+        const response = await fetch(`/api/tools/${tool.id}/launch`, { method: 'POST' });
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(result.error ?? `Could not launch ${tool.name}. Try again.`);
+        }
+      } catch (error) {
+        setLaunchError(error instanceof Error ? error.message : `Could not launch ${tool.name}.`);
+      }
     });
   }
 
@@ -63,30 +78,38 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
     <>
       <div
         data-testid="tool-card"
-        onClick={handleCardClick}
         className={cn(
-          'bg-card group flex h-30 w-full cursor-pointer flex-col rounded-lg border p-3 transition-shadow hover:shadow-md',
+          'bg-card group relative flex min-h-30 w-full flex-col rounded-lg border p-3 transition-shadow hover:shadow-md',
           className
         )}
       >
         {/* Top row: icon + name left, tag badges right */}
         <div className="mb-2 flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            {tool.iconUrl ? (
+            {AgentIcon ? (
+              <AgentIcon aria-hidden className="size-5" />
+            ) : tool.iconUrl && !imageFailed ? (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={tool.iconUrl}
                 alt=""
                 width={20}
                 height={20}
+                onError={() => setImageFailed(true)}
                 className="shrink-0 dark:invert"
               />
             ) : (
               <Package className="text-muted-foreground h-5 w-5 shrink-0" />
             )}
-            <h3 data-testid="tool-card-name" className="truncate text-sm font-bold">
-              {tool.name}
-            </h3>
+            <h2 data-testid="tool-card-name" className="min-w-0 truncate text-sm font-bold">
+              <button
+                type="button"
+                onClick={handleCardClick}
+                className="focus-visible:after:ring-ring cursor-pointer text-start outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-offset-2"
+              >
+                {tool.name}
+              </button>
+            </h2>
           </div>
           <div data-testid="tool-card-tags" className="flex shrink-0 items-center gap-1">
             {tool.tags.map((tag) => {
@@ -95,7 +118,7 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
               return (
                 <span
                   key={tag}
-                  className="text-muted-foreground/70 inline-flex items-center gap-0.5 text-[9px]"
+                  className="text-muted-foreground inline-flex items-center gap-0.5 text-[10px]"
                 >
                   <TagIcon className="h-2.5 w-2.5" />
                   {config.label}
@@ -123,7 +146,7 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
                 {tool.status.errorMessage ?? 'Error'}
               </span>
             ) : isInstalled ? (
-              <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+              <span className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
                 <CheckCircle2 className="h-3 w-3" />
                 Installed
               </span>
@@ -150,7 +173,7 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-1">
+          <div className="relative z-10 flex items-center gap-1">
             {isInstalled && canLaunch ? (
               <Button
                 size="sm"
@@ -183,6 +206,11 @@ export function ToolCard({ tool, onRefresh, className }: ToolCardProps) {
             ) : null}
           </div>
         </div>
+        {launchError ? (
+          <p role="alert" className="text-destructive relative mt-2 text-xs">
+            {launchError}
+          </p>
+        ) : null}
       </div>
 
       <ToolDetailDrawer

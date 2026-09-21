@@ -227,6 +227,11 @@ export function FeatureDrawerClient({
   const [isRejecting, setIsRejecting] = useState(false);
   const isRejectingRef = useRef(false);
 
+  // ── Shared approve state ───────────────────────────────────────────────
+  // An approve is irreversible, so it must not be submittable twice.
+  const [isApproving, setIsApproving] = useState(false);
+  const isApprovingRef = useRef(false);
+
   // Reset chat input whenever the initialTab changes (lifecycle transition)
   const initialTab = view.type === 'feature' ? view.initialTab : undefined;
   useEffect(() => {
@@ -377,7 +382,9 @@ export function FeatureDrawerClient({
       attachments: RejectAttachment[] = [],
       onDone?: () => void
     ) => {
-      if (pinnedConfigSaving || !featureNode?.featureId) return;
+      if (pinnedConfigSaving || !featureNode?.featureId) {
+        return { ok: false, error: 'Feature is not ready to reject' };
+      }
       isRejectingRef.current = true;
       setIsRejecting(true);
       try {
@@ -393,8 +400,11 @@ export function FeatureDrawerClient({
           attachmentPaths
         );
         if (!result.rejected) {
-          toast.error(result.error ?? `Failed to reject ${label.toLowerCase()}`);
-          return;
+          const error = result.error ?? `Failed to reject ${label.toLowerCase()}`;
+          toast.error(error);
+          // Reported back so DrawerActionBar keeps the typed feedback and the
+          // uploaded attachments instead of clearing them into the void.
+          return { ok: false, error };
         }
         rejectSound.play();
         setChatInput('');
@@ -412,6 +422,11 @@ export function FeatureDrawerClient({
         );
         onClose();
         onDone?.();
+        return { ok: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to send feedback';
+        toast.error(message);
+        return { ok: false, error: message };
       } finally {
         isRejectingRef.current = false;
         setIsRejecting(false);
@@ -436,30 +451,48 @@ export function FeatureDrawerClient({
     [handleReject]
   );
 
+  /**
+   * Approving a gate is irreversible (it merges / resumes the agent), so it is
+   * guarded against double submission: the ref rejects a second call that lands
+   * before React has re-rendered, and `isApproving` disables the controls. Both
+   * are cleared in `finally`, so a failure leaves the button usable again.
+   */
   const handleSimpleApprove = useCallback(
     async (label: string) => {
-      if (pinnedConfigSaving || !featureNode?.featureId) return;
-      const result = await approveFeature(featureNode.featureId);
-      if (!result.approved) {
-        toast.error(result.error ?? `Failed to approve ${label.toLowerCase()}`);
-        return;
+      if (pinnedConfigSaving || isApprovingRef.current || !featureNode?.featureId) return;
+      isApprovingRef.current = true;
+      setIsApproving(true);
+      try {
+        const result = await approveFeature(featureNode.featureId);
+        if (!result.approved) {
+          toast.error(result.error ?? `Failed to approve ${label.toLowerCase()}`);
+          return;
+        }
+        setChatInput('');
+        toast.success(`${label} approved — agent resuming`);
+        // Optimistically update canvas node before SSE arrives (~500ms delay)
+        window.dispatchEvent(
+          new CustomEvent('shep:feature-approved', {
+            detail: { featureId: featureNode.featureId },
+          })
+        );
+        onClose();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : `Failed to approve ${label.toLowerCase()}`
+        );
+      } finally {
+        isApprovingRef.current = false;
+        setIsApproving(false);
       }
-      setChatInput('');
-      toast.success(`${label} approved — agent resuming`);
-      // Optimistically update canvas node before SSE arrives (~500ms delay)
-      window.dispatchEvent(
-        new CustomEvent('shep:feature-approved', {
-          detail: { featureId: featureNode.featureId },
-        })
-      );
-      onClose();
     },
     [featureNode, onClose, pinnedConfigSaving]
   );
 
   const handlePrdApprove = useCallback(
     async (_actionId: string) => {
-      if (pinnedConfigSaving || view.type !== 'feature' || !featureNode) return;
+      if (pinnedConfigSaving || isApprovingRef.current || view.type !== 'feature' || !featureNode)
+        return;
       let payload: PrdApprovalPayload | undefined;
       if (prdData) {
         const changedSelections: QuestionSelectionChange[] = [];
@@ -472,21 +505,30 @@ export function FeatureDrawerClient({
         }
         payload = { approved: true, changedSelections };
       }
-      const result = await approveFeature(featureNode.featureId, payload);
-      if (!result.approved) {
-        toast.error(result.error ?? 'Failed to approve requirements');
-        return;
+      isApprovingRef.current = true;
+      setIsApproving(true);
+      try {
+        const result = await approveFeature(featureNode.featureId, payload);
+        if (!result.approved) {
+          toast.error(result.error ?? 'Failed to approve requirements');
+          return;
+        }
+        setChatInput('');
+        toast.success('Requirements approved — agent resuming');
+        // Optimistically update canvas node before SSE arrives (~500ms delay)
+        window.dispatchEvent(
+          new CustomEvent('shep:feature-approved', {
+            detail: { featureId: featureNode.featureId },
+          })
+        );
+        setPrdSelections({});
+        onClose();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to approve requirements');
+      } finally {
+        isApprovingRef.current = false;
+        setIsApproving(false);
       }
-      setChatInput('');
-      toast.success('Requirements approved — agent resuming');
-      // Optimistically update canvas node before SSE arrives (~500ms delay)
-      window.dispatchEvent(
-        new CustomEvent('shep:feature-approved', {
-          detail: { featureId: featureNode.featureId },
-        })
-      );
-      setPrdSelections({});
-      onClose();
     },
     [view, featureNode, pinnedConfigSaving, prdData, prdSelections, onClose]
   );
@@ -560,17 +602,23 @@ export function FeatureDrawerClient({
     [pinnedConfigSaving]
   );
 
+  /**
+   * Mirrors the canvas handler in `use-control-center-state.ts`: report exactly
+   * what the action returned and let the real state arrive over SSE. The drawer
+   * used to toast success and then paint a red "Error" badge, which both lied to
+   * the user and disagreed with the canvas about the same feature.
+   */
   const handleStop = useCallback(async (featureId: string) => {
-    const result = await stopFeature(featureId);
-    if (!result.stopped) {
-      toast.error(result.error ?? 'Failed to stop');
-      return;
+    try {
+      const result = await stopFeature(featureId);
+      if (!result.stopped) {
+        toast.error(result.error ?? 'Failed to stop agent');
+        return;
+      }
+      toast.success('Agent stopped');
+    } catch {
+      toast.error('Failed to stop agent');
     }
-    toast.success('Agent stopped');
-    setView((prev) => {
-      if (prev.type !== 'feature') return prev;
-      return { ...prev, node: { ...prev.node, state: 'error' } };
-    });
   }, []);
 
   const handleStart = useCallback(
@@ -911,6 +959,7 @@ export function FeatureDrawerClient({
                           type="button"
                           disabled={isArchiving}
                           className={tbBtn}
+                          aria-label={t('featureDrawer.unarchiveFeature')}
                           data-testid="feature-drawer-unarchive"
                           onClick={() => handleUnarchive(featureNode.featureId)}
                         >
@@ -932,6 +981,7 @@ export function FeatureDrawerClient({
                           type="button"
                           disabled={isArchiving}
                           className={tbBtn}
+                          aria-label={t('featureDrawer.archiveFeature')}
                           data-testid="feature-drawer-archive"
                           onClick={() => handleArchive(featureNode.featureId)}
                         >
@@ -953,6 +1003,7 @@ export function FeatureDrawerClient({
                         type="button"
                         disabled={isDeleting}
                         className={cn(tbBtn, 'hover:bg-destructive/10 hover:text-destructive')}
+                        aria-label={t('featureDrawer.deleteFeature')}
                         data-testid="feature-drawer-delete"
                         onClick={() => setDeleteDialogOpen(true)}
                       >
@@ -1042,7 +1093,7 @@ export function FeatureDrawerClient({
               }
             : undefined
         }
-        continuationActionsDisabled={pinnedConfigSaving}
+        continuationActionsDisabled={pinnedConfigSaving || isApproving}
         onSubmitFeedback={handleSubmitFeedback}
         onPromote={handlePromote}
         onDiscardExploration={handleDiscardExploration}

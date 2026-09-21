@@ -16,6 +16,15 @@ function makeReport(overrides: Partial<DoctorReportWithSummary> = {}): DoctorRep
     overallStatus: DiagnosticStatus.Ok,
     totalDurationMs: 8,
     summary: { ok: 2, warn: 0, fail: 0 },
+    buildIdentity: {
+      cliVersion: '1.6.1',
+      nodeVersion: 'v22.5.1',
+      platform: 'linux',
+      osRelease: '6.8.0-generic',
+      arch: 'x64',
+      gitSha: '3f9a1c2',
+    },
+    buildIdentityLine: 'shep 1.6.1 · node v22.5.1 · linux 6.8.0-generic x64 · git 3f9a1c2',
     ...overrides,
   };
 }
@@ -109,5 +118,43 @@ describe('createDoctorCommand', () => {
     await cmd.parseAsync(['node', 'shep']);
 
     expect(process.exitCode).toBe(1);
+  });
+});
+
+describe('createDoctorCommand build identity header', () => {
+  it('prints the build identity line above the diagnostics table', async () => {
+    const lines: string[] = [];
+    const cmd = createDoctorCommand({
+      resolveUseCase: () => ({ execute: async () => makeReport() }),
+      out: (line) => lines.push(line),
+    });
+
+    await cmd.parseAsync(['node', 'shep']);
+
+    const output = lines.join('\n');
+    expect(output).toContain('shep 1.6.1');
+    expect(output).toContain('v22.5.1');
+    expect(output).toContain('linux');
+    expect(output).toContain('3f9a1c2');
+
+    const identityIndex = lines.findIndex((l) => l.includes('1.6.1'));
+    const tableIndex = lines.findIndex((l) => l.includes('node-version'));
+    expect(identityIndex).toBeGreaterThanOrEqual(0);
+    expect(identityIndex).toBeLessThan(tableIndex);
+  });
+
+  it('still renders the table when the build identity is unavailable', async () => {
+    const lines: string[] = [];
+    const cmd = createDoctorCommand({
+      resolveUseCase: () => ({
+        execute: async () => makeReport({ buildIdentity: null, buildIdentityLine: null }),
+      }),
+      out: (line) => lines.push(line),
+    });
+
+    await cmd.parseAsync(['node', 'shep']);
+
+    expect(lines.join('\n')).toContain('node-version');
+    expect(process.exitCode).toBe(0);
   });
 });

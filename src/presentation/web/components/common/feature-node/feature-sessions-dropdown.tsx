@@ -67,7 +67,7 @@ export function FeatureSessionsDropdown({
                 aria-label={t('featureNode.viewSessions')}
                 data-testid="feature-node-sessions-button"
                 className={cn(
-                  'nodrag relative flex h-5 cursor-pointer items-center gap-0.5 rounded px-0.5 text-[10px] transition-colors',
+                  'nodrag relative flex h-8 min-w-8 cursor-pointer items-center justify-center gap-0.5 rounded px-0.5 text-[10px] transition-colors',
                   'text-muted-foreground hover:text-foreground hover:bg-muted',
                   className
                 )}

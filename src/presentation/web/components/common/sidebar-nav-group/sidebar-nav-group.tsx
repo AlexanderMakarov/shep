@@ -61,8 +61,8 @@ export function SidebarNavGroup({ icon: Icon, label, items, href, badge }: Sideb
   const anyChildActive = items.some((c) => c.active);
   const [open, setOpen] = useState(anyChildActive);
   const navigateSound = useSoundAction('navigate');
-  const { state: sidebarState } = useSidebar();
-  const isIconMode = sidebarState === 'collapsed';
+  const { state: sidebarState, isMobile } = useSidebar();
+  const isIconMode = !isMobile && sidebarState === 'collapsed';
   const groupId = `sidebar-nav-group-${label.toLowerCase().replace(/\s+/g, '-')}`;
   const parentHref = href ?? items[0]?.href ?? '#';
 

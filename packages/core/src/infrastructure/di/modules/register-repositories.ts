@@ -23,6 +23,8 @@ import { SQLiteInteractiveMessageRepository } from '../../repositories/sqlite-in
 import { SQLiteWorkflowStepRepository } from '../../repositories/sqlite-workflow-step.repository.js';
 import type { IOperationLogRepository } from '../../../application/ports/output/repositories/operation-log.repository.interface.js';
 import { SQLiteOperationLogRepository } from '../../repositories/sqlite-operation-log.repository.js';
+import type { IRetentionRepository } from '../../../application/ports/output/repositories/retention.repository.interface.js';
+import { SQLiteRetentionRepository } from '../../repositories/sqlite-retention.repository.js';
 import type { IOperationLogEventBus } from '../../../application/ports/output/services/operation-log-event-bus.interface.js';
 
 // Project management (feature 087) repositories
@@ -194,6 +196,10 @@ export function registerRepositories(container: DependencyContainer): void {
       const bus = c.resolve<IOperationLogEventBus>('IOperationLogEventBus');
       return new SQLiteOperationLogRepository(database, bus);
     },
+  });
+
+  container.register<IRetentionRepository>('IRetentionRepository', {
+    useFactory: (c) => new SQLiteRetentionRepository(c.resolve<Database.Database>('Database')),
   });
 
   // ─── Project management (feature 087) repositories ──────────────────────

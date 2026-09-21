@@ -68,7 +68,11 @@ export function EstimateSettings({
             <div className="flex w-full items-center justify-between">
               <div>
                 <span className="text-xs font-medium">{opt.label}</span>
-                <span className="text-muted-foreground ml-2 text-[10px]">{opt.description}</span>
+                <span
+                  className={`ml-2 text-xs ${selected === opt.value ? 'text-primary-foreground' : 'text-muted-foreground'}`}
+                >
+                  {opt.description}
+                </span>
               </div>
               {selected === opt.value ? (
                 <Badge variant="secondary" className="text-[10px]">

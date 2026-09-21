@@ -20,6 +20,16 @@ export interface SecretPattern {
 export const HIGH_ENTROPY_MIN_LENGTH = 32;
 
 /**
+ * Name of the catch-all entropy pattern.
+ *
+ * Named because consumers have to be able to opt out of it by name: it
+ * matches ANY run of {@link HIGH_ENTROPY_MIN_LENGTH}+ `[A-Za-z0-9+/_-]`
+ * characters, which is right for opaque scanner output and wrong for human
+ * prose, where a hyphenated branch name reaches that length easily.
+ */
+export const HIGH_ENTROPY_PATTERN_NAME = 'high-entropy-blob';
+
+/**
  * The canonical pattern set. Each `regex` MUST be `g` (global) so the
  * redactor can run a single `replaceAll`-style pass.
  *
@@ -52,7 +62,19 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   },
   { name: 'jwt', regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   {
-    name: 'high-entropy-blob',
+    name: HIGH_ENTROPY_PATTERN_NAME,
     regex: new RegExp(`\\b[A-Za-z0-9+/_-]{${HIGH_ENTROPY_MIN_LENGTH},}={0,2}\\b`, 'g'),
   },
 ];
+
+/**
+ * The provider-specific patterns only — every entry except the high-entropy
+ * fallback.
+ *
+ * For callers that redact human-readable text (messaging egress) rather than
+ * opaque scanner payloads: a false positive there silently destroys the body
+ * of the message it was meant to protect.
+ */
+export const NAMED_SECRET_PATTERNS: readonly SecretPattern[] = SECRET_PATTERNS.filter(
+  (pattern) => pattern.name !== HIGH_ENTROPY_PATTERN_NAME
+);

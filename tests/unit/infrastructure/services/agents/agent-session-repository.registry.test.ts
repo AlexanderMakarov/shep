@@ -76,3 +76,33 @@ describe('AgentSessionRepositoryRegistry', () => {
     expect(repo).toBe(anotherMockRepo);
   });
 });
+
+describe('AgentSessionRepositoryRegistry — unregistered providers', () => {
+  beforeEach(async () => {
+    const { container } = await import('tsyringe');
+    (container.resolve as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  /**
+   * Only claude-code, cursor, gemini-cli, codex-cli and copilot-cli have a
+   * registered token. Every other AgentType used to make getRepository() throw
+   * an unresolved-token error rather than degrade to "this provider cannot
+   * list sessions", which is what the use case already knows how to handle.
+   */
+  it('should fall back to an unsupported stub instead of throwing', async () => {
+    const { container } = await import('tsyringe');
+    (container.resolve as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error('Attempted to resolve unregistered dependency token');
+    });
+
+    const registry = new AgentSessionRepositoryRegistry();
+
+    for (const agentType of Object.values(AgentType)) {
+      const repository = registry.getRepository(agentType);
+      expect(repository, `${agentType}`).toBeDefined();
+      expect(repository.isSupported(), `${agentType}`).toBe(false);
+      await expect(repository.list()).resolves.toEqual([]);
+      await expect(repository.findById('any')).resolves.toBeNull();
+    }
+  });
+});

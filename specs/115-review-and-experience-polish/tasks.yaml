@@ -1,0 +1,154 @@
+name: review-and-experience-polish
+phase: Implementation
+summary: Five dependency-ordered review, implementation and verification tasks.
+tasks:
+  - id: task-1
+    phaseId: phase-1
+    title: Audit and regression repairs
+    state: Done
+    dependencies: []
+    acceptanceCriteria:
+      - Applicable review surfaces recorded
+      - Verified failures repaired with regression coverage
+    tdd:
+      red:
+        - Reproduce source defects with targeted failing tests
+      green:
+        - Repair the demonstrated root cause
+      refactor:
+        - Review changes for duplication and unnecessary state; retain passing regression checks
+  - id: task-2
+    phaseId: phase-2
+    title: Application workspace discovery and presentation
+    state: Done
+    dependencies:
+      - task-1
+    acceptanceCriteria:
+      - Search and status filters work together
+      - Responsive presentation preserves all existing actions
+      - Working stories cover loaded, empty, loading and failed states
+    tdd:
+      red:
+        - Write tests for search, filters, loading announcements and import errors
+      green:
+        - Implement discovery and responsive workspace with the existing data flow
+      refactor:
+        - Review changes for duplication and unnecessary state; retain passing regression checks
+  - id: task-3
+    phaseId: phase-3
+    title: Browser verification and quality gates
+    state: Done
+    dependencies:
+      - task-2
+    acceptanceCriteria:
+      - Regression tests pass
+      - Browser evidence covers desktop, mobile, light and dark
+      - Quality gate outcomes and limitations recorded
+    tdd:
+      red:
+        - Exercise browser interactions and detect rendering or accessibility failures
+      green:
+        - Repair verified regressions and rerun affected checks
+      refactor:
+        - Review changes for duplication and unnecessary state; retain passing regression checks
+  - id: task-4
+    phaseId: phase-4
+    title: Close remaining merge, dependency and browser coverage gaps
+    state: Done
+    dependencies:
+      - task-3
+    acceptanceCriteria:
+      - Remote PR completion is verified before branch and worktree cleanup
+      - No expected-failure test remains without a resolved behavioral contract
+      - Dependency path traversal regressions are prevented by tested dependency patches
+      - Available browser workflows and final quality gates are exercised
+      - >-
+        Async HTTP handler failures are contained and browser aborts produce no uncaught request
+        errors
+    tdd:
+      red:
+        - Reproduce queued PR cleanup and dependency path traversal with isolated fixtures
+        - Run previously omitted browser scenarios against an isolated instance
+      green:
+        - Fix confirmed defects and rerun affected scenarios
+      refactor:
+        - Preserve existing contracts and record evidence and environment limits
+  - id: task-5
+    phaseId: phase-5
+    title: Review and repair the complete web experience
+    state: Done
+    dependencies:
+      - task-4
+    acceptanceCriteria:
+      - Agent and editor artwork decodes and remains visible in both themes
+      - All web routes and key interactions have an explicit tested coverage inventory
+      - Reproduced responsive, accessibility and interaction defects have regression coverage
+      - Quality gates pass and the latest local browser instance runs the verified build
+    tdd:
+      red:
+        - Capture baseline browser failures and add focused regression tests before fixes
+      green:
+        - Repair verified shared-component and workflow defects
+      refactor:
+        - Reuse design-system primitives and verify every affected consumer
+  - id: task-6
+    phaseId: phase-6
+    title: Close PR review findings and verify the final pushed CI matrix
+    state: WIP
+    dependencies:
+      - task-5
+    acceptanceCriteria:
+      - Both Linux desktop variants package successfully
+      - Attachment and diagnostics tests use portable fixtures and platform contracts
+      - Populated Control Center meets target-size checks in both themes
+      - Repository dev commands can be reviewed and explicitly approved from the CLI
+      - Webhook authentication exceptions reject path traversal
+      - Dependency installation logs preserve UTF-8 across chunks
+      - Documentation and PR evidence match current behavior and required tooling
+      - Every required CI check passes on the final pushed commit
+      - The owned fork runs the same source tree and matrix without relying on upstream approval
+      - Browser verification has no unresolved retry-only passes
+    tdd:
+      red:
+        - Preserve CI failure evidence and reproduce accessibility and packaging failures
+        - Add failing traversal, UTF-8 and CLI consent regression tests
+        - Reproduce browser navigation stalls seen in otherwise successful CI jobs
+      green:
+        - Repair naming, portable fixtures, control sizing and reviewed behavior
+      refactor:
+        - Reuse shared stream parsing and approval validation; verify local gates and remote CI
+content: >
+  ## Acceptance
+
+
+  Tests, stories, screenshots and quality-gate logs are recorded in evidence and the review run. No
+  claim of universal correctness is implied.
+
+
+  ## Verification before the CI follow-up
+
+
+  The earlier full suites passed 1,062 unit files / 12,631 tests and 152 integration files / 1,749
+  tests with no expected failures. All 73 browser scenarios passed without skips. The UI review
+  recorded 43 routes in 172 light/dark desktop/phone views, 32 additional viewport checks and 13
+  interaction groups. Release and Storybook builds, root and web typechecks, lint, formatting,
+  story coverage and spec validation passed. A final mobile spacing adjustment passed 21 setup
+  unit tests and production geometry checks. The latest release is running on port 4050, with
+  four production screenshots and authenticated readiness checks. See
+  [the UI review record](evidence/ui-experience-review.yaml) for coverage and limitations.
+
+
+  The earlier review also passed 87 CLI/TUI tests and a frozen-lockfile install. Twelve dependency
+  traversal regressions pass with pinned local patches; four raw version-based audit matches
+  remain visible and documented. See [the earlier review record](evidence/review-report.yaml) for
+  those fixes, provenance and environment limits.
+
+
+  ## CI and review follow-up
+
+
+  The September 21 review identified four failing remote jobs and five additional findings. Their
+  repairs, red/green evidence and current verification are recorded in
+  [the CI follow-up record](evidence/ci-review-followup.yaml). Remote acceptance remains tied to
+  every applicable check on the final pushed head.
+totalEstimate: L

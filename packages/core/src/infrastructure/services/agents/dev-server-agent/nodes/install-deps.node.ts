@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import type { IDevServerRunPlanRepository } from '@/application/ports/output/repositories/dev-server-run-plan-repository.interface.js';
 import type { DependencyInstaller } from '@/infrastructure/services/deployment/dependency-installer.js';
 import { buildDevServerEnv } from '@/infrastructure/services/deployment/dev-server-env.js';
-import { createLineSplitter } from '@/infrastructure/services/deployment/line-splitter.js';
+import { createLineAccumulator } from '../../common/executors/process-stream.js';
 import { IS_WINDOWS } from '@/infrastructure/platform.js';
 import type { DevServerAgentNodeFn } from '../types.js';
 
@@ -105,11 +105,11 @@ export async function execSetupCommandDefault(
       return;
     }
 
-    const stdoutSplitter = createLineSplitter(capture);
-    const stderrSplitter = createLineSplitter(capture);
+    const stdoutSplitter = createLineAccumulator(capture);
+    const stderrSplitter = createLineAccumulator(capture);
 
-    child.stdout?.on('data', (chunk: Buffer) => stdoutSplitter.push(chunk.toString()));
-    child.stderr?.on('data', (chunk: Buffer) => stderrSplitter.push(chunk.toString()));
+    child.stdout?.on('data', (chunk: Buffer) => stdoutSplitter.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => stderrSplitter.push(chunk));
 
     const timer = setTimeout(() => {
       stdoutSplitter.flush();

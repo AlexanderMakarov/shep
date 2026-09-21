@@ -11,6 +11,15 @@
 
 import { randomUUID } from 'node:crypto';
 import type { IPhaseTimingRepository } from '@/application/ports/output/agents/phase-timing-repository.interface.js';
+import { ConsoleLogger } from '../../logging/console-logger.js';
+import { TelemetryFailureCounter } from './telemetry-failure-counter.js';
+
+/**
+ * Shared across the phase-timing writes: they fail together (they share a
+ * connection), so counting them together yields one actionable line per
+ * episode instead of four.
+ */
+const timingFailures = new TelemetryFailureCounter('phase timing write', new ConsoleLogger());
 
 let contextRunId: string | undefined;
 let contextRepository: IPhaseTimingRepository | undefined;
@@ -35,6 +44,7 @@ export function setPhaseTimingContext(runId: string, repository: IPhaseTimingRep
  * Clear the phase timing context. Useful for testing.
  */
 export function clearPhaseTimingContext(): void {
+  timingFailures.reset();
   contextRunId = undefined;
   contextRepository = undefined;
   lastTimingId = null;
@@ -159,8 +169,9 @@ export async function recordPhaseEnd(
       ...(metadata?.errorMessage != null && { errorMessage: metadata.errorMessage }),
       ...(metadata?.prompt != null && { prompt: metadata.prompt }),
     });
-  } catch {
-    // Swallow — timing update failure is non-fatal
+    timingFailures.recordSuccess();
+  } catch (error) {
+    timingFailures.recordFailure(error);
   }
 }
 
@@ -192,8 +203,9 @@ export async function recordLifecycleEvent(
       createdAt: now,
       updatedAt: now,
     });
-  } catch {
-    // Swallow — lifecycle event recording is non-fatal
+    timingFailures.recordSuccess();
+  } catch (error) {
+    timingFailures.recordFailure(error);
   }
 }
 
@@ -207,8 +219,9 @@ export async function updatePhasePrompt(timingId: string | null, prompt: string)
 
   try {
     await contextRepository.update(timingId, { prompt });
-  } catch {
-    // Swallow — prompt update failure is non-fatal
+    timingFailures.recordSuccess();
+  } catch (error) {
+    timingFailures.recordFailure(error);
   }
 }
 
@@ -223,7 +236,8 @@ export async function recordApprovalWaitStart(timingId: string | null): Promise<
     await contextRepository.updateApprovalWait(timingId, {
       waitingApprovalAt: new Date(),
     });
-  } catch {
-    // Swallow — approval wait timing failure is non-fatal
+    timingFailures.recordSuccess();
+  } catch (error) {
+    timingFailures.recordFailure(error);
   }
 }

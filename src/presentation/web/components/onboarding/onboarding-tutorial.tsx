@@ -177,7 +177,10 @@ const SECTIONS: TutorialSection[] = [
   },
 ];
 
-export function OnboardingTutorial() {
+export function OnboardingTutorial({ headingLevel = 1 }: { headingLevel?: 1 | 2 }) {
+  const Heading = `h${headingLevel}` as const;
+  const SectionHeading = headingLevel === 1 ? 'h2' : 'h3';
+  const StepHeading = headingLevel === 1 ? 'h3' : 'h4';
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   function toggle(id: string) {
@@ -189,7 +192,7 @@ export function OnboardingTutorial() {
       <header className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <GraduationCap className="text-primary size-6" />
-          <h1 className="text-2xl font-semibold">Get started</h1>
+          <Heading className="text-2xl font-semibold">Get started</Heading>
         </div>
         <p className="text-muted-foreground max-w-2xl text-sm">
           A short tour through the new agent collaboration & supervision features. Each section
@@ -224,7 +227,7 @@ export function OnboardingTutorial() {
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
                 <section.icon className="text-primary size-5" />
-                <h2 className="text-lg font-semibold">{section.title}</h2>
+                <SectionHeading className="text-lg font-semibold">{section.title}</SectionHeading>
                 {section.badge ? (
                   <Badge variant="secondary" className="shrink-0">
                     {section.badge}
@@ -238,6 +241,7 @@ export function OnboardingTutorial() {
               variant="ghost"
               size="sm"
               onClick={() => toggle(section.id)}
+              aria-label={section.title}
               aria-expanded={!collapsed[section.id]}
               aria-controls={`steps-${section.id}`}
               data-testid={`tutorial-toggle-${section.id}`}
@@ -262,7 +266,7 @@ export function OnboardingTutorial() {
                     <span className="text-muted-foreground font-mono text-xs">
                       {String(i + 1).padStart(2, '0')}
                     </span>
-                    <h3 className="text-sm font-semibold">{step.title}</h3>
+                    <StepHeading className="text-sm font-semibold">{step.title}</StepHeading>
                   </div>
                   <p className="text-muted-foreground text-sm">{step.description}</p>
                   {step.detail ? (

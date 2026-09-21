@@ -59,6 +59,7 @@ export function AgentModelPicker({
   const [agentType, setAgentType] = React.useState(controlledAgentType ?? initialAgentType);
   const [model, setModel] = React.useState(controlledModel ?? initialModel);
   const [internalSaving, setInternalSaving] = React.useState(false);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
   const [internalError, setInternalError] = React.useState<string | null>(null);
 
   // 0 = agent list visible, 1 = model list visible
@@ -68,14 +69,26 @@ export function AgentModelPicker({
   // Search query for filtering models (level 1 only)
   const [modelQuery, setModelQuery] = React.useState('');
 
-  React.useEffect(() => {
-    getAllAgentModels()
-      .then(setGroups)
-      .finally(() => setLoading(false));
-    if (showInstallStatus) {
-      checkAllAgentsStatus().then(setInstallMap);
+  const loadGroups = React.useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      setGroups(await getAllAgentModels());
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : 'Unable to load agents. Try again.');
+    } finally {
+      setLoading(false);
     }
-  }, [showInstallStatus]);
+  }, []);
+
+  React.useEffect(() => {
+    void loadGroups();
+    if (showInstallStatus) {
+      void checkAllAgentsStatus()
+        .then(setInstallMap)
+        .catch(() => setInstallMap({}));
+    }
+  }, [showInstallStatus, loadGroups]);
 
   React.useEffect(() => {
     setAgentType(controlledAgentType ?? initialAgentType);
@@ -215,12 +228,13 @@ export function AgentModelPicker({
             type="button"
             variant="outline"
             role="combobox"
+            aria-label="Agent and model"
             aria-expanded={open}
             disabled={isDisabled}
             className="w-auto cursor-pointer justify-start font-normal hover:border-violet-300 hover:bg-violet-50/50 dark:hover:border-violet-700 dark:hover:bg-violet-950/30"
           >
             <span className="flex items-center gap-2 truncate">
-              <AgentIcon className="h-4 w-4 shrink-0" />
+              <AgentIcon aria-hidden className="h-4 w-4 shrink-0" />
               {loading ? (
                 'Loading…'
               ) : (
@@ -238,6 +252,7 @@ export function AgentModelPicker({
           </Button>
         </PopoverTrigger>
         <PopoverContent
+          aria-label="Choose agent and model"
           className="z-[70] w-(--radix-popover-trigger-width) overflow-hidden p-0"
           align="start"
           side={popoverSide}
@@ -279,7 +294,7 @@ export function AgentModelPicker({
                       }
                     }}
                   >
-                    <GroupIcon className="h-4 w-4 shrink-0" />
+                    <GroupIcon aria-hidden className="h-4 w-4 shrink-0" />
                     <span className="flex-1 text-start">{group.label}</span>
                     {showInstallStatus && group.agentType in installMap ? (
                       installMap[group.agentType] ? (
@@ -395,7 +410,21 @@ export function AgentModelPicker({
           </div>
         </PopoverContent>
       </Popover>
-      {Boolean(error) && <p className="text-destructive text-sm">{error}</p>}
+      {loadError ? (
+        <div className="space-y-1">
+          <p role="alert" className="text-destructive text-sm">
+            {loadError}
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={() => void loadGroups()}>
+            Retry loading agents
+          </Button>
+        </div>
+      ) : null}
+      {Boolean(error) && (
+        <p role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

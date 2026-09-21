@@ -19,29 +19,33 @@ See [tdd-guide.md](./tdd-guide.md) for the complete TDD workflow with Clean Arch
 tests/
 ├── unit/                    # Fast, isolated tests (Vitest)
 │   ├── domain/
-│   │   ├── entities/
-│   │   └── services/
-│   └── application/
-│       └── use-cases/
+│   ├── application/
+│   ├── infrastructure/
+│   └── presentation/
 ├── integration/             # Tests with real dependencies (Vitest)
-│   ├── repositories/
-│   └── agents/
-├── e2e/                     # Full system tests (Playwright)
-│   ├── cli/                 # CLI command tests
-│   └── web/                 # Web UI tests
+├── e2e/
+│   ├── cli/                 # CLI command tests (Vitest)
+│   ├── tui/                 # Terminal UI tests (Vitest)
+│   └── web/                 # Web UI tests (Playwright)
+├── manual/                  # Opt-in suite (vitest.config.manual.mjs)
+├── fixtures/                # Test data
+├── scripts/                 # Script-runner tests
 └── helpers/                 # Test utilities
-    ├── factories.ts         # Entity factories
-    ├── mocks.ts             # Mock implementations
-    └── db.ts                # Test database helpers
+    ├── database.helper.ts   # In-memory SQLite helpers
+    ├── cli/                 # CLI invocation helpers
+    └── *.mock.ts            # Port doubles
 ```
 
 ## Test Frameworks
 
-| Framework      | Purpose                  | Location                            |
-| -------------- | ------------------------ | ----------------------------------- |
-| **Vitest**     | Unit & Integration tests | `tests/unit/`, `tests/integration/` |
-| **Playwright** | E2E tests (CLI + Web UI) | `tests/e2e/`                        |
-| **Storybook**  | Component visual testing | `src/presentation/web/stories/`     |
+| Framework      | Purpose                    | Location                                |
+| -------------- | -------------------------- | --------------------------------------- |
+| **Vitest**     | Unit, integration, CLI/TUI | `tests/unit/`, `tests/integration/`, `tests/e2e/cli/`, `tests/e2e/tui/` |
+| **Playwright** | Browser E2E tests          | `tests/e2e/web/`                        |
+| **Storybook**  | Component visual testing   | colocated `*.stories.tsx` under `src/presentation/web/` |
+
+Only the **web** E2E suite uses Playwright. `tests/e2e/cli` and `tests/e2e/tui`
+are Vitest suites that drive the built CLI.
 
 ## Running Tests
 
@@ -58,6 +62,11 @@ pnpm test:watch
 pnpm test
 ```
 
+`test` is a **compound** script:
+`vitest run tests/unit tests/integration --passWithNoTests && pnpm run test:e2e`.
+Because of that, extra arguments appended to `pnpm test` do not reach the first
+Vitest invocation — always target a specific script when you want to pass flags.
+
 ### By Layer
 
 ```bash
@@ -67,8 +76,17 @@ pnpm test:unit
 # Integration tests only
 pnpm test:int
 
-# E2E tests (Playwright)
+# Everything end-to-end: builds the CLI, runs tests/e2e, then the web suite
 pnpm test:e2e
+
+# Individual E2E suites
+pnpm test:e2e:cli       # builds the CLI, runs tests/e2e/cli against dist
+pnpm test:e2e:tui       # tests/e2e/tui
+pnpm test:e2e:web       # playwright test
+pnpm test:e2e:scripts   # tests/e2e/cli/script-runner.test.ts
+
+# Opt-in manual suite (separate Vitest config)
+pnpm test:manual
 ```
 
 ### Single File
@@ -77,30 +95,29 @@ pnpm test:e2e
 pnpm test:single tests/unit/domain/entities/feature.test.ts
 ```
 
+`test:single` is plain `vitest run`, so it accepts any path filter or Vitest flag.
+
 ### By Pattern
 
+Vitest has **no `--grep`**. Filter by test name with `-t` /
+`--testNamePattern`, on a script that is a single Vitest invocation:
+
 ```bash
-pnpm test -- --grep "Feature"
+# Every test whose describe/it name matches "Feature"
+pnpm test:unit -t "Feature"
+
+# Or against an arbitrary path
+pnpm test:single tests/unit -t "Feature"
 ```
 
 ### With Coverage
 
+The Vitest config enables the `v8` coverage provider (`text`, `json` and `html`
+reporters) but sets **no thresholds** and there is no `test:coverage` script. Run
+it ad hoc:
+
 ```bash
-# TODO: Coverage script not yet implemented
-# pnpm test:coverage
-```
-
-Coverage thresholds (in `vitest.config.ts`):
-
-```typescript
-coverage: {
-  thresholds: {
-    lines: 80,
-    branches: 75,
-    functions: 80,
-    statements: 80
-  }
-}
+pnpm test:unit --coverage
 ```
 
 ## Writing Tests
@@ -162,15 +179,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Database } from 'better-sqlite3';
 import { SqliteFeatureRepository } from '@/infrastructure/repositories/sqlite/feature.repository';
 import { Feature } from '@/domain/entities/feature';
-import { createTestDatabase, runMigrations } from '@tests/helpers/db';
+import { createInMemoryDatabase } from '@tests/helpers/database.helper';
+import { runSQLiteMigrations } from '@/infrastructure/persistence/sqlite/migrations';
 
 describe('SqliteFeatureRepository', () => {
   let db: Database;
   let repository: SqliteFeatureRepository;
 
   beforeEach(async () => {
-    db = createTestDatabase();
-    await runMigrations(db);
+    db = createInMemoryDatabase();
+    await runSQLiteMigrations(db);
     repository = new SqliteFeatureRepository(db);
   });
 
@@ -220,40 +238,48 @@ describe('SqliteFeatureRepository', () => {
 });
 ```
 
-### E2E Tests (Playwright)
+### E2E Tests
 
 #### CLI Command Tests
 
-```typescript
-// tests/e2e/cli/init.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
-import { mkdirSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
+CLI E2E tests are Vitest suites that shell out to the CLI. `pnpm test:e2e:cli`
+builds first and sets `SHEP_E2E_USE_DIST=1` so the tests exercise `dist/`, not the
+TypeScript sources. Point `SHEP_HOME` at a temp directory so a test never touches
+your real `~/.shep`.
 
-describe('shep init', () => {
-  const testDir = join(__dirname, '.test-repo');
+```typescript
+// tests/e2e/cli/settings-init.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { execSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+describe('shep settings init', () => {
+  let shepHome: string;
 
   beforeAll(() => {
-    mkdirSync(testDir, { recursive: true });
-    execSync('pnpm init', { cwd: testDir });
+    shepHome = mkdtempSync(join(tmpdir(), 'shep-e2e-'));
   });
 
   afterAll(() => {
-    rmSync(testDir, { recursive: true, force: true });
+    rmSync(shepHome, { recursive: true, force: true });
   });
 
-  it('should initialize shep in a repository', () => {
-    const result = execSync('pnpm tsx src/presentation/cli/index.ts init', {
-      cwd: testDir,
+  it('resets settings to defaults', () => {
+    const result = execSync('pnpm dev:cli settings init --force', {
+      env: { ...process.env, SHEP_HOME: shepHome },
       encoding: 'utf8',
     });
 
-    expect(result).toContain('Initialized');
-    expect(existsSync(join(testDir, '.shep'))).toBe(true);
+    expect(result).toContain('Settings');
   });
 });
 ```
+
+> There is no `shep init`. Global settings are (re)initialised with
+> `shep settings init` (`--force` skips the confirmation prompt); features are
+> created with `shep feat new <description>`.
 
 #### Web UI Tests (Playwright)
 
@@ -459,7 +485,7 @@ export const Completed: Story = {
 Create test entities consistently:
 
 ```typescript
-// tests/helpers/factories.ts
+// e.g. tests/helpers/feature.factory.ts
 import { Feature } from '@/domain/entities/feature';
 import { Task } from '@/domain/entities/task';
 
@@ -488,7 +514,7 @@ export function createTask(overrides: Partial<TaskProps> = {}): Task {
 Mock external dependencies:
 
 ```typescript
-// tests/helpers/mocks.ts
+// e.g. tests/helpers/feature-repository.mock.ts
 import { vi } from 'vitest';
 import type { ILLMClient } from '@/infrastructure/services/llm-client';
 
@@ -523,25 +549,17 @@ export function createMockFeatureRepository(): IFeatureRepository {
 
 ### Test Database
 
-In-memory SQLite for tests:
+In-memory SQLite, from `tests/helpers/database.helper.ts`:
 
 ```typescript
-// tests/helpers/db.ts
-import Database from 'better-sqlite3';
-import { migrations } from '@/infrastructure/persistence/migrations';
+import { createInMemoryDatabase } from '@tests/helpers/database.helper';
 
-export function createTestDatabase(): Database {
-  const db = new Database(':memory:');
-  db.pragma('journal_mode = WAL');
-  return db;
-}
-
-export async function runMigrations(db: Database): Promise<void> {
-  for (const migration of migrations) {
-    await migration.up(db);
-  }
-}
+const db = createInMemoryDatabase();
+// journal_mode=MEMORY, synchronous=OFF, foreign_keys=ON are already set
+db.close(); // the database is destroyed with the connection
 ```
+
+Set `DEBUG_SQL=1` to have the helper log every statement it executes.
 
 ## Testing Patterns
 
@@ -591,104 +609,49 @@ describe('RepositoryAnalysisAgent', () => {
 });
 ```
 
-## Coverage Requirements
+## Coverage Targets
 
-| Layer          | Minimum Coverage |
-| -------------- | ---------------- |
-| Domain         | 90%              |
-| Application    | 85%              |
-| Infrastructure | 75%              |
-| Presentation   | 60%              |
+No coverage threshold is enforced anywhere — `vitest.config.ts` configures the
+`v8` provider but sets no `thresholds`, and CI does not run coverage. These are
+review guidelines, not gates:
+
+| Layer          | Target Coverage |
+| -------------- | --------------- |
+| Domain         | 90%             |
+| Application    | 85%             |
+| Infrastructure | 75%             |
+| Presentation   | 60%             |
 
 ## Continuous Integration
 
-Tests run on every PR:
+All test jobs live in the single
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) workflow, which runs
+on pushes and pull requests targeting `main` and `develop`, on Node 22 with pnpm
+and a frozen lockfile. The test-related jobs are:
 
-```yaml
-# .github/workflows/test.yml
-name: Test
+| Job                          | Runs                                                                 |
+| ---------------------------- | -------------------------------------------------------------------- |
+| **Unit Tests** (ubuntu, windows) | `pnpm tsp:compile`, then `test:unit` and `test:int`               |
+| **E2E CLI** (ubuntu, windows)    | `pnpm build:release`, then `test:e2e:cli`                         |
+| **E2E (TUI)**                | `pnpm build:release`, then `test:e2e:tui`                            |
+| **E2E (Web)**                | `pnpm build:release`, `playwright install --with-deps chromium`, then `test:e2e:web` |
+| **Storybook Build**          | `pnpm check:stories`, then `pnpm build:storybook`                    |
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+`check:stories` exists because `build:storybook` catches a *broken* story but by
+construction cannot detect a *missing* one — and every web component is required
+to have a colocated `.stories.tsx`.
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+A separate scheduled workflow,
+[`shep-e2e.yml`](../../.github/workflows/shep-e2e.yml), exercises the full
+`feat new → feat ls → feat show` lifecycle hourly across platforms and agents.
 
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 8
+Mirror CI locally before pushing:
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm test -- --coverage
-
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 8
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Browsers
-        run: pnpm exec playwright install --with-deps
-
-      - name: Build
-        run: pnpm build
-
-      - name: Run E2E Tests
-        run: pnpm test:e2e
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 30
-
-  storybook:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 8
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build Storybook
-        run: pnpm build:storybook
-
-      - name: Run Storybook Tests
-        # TODO: Storybook test script not yet implemented
-        run: echo "Storybook tests pending implementation"
+```bash
+pnpm lint && pnpm format:check
+pnpm typecheck
+pnpm test:unit && pnpm test:int
+pnpm build
 ```
 
 ---

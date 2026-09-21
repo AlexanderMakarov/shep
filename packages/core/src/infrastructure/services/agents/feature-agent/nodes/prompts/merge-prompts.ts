@@ -141,11 +141,22 @@ export function buildCommitPushPrPrompt(
 
   // Step 3: PR creation (conditional)
   if (state.openPr) {
+    // Open as a draft so the agent's output cannot be merged before a human
+    // has looked at it — README presents this as one of the three safety
+    // layers. The exception is an auto-merge run: `gh pr merge` refuses a draft
+    // PR, and by setting allowMerge the user has explicitly opted out of the
+    // review gate the draft state exists to hold open.
+    const autoMerge = state.approvalGates?.allowMerge === true;
+    const draftFlag = autoMerge ? '' : '--draft ';
     const prCreateCmd = prTarget
-      ? `gh pr create --repo ${prTarget.targetRepo} --base ${prTarget.baseBranch} --head ${prTarget.headRef} --title "<title>" --body "<body>"`
-      : `gh pr create --base ${baseBranch} --head ${branch} --title "<title>" --body "<body>"`;
+      ? `gh pr create ${draftFlag}--repo ${prTarget.targetRepo} --base ${prTarget.baseBranch} --head ${prTarget.headRef} --title "<title>" --body "<body>"`
+      : `gh pr create ${draftFlag}--base ${baseBranch} --head ${branch} --title "<title>" --body "<body>"`;
+    const draftNote = autoMerge
+      ? ''
+      : `
+   - The PR MUST stay a draft — do NOT run \`gh pr ready\`. A human marks it ready for review after reviewing the diff`;
     steps.push(`${shouldPush ? '6' : '4'}. Create a pull request:
-   - Run \`${prCreateCmd}\`
+   - Run \`${prCreateCmd}\`${draftNote}
    - Write a descriptive PR title using conventional commit format
    - Write a rich PR body that summarizes the changes using the spec context below
    - The PR body MUST end with this exact branding line (on its own line): \`${PR_BRANDING}\`
@@ -370,11 +381,15 @@ After verifying all workflow runs and PR checks are complete, report EXACTLY ONE
 - If any workflow run has a non-success conclusion OR any PR check has \`bucket: fail\`:
   \`CI_STATUS: FAILED — <brief summary of which runs/checks failed and why>\`
 
+- If you could NOT establish CI's verdict at all (rate limit / 403, API error,
+  or no run ever appeared after retrying):
+  \`CI_STATUS: INDETERMINATE — <what stopped you from reading CI>\`
+
 ## Constraints
 
 - NEVER claim CI passed until EVERY workflow run shows \`completed\` + \`success\` AND every PR check passes
 - NEVER watch a single run and assume it is the only one
 - If \`gh run list\` returns no runs, wait 10 seconds and retry up to 3 times
-- If rate-limited (403 error), report: \`CI_STATUS: PASSED\` (skip check gracefully)
+- If rate-limited (403 error), report \`CI_STATUS: INDETERMINATE\` — NEVER report PASSED for a check you could not perform
 - Print the URL of the failing run if CI fails`;
 }

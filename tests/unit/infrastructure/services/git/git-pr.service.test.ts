@@ -224,7 +224,7 @@ describe('GitPrService', () => {
 
       await service.push('/repo', 'feat/my-branch');
 
-      expect(mockExec).toHaveBeenCalledWith('git', ['push', 'origin', 'feat/my-branch'], {
+      expect(mockExec).toHaveBeenCalledWith('git', ['push', 'origin', '--', 'feat/my-branch'], {
         cwd: '/repo',
       });
     });
@@ -236,7 +236,7 @@ describe('GitPrService', () => {
 
       expect(mockExec).toHaveBeenCalledWith(
         'git',
-        ['push', '--set-upstream', 'origin', 'feat/my-branch'],
+        ['push', '--set-upstream', 'origin', '--', 'feat/my-branch'],
         { cwd: '/repo' }
       );
     });
@@ -351,9 +351,39 @@ describe('GitPrService', () => {
   });
 
   describe('mergePr', () => {
+    it.each(['OPEN', 'CLOSED', '', 'UNKNOWN'])(
+      'preserves the branch when GitHub reports %s after accepting a merge request',
+      async (state) => {
+        vi.mocked(mockExec)
+          .mockResolvedValueOnce({ stdout: '', stderr: '' })
+          .mockResolvedValueOnce({ stdout: state, stderr: '' });
+
+        await expect(service.mergePr('/repo', 42)).rejects.toMatchObject({
+          code: GitPrErrorCode.MERGE_FAILED,
+        });
+        expect(mockExec).not.toHaveBeenCalledWith(
+          'gh',
+          expect.arrayContaining(['DELETE']),
+          expect.anything()
+        );
+      }
+    );
+
+    it('preserves the branch when confirmation of the remote merge fails', async () => {
+      vi.mocked(mockExec)
+        .mockResolvedValueOnce({ stdout: '', stderr: '' })
+        .mockRejectedValueOnce(new Error('GitHub is unavailable'));
+
+      await expect(service.mergePr('/repo', 42)).rejects.toMatchObject({
+        code: GitPrErrorCode.MERGE_FAILED,
+      });
+      expect(mockExec).toHaveBeenCalledTimes(2);
+    });
+
     it('should call gh pr merge without --delete-branch and attempt remote branch cleanup', async () => {
       vi.mocked(mockExec)
         .mockResolvedValueOnce({ stdout: '', stderr: '' }) // gh pr merge
+        .mockResolvedValueOnce({ stdout: 'MERGED\n', stderr: '' }) // remote confirmation
         .mockResolvedValueOnce({ stdout: 'feat/my-branch\n', stderr: '' }) // gh pr view --json headRefName
         .mockResolvedValueOnce({ stdout: '', stderr: '' }); // gh api DELETE
 
@@ -362,11 +392,23 @@ describe('GitPrService', () => {
       expect(mockExec).toHaveBeenCalledWith('gh', ['pr', 'merge', '42', '--squash'], {
         cwd: '/repo',
       });
+      expect(mockExec).toHaveBeenNthCalledWith(
+        2,
+        'gh',
+        ['pr', 'view', '42', '--json', 'state', '--jq', '.state'],
+        { cwd: '/repo' }
+      );
+      expect(mockExec).toHaveBeenLastCalledWith(
+        'gh',
+        ['api', '--method', 'DELETE', 'repos/{owner}/{repo}/git/refs/heads/feat/my-branch'],
+        { cwd: '/repo' }
+      );
     });
 
     it('should call gh pr merge with specified strategy', async () => {
       vi.mocked(mockExec)
         .mockResolvedValueOnce({ stdout: '', stderr: '' }) // gh pr merge
+        .mockResolvedValueOnce({ stdout: 'MERGED\n', stderr: '' }) // remote confirmation
         .mockResolvedValueOnce({ stdout: 'feat/my-branch\n', stderr: '' }) // gh pr view
         .mockResolvedValueOnce({ stdout: '', stderr: '' }); // gh api DELETE
 
@@ -380,6 +422,7 @@ describe('GitPrService', () => {
     it('should not throw when remote branch deletion fails', async () => {
       vi.mocked(mockExec)
         .mockResolvedValueOnce({ stdout: '', stderr: '' }) // gh pr merge
+        .mockResolvedValueOnce({ stdout: 'MERGED\n', stderr: '' }) // remote confirmation
         .mockRejectedValueOnce(new Error('branch delete failed')); // gh pr view fails
 
       await expect(service.mergePr('/repo', 42)).resolves.toBeUndefined();
@@ -401,7 +444,7 @@ describe('GitPrService', () => {
       await service.mergeBranch('/repo', 'feat/my-branch', 'main');
 
       expect(mockExec).toHaveBeenNthCalledWith(1, 'git', ['checkout', 'main'], { cwd: '/repo' });
-      expect(mockExec).toHaveBeenNthCalledWith(2, 'git', ['merge', 'feat/my-branch'], {
+      expect(mockExec).toHaveBeenNthCalledWith(2, 'git', ['merge', '--', 'feat/my-branch'], {
         cwd: '/repo',
       });
       expect(mockExec).toHaveBeenNthCalledWith(3, 'git', ['push'], { cwd: '/repo' });
@@ -424,7 +467,9 @@ describe('GitPrService', () => {
 
       await service.deleteBranch('/repo', 'feat/old');
 
-      expect(mockExec).toHaveBeenCalledWith('git', ['branch', '-d', 'feat/old'], { cwd: '/repo' });
+      expect(mockExec).toHaveBeenCalledWith('git', ['branch', '-d', '--', 'feat/old'], {
+        cwd: '/repo',
+      });
       expect(mockExec).toHaveBeenCalledTimes(1);
     });
 
@@ -433,13 +478,13 @@ describe('GitPrService', () => {
 
       await service.deleteBranch('/repo', 'feat/old', true);
 
-      expect(mockExec).toHaveBeenNthCalledWith(1, 'git', ['branch', '-d', 'feat/old'], {
+      expect(mockExec).toHaveBeenNthCalledWith(1, 'git', ['branch', '-d', '--', 'feat/old'], {
         cwd: '/repo',
       });
       expect(mockExec).toHaveBeenNthCalledWith(
         2,
         'git',
-        ['push', 'origin', '--delete', 'feat/old'],
+        ['push', 'origin', '--delete', '--', 'feat/old'],
         {
           cwd: '/repo',
         }
@@ -534,7 +579,7 @@ describe('GitPrService', () => {
       expect(mockExec).toHaveBeenNthCalledWith(
         2,
         'gh',
-        ['pr', 'checks', 'feat/branch', '--json', 'bucket,state,name'],
+        ['pr', 'checks', '--json', 'bucket,state,name', '--', 'feat/branch'],
         { cwd: '/repo' }
       );
       expect(result.status).toBe('failure');
@@ -1154,7 +1199,7 @@ describe('GitPrService', () => {
       expect(result).toBe(true);
       expect(mockExec).toHaveBeenCalledWith(
         'git',
-        ['merge-base', '--is-ancestor', 'feat/test', 'main'],
+        ['merge-base', '--is-ancestor', '--', 'feat/test', 'main'],
         { cwd: '/repo' }
       );
     });
@@ -1264,7 +1309,7 @@ describe('GitPrService', () => {
 
       await service.localMergeSquash('/repo', 'feat/test', 'main', 'merge commit msg');
 
-      expect(mockExec).toHaveBeenCalledWith('git', ['merge', '--squash', 'feat/test'], {
+      expect(mockExec).toHaveBeenCalledWith('git', ['merge', '--squash', '--', 'feat/test'], {
         cwd: '/repo',
       });
     });

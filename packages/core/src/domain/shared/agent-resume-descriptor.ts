@@ -41,6 +41,9 @@ const RESUME_BINARIES: Partial<Record<AgentType, string>> = {
   [AgentType.ClaudeCode]: 'claude',
   [AgentType.CodexCli]: 'codex',
   [AgentType.Cursor]: 'cursor-agent',
+  // Kimi's `--resume <id>` is an alias of `--session <id>`, which both creates
+  // and reopens a session.
+  [AgentType.KimiCode]: 'kimi',
 };
 
 /** How to relaunch a session. */

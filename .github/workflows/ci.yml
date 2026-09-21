@@ -65,6 +65,15 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm run generate
+      # CI regenerates before typechecking, so a PR that edits tsp/ without
+      # committing the regenerated output used to pass green and only broke on
+      # a contributor's machine later. Fail here instead.
+      - name: Verify generated code is committed
+        run: |
+          if ! git diff --exit-code -- packages/core/src/domain/generated apis; then
+            echo "::error::Generated output is stale. Run 'pnpm run generate' and commit the result."
+            exit 1
+          fi
       - run: pnpm run typecheck
 
   # ===========================================================================
@@ -135,6 +144,14 @@ jobs:
       - run: pnpm run build:release
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run test:e2e:web
+      - name: Upload failed browser traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ===========================================================================
   # Storybook Build (catches missing mocks, broken imports in stories)
@@ -150,6 +167,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # build:storybook catches a BROKEN story but by construction cannot detect
+      # a MISSING one, which is why the mandate went unenforced.
+      - run: pnpm run check:stories
       - run: pnpm run build:storybook
 
   # ===========================================================================

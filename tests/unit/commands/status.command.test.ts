@@ -6,42 +6,72 @@
  * environment section, --logs flag.
  */
 
+import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Command } from 'commander';
 
 // Hoist mocks so factory closures can reference them
-const { mockExecFile, mockDaemonService, mockRenderDetailView, mockVersionService } = vi.hoisted(
-  () => {
-    const mockExecFile = vi.fn();
-    const mockDaemonService = {
-      read: vi.fn(),
-      write: vi.fn(),
-      delete: vi.fn().mockResolvedValue(undefined),
-      isAlive: vi.fn(),
-    };
-    const mockRenderDetailView = vi.fn();
-    const mockVersionService = {
-      getVersion: vi.fn().mockReturnValue({
-        version: '1.56.0',
-        name: '@shepai/cli',
-        description: 'Shep AI CLI',
-      }),
-    };
-    return {
-      mockExecFile,
-      mockDaemonService,
-      mockRenderDetailView,
-      mockVersionService,
-    };
-  }
-);
+const {
+  mockExecFile,
+  mockDaemonService,
+  mockRenderDetailView,
+  mockVersionService,
+  mockCheckDaemonHealth,
+} = vi.hoisted(() => {
+  const mockExecFile = vi.fn();
+  const mockDaemonService = {
+    read: vi.fn(),
+    write: vi.fn(),
+    delete: vi.fn().mockResolvedValue(undefined),
+    isAlive: vi.fn(),
+  };
+  const mockRenderDetailView = vi.fn();
+  const mockVersionService = {
+    getVersion: vi.fn().mockReturnValue({
+      version: '1.56.0',
+      name: '@shepai/cli',
+      description: 'Shep AI CLI',
+    }),
+    getBuildIdentity: vi.fn().mockReturnValue({
+      cliVersion: '1.56.0',
+      nodeVersion: 'v22.5.1',
+      platform: 'linux',
+      osRelease: '6.8.0-generic',
+      arch: 'x64',
+      gitSha: '3f9a1c2',
+    }),
+  };
+  const mockCheckDaemonHealth = {
+    execute: vi.fn().mockResolvedValue({
+      daemonRunning: true,
+      reachable: true,
+      healthy: true,
+      url: 'http://localhost:4050/api/health',
+      httpStatus: 200,
+      checks: [{ name: 'container', ok: true }],
+      error: null,
+      failingChecks: [],
+      summary: 'Ready — 1 check(s) healthy (HTTP 200)',
+    }),
+  };
+  return {
+    mockExecFile,
+    mockDaemonService,
+    mockRenderDetailView,
+    mockVersionService,
+    mockCheckDaemonHealth,
+  };
+});
 
 vi.mock('@/infrastructure/di/container.js', () => ({
   container: {
-    resolve: vi.fn().mockImplementation((token: string) => {
+    resolve: vi.fn().mockImplementation((token: unknown) => {
       if (token === 'IDaemonService') return mockDaemonService;
       if (token === 'IVersionService') return mockVersionService;
-      throw new Error(`Unknown token: ${token}`);
+      if (typeof token === 'function' && token.name === 'CheckDaemonHealthUseCase') {
+        return mockCheckDaemonHealth;
+      }
+      throw new Error(`Unknown token: ${String(token)}`);
     }),
   },
 }));
@@ -322,6 +352,81 @@ describe('status command', () => {
       );
       const cpuField = fields.find((f) => f.label.toLowerCase().includes('cpu'));
       expect(cpuField?.value).toContain('unavailable');
+    });
+  });
+
+  describe('build identity and readiness', () => {
+    const startedAt = '2026-02-25T00:00:00.000Z';
+
+    beforeEach(() => {
+      mockDaemonService.read.mockResolvedValue({ pid: 12345, port: 4050, startedAt });
+      mockDaemonService.isAlive.mockReturnValue(true);
+    });
+
+    async function renderedFields(): Promise<{ label: string; value: string }[]> {
+      const cmd = createStatusCommand();
+      const parsePromise = cmd.parseAsync([], { from: 'user' });
+      await vi.runAllTimersAsync();
+      await parsePromise;
+      const callArgs = mockRenderDetailView.mock.calls[0][0];
+      return callArgs.sections.flatMap(
+        (s: { fields: { label: string; value: string }[] }) => s.fields
+      );
+    }
+
+    it('shows the OS platform, release and arch', async () => {
+      const fields = await renderedFields();
+      const osField = fields.find((f) => f.label.toLowerCase() === 'os');
+      expect(osField?.value).toContain('linux');
+      expect(osField?.value).toContain('6.8.0-generic');
+      expect(osField?.value).toContain('x64');
+    });
+
+    it('shows the git SHA', async () => {
+      const fields = await renderedFields();
+      const shaField = fields.find((f) => f.label.toLowerCase().includes('git'));
+      expect(shaField?.value).toBe('3f9a1c2');
+    });
+
+    it('calls the readiness endpoint instead of only reporting daemon.json + ps', async () => {
+      const fields = await renderedFields();
+      expect(mockCheckDaemonHealth.execute).toHaveBeenCalledOnce();
+      const healthField = fields.find((f) => f.label.toLowerCase().includes('readiness'));
+      expect(healthField?.value).toContain('Ready');
+    });
+
+    it('surfaces an unhealthy readiness answer rather than claiming the daemon is fine', async () => {
+      mockCheckDaemonHealth.execute.mockResolvedValueOnce({
+        daemonRunning: true,
+        reachable: true,
+        healthy: false,
+        url: 'http://localhost:4050/api/health',
+        httpStatus: 503,
+        checks: [{ name: 'features', ok: false, detail: 'database is locked' }],
+        error: null,
+        failingChecks: [{ name: 'features', ok: false, detail: 'database is locked' }],
+        summary: 'Unhealthy (HTTP 503) — features: database is locked',
+      });
+      const fields = await renderedFields();
+      const healthField = fields.find((f) => f.label.toLowerCase().includes('readiness'));
+      expect(healthField?.value).toContain('Unhealthy');
+      expect(healthField?.value).toContain('database is locked');
+    });
+
+    it('still renders the rest of the status when the health probe throws', async () => {
+      mockCheckDaemonHealth.execute.mockRejectedValueOnce(new Error('probe exploded'));
+      const fields = await renderedFields();
+      expect(fields.some((f) => f.label.toLowerCase().includes('pid'))).toBe(true);
+      const healthField = fields.find((f) => f.label.toLowerCase().includes('readiness'));
+      expect(healthField?.value).toContain('unavailable');
+    });
+
+    it('still renders the rest of the status when the build identity is unavailable', async () => {
+      mockVersionService.getBuildIdentity.mockImplementationOnce(() => {
+        throw new Error('package.json unreadable');
+      });
+      const fields = await renderedFields();
+      expect(fields.some((f) => f.label.toLowerCase().includes('pid'))).toBe(true);
     });
   });
 });

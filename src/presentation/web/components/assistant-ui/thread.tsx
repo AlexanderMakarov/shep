@@ -1,7 +1,6 @@
 'use client';
 
 import type { FC } from 'react';
-import { createPortal } from 'react-dom';
 import {
   ActionBarPrimitive,
   ComposerPrimitive,
@@ -14,6 +13,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ToolBubble, parseToolEvent } from '@/components/features/chat/tool-bubble';
 import {
   SendHorizontal,
@@ -23,7 +23,6 @@ import {
   Bot,
   User,
   Maximize2,
-  X,
   ChevronDown,
   ChevronUp,
   Loader2,
@@ -375,7 +374,7 @@ function CollapsibleCode({ children, language }: { children: React.ReactNode; la
 
 // ── HTML preview block with code/preview toggle ─────────────────────────
 
-function HtmlPreviewBlock({ code, language }: { code: string; language: string }) {
+export function HtmlPreviewBlock({ code, language }: { code: string; language: string }) {
   const { t } = useTranslation('web');
   const [showPreview, setShowPreview] = useState(false);
   const [maximized, setMaximized] = useState(false);
@@ -442,81 +441,71 @@ function HtmlPreviewBlock({ code, language }: { code: string; language: string }
         </div>
       </div>
 
-      {/* Fullscreen modal — fake browser chrome, portaled to body */}
-      {maximized && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-              onClick={() => setMaximized(false)}
-            >
-              <div
-                className="bg-background relative flex h-[95vh] w-[95vw] flex-col overflow-hidden rounded-xl border shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Toolbar */}
-                <div className="bg-muted/80 flex h-12 shrink-0 items-center justify-between border-b px-5">
-                  {/* Left — tabs */}
-                  <div className="bg-muted flex items-center gap-0.5 rounded-lg p-1">
-                    <button
-                      type="button"
-                      onClick={() => setFullscreenCode(false)}
-                      className={cn(
-                        'rounded-md px-4 py-1.5 text-sm font-medium transition-all',
-                        !fullscreenCode
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      )}
-                    >
-                      {t('chat.preview')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFullscreenCode(true)}
-                      className={cn(
-                        'rounded-md px-4 py-1.5 text-sm font-medium transition-all',
-                        fullscreenCode
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      )}
-                    >
-                      {t('chat.code')}
-                    </button>
-                  </div>
-
-                  {/* Center — stats */}
-                  <div className="text-muted-foreground/60 flex items-center gap-4 text-xs">
-                    <span>{lines} lines</span>
-                    <span>{chars.toLocaleString()} chars</span>
-                    <span className="font-mono uppercase">{language}</span>
-                  </div>
-
-                  {/* Right — close */}
-                  <button
-                    type="button"
-                    onClick={() => setMaximized(false)}
-                    className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg p-2 transition-colors"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-                {/* Content */}
-                {fullscreenCode ? (
-                  <pre className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed">
-                    <code>{code}</code>
-                  </pre>
-                ) : (
-                  <iframe
-                    srcDoc={code}
-                    sandbox="allow-scripts"
-                    className="flex-1 border-0 bg-white dark:bg-neutral-900"
-                    title={t('chat.htmlPreviewFullscreen')}
-                  />
+      {/* Fullscreen preview — the project's dialog primitive, which brings
+          the modal semantics the old `createPortal` lightbox lacked: a
+          labelled dialog role, Escape, focus trap + restore, and an
+          overlay that is not a bare click handler. */}
+      <Dialog open={maximized} onOpenChange={setMaximized}>
+        <DialogContent className="flex h-[95vh] w-[95vw] max-w-none flex-col gap-0 overflow-hidden rounded-xl p-0">
+          <DialogTitle className="sr-only">{t('chat.htmlPreviewFullscreen')}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {lines} lines, {chars.toLocaleString()} chars, {language}
+          </DialogDescription>
+          {/* Toolbar */}
+          <div className="bg-muted/80 flex h-12 shrink-0 items-center justify-between border-b px-5">
+            {/* Left — tabs */}
+            <div className="bg-muted flex items-center gap-0.5 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setFullscreenCode(false)}
+                className={cn(
+                  'rounded-md px-4 py-1.5 text-sm font-medium transition-all',
+                  !fullscreenCode
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+              >
+                {t('chat.preview')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFullscreenCode(true)}
+                className={cn(
+                  'rounded-md px-4 py-1.5 text-sm font-medium transition-all',
+                  fullscreenCode
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {t('chat.code')}
+              </button>
+            </div>
+
+            {/* Center — stats */}
+            <div className="text-muted-foreground/60 flex items-center gap-4 text-xs">
+              <span>{lines} lines</span>
+              <span>{chars.toLocaleString()} chars</span>
+              <span className="font-mono uppercase">{language}</span>
+            </div>
+
+            {/* Right — spacer for the dialog's own close button */}
+            <div className="h-9 w-9 shrink-0" />
+          </div>
+          {/* Content */}
+          {fullscreenCode ? (
+            <pre className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed">
+              <code>{code}</code>
+            </pre>
+          ) : (
+            <iframe
+              srcDoc={code}
+              sandbox="allow-scripts"
+              className="flex-1 border-0 bg-white dark:bg-neutral-900"
+              title={t('chat.htmlPreviewFullscreen')}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

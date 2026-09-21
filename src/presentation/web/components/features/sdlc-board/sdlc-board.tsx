@@ -153,7 +153,13 @@ export function SdlcBoard({ epics, onTaskStatusChange, onCardClick, className }:
   );
 
   return (
-    <div data-testid="sdlc-board" className={cn('flex gap-4 overflow-x-auto pb-4', className)}>
+    <div
+      tabIndex={0}
+      aria-label="SDLC board"
+      role="region"
+      data-testid="sdlc-board"
+      className={cn('flex gap-4 overflow-x-auto pb-4', className)}
+    >
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         {COLUMN_ORDER.map((status) => (
           <SdlcColumn

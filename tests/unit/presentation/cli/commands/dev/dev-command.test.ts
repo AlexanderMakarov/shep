@@ -59,16 +59,16 @@ describe('shep dev command group', () => {
     expect(dev.description()).toBe('Run and inspect a local dev server');
   });
 
-  it('exposes start, stop, status, logs and plan', () => {
+  it('exposes start, stop, status, logs, plan and approve', () => {
     const names = createDevCommand()
       .commands.map((command) => command.name())
       .sort();
-    expect(names).toEqual(['logs', 'plan', 'start', 'status', 'stop']);
+    expect(names).toEqual(['approve', 'logs', 'plan', 'start', 'status', 'stop']);
   });
 
   it('lists every subcommand in its help output', () => {
     const help = createDevCommand().helpInformation();
-    for (const name of ['start', 'stop', 'status', 'logs', 'plan']) {
+    for (const name of ['start', 'stop', 'status', 'logs', 'plan', 'approve']) {
       expect(help).toContain(name);
     }
   });

@@ -31,6 +31,7 @@ import type { IPhaseTimingRepository } from '@/application/ports/output/agents/p
 import { SdlcLifecycle, AgentRunStatus } from '@/domain/generated/output.js';
 import type { Feature } from '@/domain/generated/output.js';
 import { SpawnFeatureAgentUseCase } from '@/application/use-cases/features/spawn-feature-agent.use-case.js';
+import { createMockFeatureCapacityService } from '../../../../helpers/feature-capacity.mock.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -196,7 +197,7 @@ describe('CheckAndUnblockFeaturesUseCase — Auto-Sync', () => {
         { load: vi.fn().mockResolvedValue(null) } as any,
         mockSyncFeatureBranch
       ) as any,
-      { hasCapacity: vi.fn().mockResolvedValue(true), getQueuePosition: vi.fn() } as any
+      createMockFeatureCapacityService() as never
     );
   });
 

@@ -1,0 +1,70 @@
+{
+  "results": [
+    {
+      "name": "sidebar-themes-groups",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "global-search",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "settings-all-sections",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "agent-picker-keyboard",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "tools-tabs-and-drawer",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "webhooks-refresh-filter",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "project-views",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "project-create-item-cancel",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "memory-edit-cancel-delete-cancel",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "agent-editor-tabs",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "feature-drawer-tabs",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "application-menu",
+      "violations": [],
+      "ok": true
+    },
+    {
+      "name": "cluster-create-cancel",
+      "violations": [],
+      "ok": true
+    }
+  ],
+  "errors": []
+}

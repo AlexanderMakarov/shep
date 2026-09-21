@@ -7,7 +7,11 @@
  *   - PID, port, URL (from daemon.json)
  *   - Uptime (computed from startedAt)
  *   - CPU%, RSS memory (from ps shell-out via execFile — injection-safe)
- *   - Environment: paths, versions
+ *   - Readiness, by calling the daemon's own health endpoint through
+ *     CheckDaemonHealthUseCase. daemon.json plus `ps` only prove a process
+ *     exists; they say nothing about whether it can serve a request, which
+ *     is the difference between "up" and "working".
+ *   - Environment: paths, versions, OS and git SHA
  *
  * Flags:
  *   --logs [N]   Show last N lines of daemon.log (default 50)
@@ -28,6 +32,8 @@ import { watch } from 'node:fs';
 import { container } from '@/infrastructure/di/container.js';
 import type { IDaemonService } from '@/application/ports/output/services/daemon-service.interface.js';
 import type { IVersionService } from '@/application/ports/output/services/version-service.interface.js';
+import { CheckDaemonHealthUseCase } from '@/application/use-cases/daemon/check-daemon-health.use-case.js';
+import { GIT_SHA_UNAVAILABLE } from '@/domain/value-objects/build-identity.js';
 import {
   getShepHomeDir,
   getShepDbPath,
@@ -39,6 +45,11 @@ import { getCliI18n } from '../i18n.js';
 
 const PS_TIMEOUT_MS = 2000;
 const DEFAULT_LOG_LINES = 50;
+
+/** Rendered when a metric could not be collected. */
+const UNAVAILABLE_VALUE = 'unavailable';
+/** Rendered when a value could not be determined at all. */
+const UNKNOWN_VALUE = 'unknown';
 
 interface PsMetrics {
   cpu: string;
@@ -83,7 +94,7 @@ function fetchPsMetrics(pid: number): Promise<PsMetrics> {
     const pidStr = String(pid);
     let settled = false;
 
-    const fallback = (): PsMetrics => ({ cpu: 'unavailable', rssMb: 'unavailable' });
+    const fallback = (): PsMetrics => ({ cpu: UNAVAILABLE_VALUE, rssMb: UNAVAILABLE_VALUE });
 
     const timer = setTimeout(() => {
       if (!settled) {
@@ -256,13 +267,26 @@ Examples:
 
       const { cpu, rssMb } = await fetchPsMetrics(pid);
 
-      // Get CLI version
-      let cliVersion = 'unknown';
+      // Get CLI version + build identity (OS, git SHA)
+      let cliVersion = UNKNOWN_VALUE;
+      let osDescription = UNKNOWN_VALUE;
+      let gitSha = GIT_SHA_UNAVAILABLE;
       try {
         const versionService = container.resolve<IVersionService>('IVersionService');
         cliVersion = versionService.getVersion().version;
+        const identity = versionService.getBuildIdentity();
+        osDescription = `${identity.platform} ${identity.osRelease} ${identity.arch}`;
+        gitSha = identity.gitSha ?? GIT_SHA_UNAVAILABLE;
       } catch {
-        // Version service not available
+        // Version service not available — the rest of the status still renders.
+      }
+
+      // Ask the daemon whether it is actually ready, not just alive.
+      let readiness = UNAVAILABLE_VALUE;
+      try {
+        readiness = (await container.resolve(CheckDaemonHealthUseCase).execute()).summary;
+      } catch {
+        // A probe failure must not cost the user the rest of the report.
       }
 
       renderDetailView({
@@ -280,12 +304,13 @@ Examples:
               { label: t('cli:commands.status.uptimeLabel'), value: uptime },
               {
                 label: t('cli:commands.status.cpuLabel'),
-                value: cpu === 'unavailable' ? 'unavailable' : `${cpu}%`,
+                value: cpu === UNAVAILABLE_VALUE ? UNAVAILABLE_VALUE : `${cpu}%`,
               },
               {
                 label: t('cli:commands.status.memoryLabel'),
-                value: rssMb === 'unavailable' ? 'unavailable' : `${rssMb} MB`,
+                value: rssMb === UNAVAILABLE_VALUE ? UNAVAILABLE_VALUE : `${rssMb} MB`,
               },
+              { label: t('cli:commands.status.healthLabel'), value: readiness },
             ],
           },
           {
@@ -294,6 +319,8 @@ Examples:
               { label: t('cli:commands.status.shepHomeLabel'), value: getShepHomeDir() },
               { label: t('cli:commands.status.cliVersionLabel'), value: cliVersion },
               { label: t('cli:commands.status.nodeVersionLabel'), value: process.version },
+              { label: t('cli:commands.status.osLabel'), value: osDescription },
+              { label: t('cli:commands.status.gitShaLabel'), value: gitSha },
               { label: t('cli:commands.status.dbPathLabel'), value: getShepDbPath() },
               { label: t('cli:commands.status.logFileLabel'), value: logPath },
               { label: t('cli:commands.status.daemonConfigLabel'), value: getDaemonStatePath() },

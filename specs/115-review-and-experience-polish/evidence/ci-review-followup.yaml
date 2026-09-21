@@ -1,0 +1,124 @@
+date: '2026-09-21'
+pullRequest: https://github.com/shep-ai/shep/pull/876
+review: https://github.com/shep-ai/shep/pull/876#issuecomment-5756364480
+failedRun: https://github.com/shep-ai/shep/actions/runs/35542065053
+reviewedHead: 1d580154e7a8881e8832312515a50f32adccc991
+scope: Repair the four failed jobs and all actionable findings in the review.
+repairs:
+  - finding: Both Linux Electron builds rejected the scoped package name.
+    change: Give the Linux executables explicit, distinct names, shep and shep-apps.
+    proof: Both complete AppImage packaging commands succeeded locally.
+  - finding: Seven Windows unit failures assumed POSIX paths and permissions.
+    change: >-
+      Use real temporary attachment paths and platform delimiters; compare filesystem-reported
+      permission bits, retain POSIX-specific assertions where meaningful, and exercise portable
+      directory-creation failure on every platform.
+    proof: Affected suites pass locally; the Windows CI job is the platform-specific acceptance gate.
+  - finding: Repository toolbar targets became too small at the default canvas zoom.
+    change: >-
+      Enlarge repository and session controls to 32 CSS pixels and tighten toolbar gaps. Add an
+      independent standalone-repository fixture instead of depending on another test's leftovers.
+    proof: >-
+      New geometry assertions failed at 20.4 pixels before the repair. They now pass at the default
+      zoom alongside the unchanged axe target-size rule in both themes.
+  - finding: Repository dev configuration had no usable approval path.
+    change: >-
+      Add shep dev approve using the shared target resolver. Preview all executable fields and
+      require --fingerprint to record consent. Re-read and compare before writing approval.
+    proof: >-
+      Four CLI regressions, a changed-command regression, all locale parity checks and a packaged
+      CLI smoke test with spaces in the repository path pass. Preview writes no approval and
+      approval executes no repository commands.
+  - finding: Webhook authentication exceptions used raw prefix matching.
+    change: >-
+      Exempt only the two exact self-authenticating endpoints, including a trailing slash.
+      Child paths never inherit the exemption, so no routing normalization assumption is needed.
+    proof: >-
+      Six new plain, encoded and backslash traversal/child-path regressions failed before the
+      repair and now enforce both the token and Host gates.
+  - finding: Setup command logs decoded UTF-8 independently per chunk.
+    change: Use the shared line accumulator with independent stdout and stderr decoders.
+    proof: Byte-by-byte interleaved Unicode and an unterminated error line fail before and pass after.
+  - finding: Verdict parser prose and pnpm prerequisites were inaccurate.
+    change: >-
+      Document escalation for conflicting verdicts, repeated identical verdicts, and the pnpm
+      minimum moving from 8 to 10 to match the pinned CI toolchain.
+additionalBrowserRepairs:
+  - Wait for settings saves before navigating away from the chat-toggle test.
+  - Wait for language action responses; the old saving selector targeted the wrong section.
+  - Give the first agent-editor navigation the existing cold-route timeout budget.
+  - Wait for finite UI animations before measuring accessibility; keep every axe rule enabled.
+  - Enable and restore the workflow flag through the UI so its accessibility case is exercised.
+  - >-
+    Keep the enabled agent picker readable while a workflow disables message composition.
+    Remove inherited dimming from the composer, retain the individual disabled controls, and add
+    colocated Storybook examples. The disabled-input and stop-action regressions remain green.
+  - >-
+    Repeated production scans also caught the asynchronously loaded picker midway through its
+    enable transition, with a measured contrast ratio of 3.12. Wait for its enabled state before
+    settling animations and scanning the populated page. Include axe failure summaries so future
+    failures preserve the measured colors and ratio.
+  - >-
+    Isolate drawer clickability with explicit Implementation and Review feature fixtures. The
+    full production suite caught the old test comparing a node's provisional name with its final
+    agent-generated name in the drawer. Target stable feature IDs and require both drawers,
+    including the second click that previously ran only when another feature happened to exist.
+  - >-
+    The strict fork browser gate exposed a messaging settings race: the enable-save response
+    overwrote a freshly edited gateway URL and pairing used the old URL. Two deterministic unit
+    regressions reproduce the overwrite. Synchronize fields independently and preserve unsaved
+    gateway drafts while still accepting server updates to pristine fields. The browser test now
+    waits for the actual rejection message before checking that pairing stayed closed.
+localVerification:
+  unit: >-
+    The earlier complete local run passed 1064 files and 12645 tests; 259 affected UI tests also
+    passed after control resizing. The messaging follow-up adds three focused regression cases.
+  integration: 152 files and 1749 tests passed.
+  cliTui: >-
+    87 scenarios verified. The three CLI UI cases were rerun separately and passed after a
+    concurrent browser server held Next's development lock during the initial run.
+  releaseBuild: passed
+  storybookBuild: passed
+  linuxDesktopFull: passed
+  linuxDesktopAppsOnly: passed
+  dialogAccessibility: Five consecutive runs passed after waiting for finite animations.
+  browser: All 73 scenarios passed against the rebuilt production release with zero retries and zero skips.
+  browserRepeated: Ten editor round-trips and ten populated application menu scans passed with zero retries.
+  messagingRegression: >-
+    All 15 component tests pass, including the two initially failing draft-overwrite regressions
+    and server-update coverage. Ten complete pairing flows and ten invalid-URL rejection flows
+    pass against the rebuilt production release with zero retries. Release and Storybook builds pass.
+  agentEditor: >-
+    A navigation stall occurred once despite the increased cold-route budget. It did not recur
+    in five consecutive traced runs or the final complete browser run, but both initial remote
+    runs later reproduced it and passed only on retry. CI now targets the production release
+    instead of rebuilding routes with the development server. Retry-only browser passes fail
+    the job, and failed traces are retained and uploaded. No route assertion is removed or softened.
+  qualityGates: Root and web typechecks, lint, format, story coverage and spec validation passed.
+  composerStories: 274 of 340 components now have stories; the grandfathered baseline is reduced to 66.
+forkVerification:
+  pullRequest: https://github.com/bensynapse/shep/pull/1
+  initialRun: https://github.com/bensynapse/shep/actions/runs/35590184954
+  strictBrowserRun: https://github.com/bensynapse/shep/actions/runs/35593066162
+  initialHead: 813b0edef277086b1971f3ac63b02f30911f30e6
+  initialSourceTree: bc45e9f0d69d33301d45c3fae004c6a7d2ca8dc3
+  treeProof: The fork's PR merge tree exactly matched the branch source tree.
+  workflowProof: The owned fork ran the unchanged CI/CD and PR Check workflows.
+  additionalFinding: >-
+    Windows CLI initialization failed because its database modification-time comparison assumed
+    startup takes less than five seconds. Opening SQLite may update the file even when existing
+    settings are reused. The replacement assertion compares every persisted settings column
+    across two invocations and checks a non-default user value survives. All six local
+    initialization scenarios pass with the stronger persistence assertion.
+  upstreamInitialResult: >-
+    Run 35588977748 passed all applicable jobs on 813b0ede, including 12629 Windows unit cases
+    with 16 platform-specific skips, all 1749 Windows integration tests and all six desktop
+    builds. Its browser job reported one retry-only pass, so final acceptance also requires
+    the stricter browser gate on the follow-up commit.
+remoteAcceptance:
+  source: https://github.com/shep-ai/shep/pull/876/checks
+  forkSource: https://github.com/bensynapse/shep/pull/1/checks
+  requirement: Every applicable check must succeed on the final pushed head.
+  note: >-
+    This record describes local evidence. The live PR checks provide the authoritative Windows,
+    macOS and Linux matrix result; local Linux passes never substitute for those jobs.

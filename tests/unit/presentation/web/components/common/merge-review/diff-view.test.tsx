@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { DiffView, buildFileTree } from '@/components/common/merge-review/diff-view';
+import {
+  DiffView,
+  buildFileTree,
+  MAX_LINES_PER_FILE,
+} from '@/components/common/merge-review/diff-view';
 import type { MergeReviewFileDiff } from '@/components/common/merge-review/merge-review-config';
 
 const rootModifiedFile: MergeReviewFileDiff = {
@@ -300,5 +304,144 @@ describe('DiffView', () => {
       expect(screen.queryByText('@@ -1,4 +1,7 @@')).not.toBeInTheDocument();
       expect(screen.getByText('@@ -0,0 +1,3 @@')).toBeInTheDocument();
     });
+  });
+});
+
+// ── Accessibility, performance and non-text files ──────────────────────────
+//
+// The hunk renderer encoded +/- with colour plus a glyph hidden inside a
+// `select-none` span: the meaning was carried by colour alone for a sighted
+// user (WCAG 1.4.1) and by nothing at all for a screen reader. It also
+// emitted one div + four spans per line with no windowing, and dropped
+// binary / rename-only files on the floor.
+
+const binaryFile: MergeReviewFileDiff = {
+  path: 'assets/logo.png',
+  additions: 0,
+  deletions: 0,
+  status: 'modified',
+  hunks: [],
+};
+
+const renameOnlyFile: MergeReviewFileDiff = {
+  path: 'src/services/billing-service.ts',
+  oldPath: 'src/services/billing.ts',
+  additions: 0,
+  deletions: 0,
+  status: 'renamed',
+  hunks: [],
+};
+
+function hugeFile(lineCount: number): MergeReviewFileDiff {
+  return {
+    path: 'generated/bundle.js',
+    additions: lineCount,
+    deletions: 0,
+    status: 'modified',
+    hunks: [
+      {
+        header: '@@ -0,0 +1,999999 @@',
+        lines: Array.from({ length: lineCount }, (_, i) => ({
+          type: 'added' as const,
+          content: `const line${i} = ${i};`,
+          newNumber: i + 1,
+        })),
+      },
+    ],
+  };
+}
+
+describe('DiffView — accessibility of diff lines', () => {
+  beforeEach(() => {
+    render(<DiffView fileDiffs={[rootModifiedFile]} />);
+    fireEvent.click(screen.getByRole('button', { name: /package\.json/ }));
+  });
+
+  it('groups each hunk and names it with its header', () => {
+    expect(screen.getByRole('group', { name: '@@ -1,4 +1,7 @@' })).toBeInTheDocument();
+  });
+
+  it('states added / removed / context in the accessible name of every line', () => {
+    expect(screen.getByLabelText('removed line 2: "version": "1.0.0",')).toBeInTheDocument();
+    expect(screen.getByLabelText('added line 2: "version": "1.1.0",')).toBeInTheDocument();
+    expect(screen.getByLabelText('context line 1: "name": "my-app",')).toBeInTheDocument();
+  });
+
+  it('hides the line-number gutters and the +/- glyph from assistive tech', () => {
+    const line = screen.getByLabelText('added line 2: "version": "1.1.0",');
+    const decorations = Array.from(line.children).slice(0, 3);
+    expect(decorations).toHaveLength(3);
+    for (const span of decorations) {
+      expect(span).toHaveAttribute('aria-hidden', 'true');
+    }
+  });
+});
+
+describe('DiffView — long-line and large-file handling', () => {
+  it('does not break identifiers mid-token', () => {
+    render(<DiffView fileDiffs={[rootModifiedFile]} />);
+    fireEvent.click(screen.getByRole('button', { name: /package\.json/ }));
+
+    const content = screen.getByText('"version": "1.1.0",');
+    expect(content.className).toContain('whitespace-pre');
+    expect(content.className).not.toContain('break-all');
+  });
+
+  it('lets the browser skip off-screen lines', () => {
+    render(<DiffView fileDiffs={[rootModifiedFile]} />);
+    fireEvent.click(screen.getByRole('button', { name: /package\.json/ }));
+
+    const line = screen.getByLabelText('added line 2: "version": "1.1.0",');
+    expect(line.style.contentVisibility).toBe('auto');
+    expect(line.style.containIntrinsicSize).not.toBe('');
+  });
+
+  it('gates a file above the line budget behind an explicit opt-in', () => {
+    render(<DiffView fileDiffs={[hugeFile(MAX_LINES_PER_FILE + 1)]} />);
+    fireEvent.click(screen.getByText('bundle.js'));
+
+    expect(screen.queryByText('const line0 = 0;')).not.toBeInTheDocument();
+    const showAnyway = screen.getByRole('button', { name: /show anyway/i });
+
+    fireEvent.click(showAnyway);
+    expect(screen.getByText('const line0 = 0;')).toBeInTheDocument();
+  });
+
+  it('renders a file at the line budget without a gate', () => {
+    render(<DiffView fileDiffs={[hugeFile(MAX_LINES_PER_FILE)]} />);
+    fireEvent.click(screen.getByText('bundle.js'));
+
+    expect(screen.queryByRole('button', { name: /show anyway/i })).not.toBeInTheDocument();
+    expect(screen.getByText('const line0 = 0;')).toBeInTheDocument();
+  });
+
+  it('re-applies the gate after switching to another oversized file', () => {
+    const other = { ...hugeFile(MAX_LINES_PER_FILE + 1), path: 'generated/other.js' };
+    render(<DiffView fileDiffs={[hugeFile(MAX_LINES_PER_FILE + 1), other]} />);
+
+    fireEvent.click(screen.getByText('bundle.js'));
+    fireEvent.click(screen.getByRole('button', { name: /show anyway/i }));
+    expect(screen.getByText('const line0 = 0;')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('other.js'));
+    expect(screen.getByRole('button', { name: /show anyway/i })).toBeInTheDocument();
+  });
+});
+
+describe('DiffView — files with no textual diff', () => {
+  it('explains a binary file instead of rendering nothing', () => {
+    render(<DiffView fileDiffs={[binaryFile]} />);
+    fireEvent.click(screen.getByText('logo.png'));
+
+    expect(screen.getByText('assets/logo.png')).toBeInTheDocument();
+    expect(screen.getByText(/binary file/i)).toBeInTheDocument();
+  });
+
+  it('explains a rename with no content change', () => {
+    render(<DiffView fileDiffs={[renameOnlyFile]} />);
+    fireEvent.click(screen.getByText('billing-service.ts'));
+
+    expect(screen.getByText('src/services/billing-service.ts')).toBeInTheDocument();
+    expect(screen.getByText(/renamed/i)).toBeInTheDocument();
   });
 });

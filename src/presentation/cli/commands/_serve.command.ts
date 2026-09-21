@@ -58,6 +58,8 @@ import type { IRepositoryRepository } from '@/application/ports/output/repositor
 import type { IGitHubRepositoryService } from '@/application/ports/output/services/github-repository-service.interface.js';
 import type { IDesktopNotifier } from '@/application/ports/output/services/i-desktop-notifier.js';
 import type { IDeploymentService } from '@/application/ports/output/services/deployment-service.interface.js';
+import { DaemonLogRotator } from '@/infrastructure/services/logging/daemon-log-rotator.js';
+import { getDaemonLogPath } from '@/infrastructure/services/filesystem/shep-directory.service.js';
 import type { IMessagingService } from '@/application/ports/output/services/messaging-service.interface.js';
 import { getCliI18n } from '../i18n.js';
 import type { IWorkflowRepository } from '@/application/ports/output/repositories/workflow-repository.interface.js';
@@ -100,6 +102,12 @@ export function createServeCommand(): Command {
         // Start the web server
         const service = container.resolve<IWebServerService>('IWebServerService');
         await service.start(port, dir, dev);
+
+        // Cap the daemon log while the daemon runs. start-daemon.ts rotates
+        // it once, at startup; without this a daemon up for weeks writes one
+        // unbounded file and the only thing that ever caps it is a restart.
+        const daemonLogRotator = new DaemonLogRotator(getDaemonLogPath());
+        daemonLogRotator.start();
 
         // Start notification watcher
         const runRepo = container.resolve<IAgentRunRepository>('IAgentRunRepository');
@@ -172,6 +180,7 @@ export function createServeCommand(): Command {
           if (hasWorkflowScheduler()) {
             getWorkflowScheduler().stop();
           }
+          daemonLogRotator.stop();
           getNotificationWatcher().stop();
           getAutoArchiveWatcher().stop();
           getStaleGoodFirstIssueWatcher().stop();

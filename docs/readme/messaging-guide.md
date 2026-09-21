@@ -52,7 +52,7 @@ Use these four pillars consistently. **Order matters — lead with #1.**
 
 ### 3. Agent-Agnostic
 **Message**: "Your agent, your choice. Swap per feature, per repo, anytime."
-**Proof point**: Claude Code, Cursor CLI, Gemini CLI — if it runs in a terminal, Shep can orchestrate it.
+**Proof point**: Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI and Cline all ship built-in, alongside OpenRouter, Together AI, Ollama and any OpenAI-compatible proxy — if it runs in a terminal, Shep can orchestrate it.
 
 ### 4. Optional Structure (Spec-Driven)
 **Message**: "For complex features, enable requirements, research, and planning with approval gates."
@@ -79,7 +79,7 @@ These are mistakes we've made in past iterations. **Do not repeat them.**
 
 ### BANNED: Singling out one agent (especially Claude Code)
 **Why**: Shep is agent-agnostic. Mentioning Claude Code specifically in examples, caveats, or trust sections makes it look like a Claude Code wrapper. All agents must appear equally or generically.
-**Instead say**: "Your agent" or list all three together: "Claude Code, Cursor CLI, or Gemini CLI."
+**Instead say**: "Your agent", or name several: "Claude Code, Kimi Code, Codex CLI, Cursor CLI or Gemini CLI." Never name only one, and never imply the list is three long — `AGENT_CATALOG` is the source of truth and currently carries twelve supported agents.
 
 ### BANNED: "Ship Features, Not Prompts"
 **Why**: Was the tagline for the spec-driven positioning. With the pivot to session management + configurability, it no longer fits. "Ship features" implies the full lifecycle; the new focus is on managing parallel sessions with configurable automation.

@@ -127,6 +127,11 @@ export function BulkActionToolbar({ states, onBulkAction }: BulkActionToolbarPro
     <>
       <div
         data-testid="bulk-action-toolbar"
+        // Styling hook for globals.css: while this toolbar is mounted, the
+        // bottom-centre Toaster lifts its stack clear of it instead of
+        // landing on top. Kept separate from data-testid so the collision fix
+        // does not depend on a test identifier.
+        data-bulk-action-toolbar
         className={cn(
           'bg-background fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2',
           'rounded-lg border px-4 py-2 shadow-lg'

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { Paperclip, Trash2, Download, Upload, FileIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import type { PmAttachment } from '@shepai/core/domain/generated/output';
@@ -78,6 +79,8 @@ export function AttachmentList({
     const result = await deleteAttachment(attachmentId);
     if (!result.error) {
       setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } else {
+      toast.error(result.error);
     }
   }, []);
 
@@ -148,6 +151,7 @@ export function AttachmentList({
                   className="text-destructive h-5 w-5 p-0"
                   onClick={() => handleDelete(att.id)}
                   title="Delete"
+                  data-testid={`delete-attachment-${att.id}`}
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>

@@ -17,15 +17,56 @@ export interface PrParseResult {
   number: number;
 }
 
+/**
+ * `indeterminate` means the agent could not establish CI's verdict at all
+ * (rate limit, API error). It is neither a pass nor a failure and must never
+ * be collapsed into either.
+ */
+export type CiWatchParseStatus = 'success' | 'failure' | 'indeterminate';
+
 export interface CiWatchParseResult {
-  status: 'success' | 'failure';
+  status: CiWatchParseStatus;
   summary?: string;
   runUrl?: string;
 }
 
-// Matches CI_STATUS: PASSED or CI_STATUS: FAILED — <summary>
-const CI_STATUS_PASSED_RE = /CI_STATUS:\s*PASSED/;
-const CI_STATUS_FAILED_RE = /CI_STATUS:\s*FAILED(?:\s*—\s*(.+))?/;
+/**
+ * Leading noise allowed before the CI_STATUS marker on its own line:
+ * indentation, a markdown list bullet, a blockquote arrow, emphasis.
+ *
+ * The marker is anchored to the start of the line on purpose. The ci-watch
+ * prompt asks the agent to summarise which runs failed, so a FAILED line
+ * routinely quotes the word PASSED ("3 of 4 runs reported CI_STATUS: PASSED,
+ * but lint failed"), and prose that merely restates the instructions must
+ * never be read as a verdict.
+ */
+const CI_STATUS_LINE_PREFIX = String.raw`^[\s>*_-]*CI_STATUS\s*:?\s*`;
+
+/** Separators a model uses between FAILED and its summary: — – - : or none. */
+const CI_SUMMARY_SEPARATOR = String.raw`(?:[—–:-]\s*)?`;
+
+// Matches CI_STATUS: PASSED / CI_STATUS: FAILED <sep> <summary>, line-anchored.
+const CI_STATUS_PASSED_RE = new RegExp(`${CI_STATUS_LINE_PREFIX}PASSED`, 'i');
+const CI_STATUS_FAILED_RE = new RegExp(
+  `${CI_STATUS_LINE_PREFIX}FAILED\\s*${CI_SUMMARY_SEPARATOR}(.*)$`,
+  'i'
+);
+const CI_STATUS_INDETERMINATE_RE = new RegExp(
+  `${CI_STATUS_LINE_PREFIX}INDETERMINATE\\s*${CI_SUMMARY_SEPARATOR}(.*)$`,
+  'i'
+);
+
+/** Markdown emphasis characters trimmed off a captured summary. */
+const SUMMARY_TRIM_RE = /^[\s*_]+|[\s*_]+$/g;
+
+/** Summary recorded when CI failed but the agent gave no detail. */
+const NO_DETAIL_SUMMARY = 'CI failed (no details provided)';
+
+/** Summary recorded when the agent reported INDETERMINATE without detail. */
+const INDETERMINATE_SUMMARY = 'CI status could not be read';
+
+/** Summary recorded when no CI_STATUS marker could be found at all. */
+const UNDETERMINED_SUMMARY = 'CI status could not be determined from agent output';
 
 // Matches GitHub Actions run URL
 const RUN_URL_RE = /(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+)/;
@@ -53,7 +94,7 @@ export function parsePrUrl(output: string): PrParseResult | null {
 
 /**
  * Extract CI watch result from agent output text.
- * Looks for CI_STATUS: PASSED or CI_STATUS: FAILED markers.
+ * Looks for CI_STATUS: PASSED / FAILED / INDETERMINATE markers.
  * When multiple CI_STATUS markers appear, uses the last one.
  * Returns failure with diagnostic summary if no marker found.
  */
@@ -61,23 +102,30 @@ export function parseCiWatchResult(output: string): CiWatchParseResult {
   const runUrlMatch = output.match(RUN_URL_RE);
   const runUrl = runUrlMatch ? runUrlMatch[1] : undefined;
 
-  // Split into lines and check from bottom up (last status wins)
+  // Split into lines and check from bottom up (last status wins).
+  // FAILED is tested BEFORE PASSED on each line: a failing verdict whose
+  // summary quotes "PASSED" must resolve to failure, never to success.
   const lines = output.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    if (CI_STATUS_PASSED_RE.test(line)) {
-      return { status: 'success', runUrl };
-    }
     const failedMatch = line.match(CI_STATUS_FAILED_RE);
     if (failedMatch) {
-      const summary = failedMatch[1]?.trim() || 'CI failed (no details provided)';
+      const summary = failedMatch[1]?.replace(SUMMARY_TRIM_RE, '') || NO_DETAIL_SUMMARY;
       return { status: 'failure', summary, runUrl };
+    }
+    const indeterminateMatch = line.match(CI_STATUS_INDETERMINATE_RE);
+    if (indeterminateMatch) {
+      const summary = indeterminateMatch[1]?.replace(SUMMARY_TRIM_RE, '') || INDETERMINATE_SUMMARY;
+      return { status: 'indeterminate', summary, runUrl };
+    }
+    if (CI_STATUS_PASSED_RE.test(line)) {
+      return { status: 'success', runUrl };
     }
   }
 
   return {
     status: 'failure',
-    summary: 'CI status could not be determined from agent output',
+    summary: UNDETERMINED_SUMMARY,
     runUrl,
   };
 }

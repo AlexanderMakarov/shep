@@ -15,6 +15,7 @@ import {
   GitForkErrorCode,
 } from '../../../application/ports/output/services/git-fork-service.interface.js';
 import { PrStatus } from '../../../domain/generated/output.js';
+import { assertSafeGitRef } from '../../../domain/shared/git-ref-argument.js';
 import type { ExecFunction } from './worktree.service.js';
 import { applyPrBranding } from './pr-branding.js';
 
@@ -109,8 +110,10 @@ export class GitForkService implements IGitForkService {
   }
 
   async pushToFork(cwd: string, branch: string): Promise<void> {
+    assertSafeGitRef(branch, 'branch');
+
     try {
-      await this.execFile('git', ['push', '-u', 'origin', branch], { cwd });
+      await this.execFile('git', ['push', '-u', 'origin', '--', branch], { cwd });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new GitForkError(
@@ -128,6 +131,9 @@ export class GitForkService implements IGitForkService {
     head: string,
     base: string
   ): Promise<UpstreamPrResult> {
+    assertSafeGitRef(head, 'head');
+    assertSafeGitRef(base, 'base');
+
     try {
       // Get the upstream repo identifier
       const { stdout: upstreamUrl } = await this.execFile(

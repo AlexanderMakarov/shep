@@ -1,14 +1,3 @@
-/**
- * PR merge test (KNOWN BUG — it.fails).
- *
- * push=true, openPr=true, allowMerge=true, remote=yes
- * Expected: push + PR + PR merge → merge lands in base.
- * Bug: verifyMerge() is SKIPPED when prUrl is set → merge node reports
- * success without verifying that 'gh pr merge' actually merged the branch.
- *
- * See: merge.node.ts line ~205 — verifyMerge() is guarded by `if (!prUrl)`.
- */
-
 import 'reflect-metadata';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
@@ -26,10 +15,10 @@ import {
   buildDeps,
   makeState,
 } from './setup.js';
-import { assertMergeLanded } from './helpers.js';
+import { GitPrErrorCode } from '@/application/ports/output/services/git-pr-service.interface.js';
 import { FAKE_PR_URL } from './fixtures.js';
 
-describe('Merge Step — PR Merge (Known Bug)', () => {
+describe('Merge Step — confirmed remote PR merge', () => {
   let stdoutSpy: ReturnType<typeof vi.spyOn>;
   let stderrSpy: ReturnType<typeof vi.spyOn>;
   let harnessToCleanup: string[] = [];
@@ -51,30 +40,37 @@ describe('Merge Step — PR Merge (Known Bug)', () => {
     harnessToCleanup = [];
   });
 
-  // BUG: verifyMerge() is skipped when prUrl is set, so the node reports
-  // merge success without verifying that 'gh pr merge' actually merged the branch.
-  // This test turns GREEN only after the fix: call verifyMerge() regardless of prUrl.
-  it.fails(
-    'push=true, openPr=true, allowMerge=true → BUG: verifyMerge skipped after gh pr merge',
-    async () => {
+  it.each(['OPEN', 'MERGED'] as const)(
+    'only completes and cleans up when GitHub confirms %s',
+    async (remoteState) => {
       const harness = await createGitHarness();
       harnessToCleanup.push(harness.bareDir, harness.cloneDir);
-
       const tempDir = mkdtempSync(join(tmpdir(), 'shep-test-spec-'));
       harnessToCleanup.push(tempDir);
-
-      // Pre-populate completedPhases: ["merge"] to simulate post-Phase-1 state.
       const specDir = makeSpecDir(tempDir, ['merge']);
-
       const realExec = makeRealExec();
       const selectiveExec = makeSelectiveExec(realExec);
-
+      const featureSha = (await harness.runGit(['rev-parse', harness.featureBranch])).stdout.trim();
+      const initialBaseSha = (await harness.runGit(['rev-parse', 'main'])).stdout.trim();
+      const execFn: typeof realExec = async (file, args, options) => {
+        if (file === 'gh' && args[0] === 'pr' && args[1] === 'merge') {
+          if (remoteState === 'MERGED') {
+            // GitHub advances the remote base; the local checkout is deliberately stale.
+            await realExec('git', ['update-ref', 'refs/heads/main', featureSha], {
+              cwd: harness.bareDir,
+            });
+          }
+          return { stdout: '', stderr: '' };
+        }
+        if (file === 'gh' && args.includes('.state')) {
+          return { stdout: remoteState, stderr: '' };
+        }
+        return selectiveExec(file, args, options);
+      };
       const { deps, featureRepository } = buildDeps({
-        execFn: selectiveExec,
+        execFn,
         featureBranch: harness.featureBranch,
-        executorOutput: '[feat/test abc1234] feat: implement\nDone.',
       });
-
       const state = makeState({
         repositoryPath: harness.cloneDir,
         worktreePath: harness.cloneDir,
@@ -85,19 +81,27 @@ describe('Merge Step — PR Merge (Known Bug)', () => {
         prUrl: FAKE_PR_URL,
         prNumber: 42,
       });
-
       const mergeNode = createMergeNode(deps);
 
-      // The node completes without throwing (gh pr merge mock returns "" — no error).
-      // BUT verifyMerge() is SKIPPED because prUrl is set.
-      await mergeNode(state);
-
-      // RED: The feature branch is NOT an ancestor of main after node completes.
-      await assertMergeLanded(harness.runGit, harness.featureBranch, 'main');
-
-      expect(featureRepository.update).toHaveBeenCalledWith(
-        expect.objectContaining({ lifecycle: 'Maintain' })
-      );
+      if (remoteState === 'OPEN') {
+        await expect(mergeNode(state)).rejects.toMatchObject({ code: GitPrErrorCode.MERGE_FAILED });
+        expect(featureRepository.update).not.toHaveBeenCalledWith(
+          expect.objectContaining({ lifecycle: 'Maintain' })
+        );
+        expect(deps.cleanupFeatureWorktreeUseCase.execute).not.toHaveBeenCalled();
+        expect((await harness.runGit(['rev-parse', harness.featureBranch])).stdout.trim()).toBe(
+          featureSha
+        );
+      } else {
+        await expect(mergeNode(state)).resolves.toMatchObject({ merged: true });
+        expect(featureRepository.update).toHaveBeenCalledWith(
+          expect.objectContaining({ lifecycle: 'Maintain' })
+        );
+        expect(deps.cleanupFeatureWorktreeUseCase.execute).toHaveBeenCalledOnce();
+        const remoteBase = await realExec('git', ['rev-parse', 'main'], { cwd: harness.bareDir });
+        expect(remoteBase.stdout.trim()).toBe(featureSha);
+      }
+      expect((await harness.runGit(['rev-parse', 'main'])).stdout.trim()).toBe(initialBaseSha);
     }
   );
 });

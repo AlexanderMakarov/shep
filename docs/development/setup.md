@@ -8,11 +8,18 @@ Complete guide to setting up a development environment for Shep AI CLI.
 
 | Tool    | Version | Purpose            |
 | ------- | ------- | ------------------ |
-| Node.js | 18+     | Runtime            |
-| pnpm    | 8+      | Package management |
+| Node.js | 22+     | Runtime            |
+| pnpm    | 10+     | Package management |
 | Git     | 2.30+   | Version control    |
 
-Install pnpm: `npm install -g pnpm`
+Node 22 is pinned in `.nvmrc` and enforced by `engines.node` (`>=22.0.0`); every CI
+workflow runs on Node 22.
+
+pnpm **10 or newer** is required by `engines.pnpm`; `packageManager` pins
+`pnpm@10.33.0`. The minimum was raised from 8 to 10 to match the CI toolchain.
+
+Install pnpm: `npm install -g pnpm@10` (or `corepack enable`, which picks up the
+`packageManager` field automatically)
 
 ### Recommended
 
@@ -29,7 +36,7 @@ Install pnpm: `npm install -g pnpm`
 
 ```bash
 git clone https://github.com/shep-ai/shep.git
-cd cli
+cd shep
 ```
 
 ### 2. Install Dependencies
@@ -60,7 +67,7 @@ pnpm typecheck
 # Run tests
 pnpm test
 
-# Build
+# Build the CLI (`pnpm build` is an alias for `pnpm build:cli`)
 pnpm build
 
 # Start Storybook (design system)
@@ -69,36 +76,49 @@ pnpm dev:storybook
 
 ## Project Structure
 
+This is a pnpm monorepo. `pnpm-workspace.yaml` declares **four** workspaces: the
+repository root (the CLI), `packages/core`, `src/presentation/web` and
+`packages/electron`.
+
 ```
-cli/
-├── packages/core/src/
-│   ├── domain/           # Business logic (no deps)
-│   │   ├── entities/
-│   │   ├── value-objects/
-│   │   └── services/
-│   ├── application/      # Use cases and ports
-│   │   ├── use-cases/
-│   │   ├── ports/
-│   │   └── services/
-│   └── infrastructure/   # External implementations
-│       ├── repositories/
-│       ├── agents/
-│       ├── persistence/
-│       └── services/
+shep/
+├── packages/
+│   ├── core/src/             # @shepai/core — domain, application, infrastructure
+│   │   ├── domain/           # Business logic (no deps)
+│   │   │   ├── shared/
+│   │   │   ├── value-objects/
+│   │   │   ├── factories/
+│   │   │   ├── aspm/
+│   │   │   └── generated/    # TypeSpec output — DO NOT EDIT
+│   │   ├── application/      # Use cases and ports
+│   │   │   ├── use-cases/
+│   │   │   ├── ports/
+│   │   │   └── services/
+│   │   └── infrastructure/   # External implementations
+│   │       ├── di/           # tsyringe container (composition root)
+│   │       ├── repositories/
+│   │       ├── persistence/  # SQLite + umzug migrations
+│   │       ├── adapters/
+│   │       ├── templates/
+│   │       └── services/     # incl. services/agents/ (executors, feature-agent)
+│   └── electron/             # @shepai/electron — desktop shell
 ├── src/
 │   └── presentation/     # UI layers
 │       ├── cli/          # Commander-based CLI
 │       ├── tui/          # @inquirer/prompts interactive wizards
-│       └── web/          # Next.js + shadcn/ui
+│       └── web/          # @shepai/web — Next.js + shadcn/ui
 │           ├── app/      # Next.js App Router
 │           ├── components/
 │           │   ├── ui/   # shadcn/ui components
 │           │   └── ...   # Feature components
 │           └── stories/  # Storybook stories
+├── tsp/                  # TypeSpec domain models (source of truth)
+├── translations/         # TUI/CLI i18n bundles
 ├── tests/
 │   ├── unit/             # Vitest unit tests
 │   ├── integration/      # Vitest integration tests
-│   └── e2e/              # Playwright e2e tests
+│   ├── e2e/              # cli/ + tui/ (Vitest) and web/ (Playwright)
+│   └── helpers/          # Shared test utilities
 ├── docs/                 # Documentation
 ├── scripts/              # Build/dev scripts
 ├── .storybook/           # Storybook config
@@ -145,7 +165,7 @@ Debug configuration (`.vscode/launch.json`):
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/src/presentation/cli/index.ts",
-      "runtimeArgs": ["-r", "ts-node/register"],
+      "runtimeArgs": ["--import", "tsx"],
       "console": "integratedTerminal"
     },
     {
@@ -193,13 +213,17 @@ pnpm unlink --global @shepai/cli
 
 ### Database Development
 
-Development database location: `~/.shep/repos/...`
+Shep keeps a single SQLite database at `~/.shep/data` (`getShepDbPath()` in
+`packages/core/src/infrastructure/services/filesystem/shep-directory.service.ts`).
+Set `SHEP_HOME` to point the whole `~/.shep` tree somewhere else — handy for
+running against a throwaway database.
 
-Database migrations run automatically via the `user_version` pragma when the CLI bootstraps. To inspect the database manually:
+Migrations run automatically (umzug) when the CLI bootstraps. To inspect the
+database manually:
 
 ```bash
 # Using sqlite3 CLI
-sqlite3 ~/.shep/repos/<encoded-path>/data
+sqlite3 ~/.shep/data
 
 # Common queries
 .tables
@@ -234,28 +258,31 @@ pnpm test:single tests/unit/domain/entities/feature.test.ts
 
 ### Test Database
 
-Tests use in-memory SQLite:
+Tests use in-memory SQLite via `tests/helpers/database.helper.ts`:
 
 ```typescript
-// tests/helpers/db.ts
-export function createTestDatabase(): Database {
-  return new Database(':memory:');
-}
+import { createInMemoryDatabase } from '@tests/helpers/database.helper';
+
+const db = createInMemoryDatabase(); // pragmas already tuned for tests
+// ...
+db.close(); // the database disappears with the connection
 ```
 
 ## Debugging
 
 ### Enable Debug Logging
 
+`DEBUG` is a plain on/off switch, **not** a namespace filter — the code checks
+`!!process.env.DEBUG` (`deployment-logger.ts`) and `if (process.env.DEBUG)`
+(`src/presentation/cli/ui/messages.ts`). Any truthy value works; use `DEBUG=1`.
+
 ```bash
-# Via environment variable
-DEBUG=shep:* pnpm dev:cli
-
-# Or specific modules
-DEBUG=shep:agents:* pnpm dev:cli
-
-# Enable deployment service logging (dev server start/stop, port detection)
+# Verbose CLI messages + deployment service logging
+# (dev server start/stop, port detection)
 DEBUG=1 pnpm dev:cli
+
+# Verbose SQLite: log every statement and umzug migration step
+DEBUG_SQL=1 pnpm dev:cli
 ```
 
 For web UI client-side debug logging, add to `src/presentation/web/.env.local`:
@@ -264,26 +291,41 @@ For web UI client-side debug logging, add to `src/presentation/web/.env.local`:
 NEXT_PUBLIC_DEBUG=1
 ```
 
-### Debug Agent Execution
+### Environment Variables
 
-```typescript
-// Add to agent config
-{
-  "agents": {
-    "logging": {
-      "level": "debug",
-      "includeMessages": true,
-      "includePayloads": true
-    }
-  }
-}
-```
+Shep has no config file — settings live in SQLite and are edited with
+`shep settings …`. These are the environment variables you are likely to use
+during development:
+
+| Variable        | Effect                                                                                                                  |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `SHEP_HOME`     | Overrides the `~/.shep` home directory (database, logs, worktree metadata). Useful for an isolated scratch instance.     |
+| `DEBUG`         | Truthy → verbose CLI + deployment logging.                                                                              |
+| `DEBUG_SQL`     | Truthy → log every SQLite statement and migration step.                                                                 |
+| `SHEP_WEB_PORT` | **Internal, not an override.** The daemon writes the port it actually bound into this variable so the Next.js middleware can reject Host headers naming a different port (DNS-rebinding defence). |
+
+> There is no `.shep/config.json`, and no `SHEP_PORT`, `SHEP_HOST`,
+> `SHEP_API_KEY` or `SHEP_LOG_LEVEL`. If you find those in older notes, they
+> never existed.
+
+The web port is **not** set through the environment — pass `--port` to the
+command that starts the server (`shep start --port <n>` or `shep ui --port <n>`).
+The default is `4050` (`DEFAULT_PORT` in
+`packages/core/src/infrastructure/services/port.service.ts`); if it is taken, the
+CLI picks the next free port.
+
+Four further variables gate non-localhost access to the web UI and are worth
+knowing before you expose it: `SHEP_BIND_HOST`, `SHEP_ALLOW_PUBLIC_BIND`,
+`SHEP_ALLOWED_HOSTS` and `SHEP_WEB_REQUIRE_TOKEN`.
+
+Per-repository, Shep reads two optional files from `<repo>/.shep/`:
+`dev.json` (dev-server run config) and `ownership.yaml` (ASPM ownership import).
 
 ### Inspect SQLite Database
 
 ```bash
 # Using sqlite3 CLI
-sqlite3 ~/.shep/repos/<encoded-path>/data
+sqlite3 ~/.shep/data
 
 # Common queries
 .tables
@@ -296,19 +338,18 @@ SELECT * FROM tasks WHERE feature_id = 'xxx';
 ### Node Version Mismatch
 
 ```bash
-# Check version
+# Check version — must be 22 or newer
 node --version
 
-# Use nvm to switch
-nvm use 20
+# Use nvm to switch (reads .nvmrc, which pins 22)
+nvm use
 ```
 
 ### Build Errors After Pull
 
 ```bash
-# Clean install
-rm -rf node_modules
-pnpm install
+# Clean install (removes dist, web, .next and node_modules, then reinstalls)
+pnpm reset:dev
 
 # Rebuild
 pnpm build
@@ -333,10 +374,10 @@ pnpm rebuild better-sqlite3
 
 ```bash
 # Install browsers
-pnpm exec playwright install
+pnpm exec playwright install --with-deps chromium
 
-# Run with debug
-pnpm test:e2e --debug
+# Run the browser suite with the Playwright inspector
+pnpm test:e2e:web --debug
 ```
 
 ---

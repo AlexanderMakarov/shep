@@ -99,6 +99,16 @@ describe('AgentModelPicker', () => {
     mockUpdateAgentAndModel.mockResolvedValue({ ok: true });
   });
 
+  it('reports model loading failure and can recover without remounting', async () => {
+    mockGetAllAgentModels.mockRejectedValueOnce(new Error('Connection lost'));
+    render(<AgentModelPicker initialAgentType="claude-code" initialModel="" mode="settings" />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Connection lost');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry loading agents' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeEnabled());
+    expect(mockGetAllAgentModels).toHaveBeenCalledTimes(2);
+  });
+
   it('re-syncs to parent-supplied agent and model values after initial render', async () => {
     const { rerender } = render(
       <AgentModelPicker

@@ -119,7 +119,11 @@
       "nodeVersionLabel": "Node Version",
       "dbPathLabel": "DB Path",
       "logFileLabel": "Log File",
-      "daemonConfigLabel": "Daemon Config"
+      "daemonConfigLabel": "Daemon Config",
+      "healthLabel": "Readiness",
+      "osLabel": "OS",
+      "gitShaLabel": "Git SHA",
+      "buildLabel": "Build"
     },
     "ui": {
       "description": "Start the Shep web UI",
@@ -815,6 +819,15 @@
           "empty": "No run plan was cached for {{path}}",
           "failed": "Failed to clear the run plan"
         }
+      },
+      "approve": {
+        "description": "Review and approve repository dev commands",
+        "fingerprintOption": "Approve only this reviewed command fingerprint",
+        "invalid": "No valid .shep/dev.json in {{path}}",
+        "review": "Review these commands, then repeat this command with --fingerprint {{fingerprint}}. Approval does not run them.",
+        "changed": "The fingerprint does not match the current config. Review it again before approving.",
+        "approved": "Repository dev commands approved. Start the dev server when ready.",
+        "failed": "Could not approve repository dev commands"
       }
     },
     "agent": {

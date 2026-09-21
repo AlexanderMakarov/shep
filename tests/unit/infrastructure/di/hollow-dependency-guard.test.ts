@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import ts from 'typescript';
 
 /** tsyringe keeps its token map private; the guard needs to enumerate it. */
 interface RegistryInternals {
@@ -29,19 +30,60 @@ interface Constructable {
 /**
  * Names of the constructor-injected fields of an instance.
  *
- * TypeScript assigns parameter properties in the constructor body, after any
- * declared field initializers have run — so the parameter properties are the
- * LAST `ctor.length` own keys. Slicing from the tail keeps plain optional state
- * (`private qr?: string`) out of the assertion.
+ * Read constructor assignments rather than relying on Object.keys ordering.
+ * Native class fields and downlevel transforms initialize fields in different
+ * orders; optional state must not be mistaken for a constructor dependency.
  */
-function injectedFields(ctor: Constructable, instance: object): string[] {
-  if (ctor.length === 0) {
-    return [];
+function injectedFields(ctor: Constructable): string[] {
+  if (ctor.length === 0) return [];
+  const source = ts.createSourceFile(
+    'constructor.ts',
+    `(${ctor.toString()})`,
+    ts.ScriptTarget.Latest
+  );
+  const fields = new Set<string>();
+  function visit(node: ts.Node): void {
+    if (ts.isConstructorDeclaration(node)) {
+      const parameters = new Set(
+        node.parameters.slice(0, ctor.length).map((p) => p.name.getText(source))
+      );
+      function assignment(child: ts.Node): void {
+        if (
+          ts.isBinaryExpression(child) &&
+          child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(child.left) &&
+          child.left.expression.kind === ts.SyntaxKind.ThisKeyword &&
+          ts.isIdentifier(child.right) &&
+          parameters.has(child.right.text)
+        ) {
+          fields.add(child.left.name.text);
+        }
+        ts.forEachChild(child, assignment);
+      }
+      if (node.body) assignment(node.body);
+    } else ts.forEachChild(node, visit);
   }
-  return Object.keys(instance).slice(-ctor.length);
+  visit(source);
+  return [...fields];
 }
 
 describe('DI container has no hollow constructor dependencies', () => {
+  it('identifies parameter assignments independently of optional class field order', () => {
+    class Example {
+      dependency: unknown;
+      optionalState?: string;
+      constructor(dependency: unknown) {
+        this.dependency = dependency;
+      }
+    }
+    expect(injectedFields(Example)).toEqual(['dependency']);
+    const broken = new Example(undefined);
+    expect(
+      injectedFields(Example).filter(
+        (key) => (broken as unknown as Record<string, unknown>)[key] === undefined
+      )
+    ).toEqual(['dependency']);
+  });
   it('injects every constructor parameter of every registered class token', async () => {
     const { initializeContainer } = await import('@/infrastructure/di/container.js');
     const container = await initializeContainer();
@@ -68,7 +110,7 @@ describe('DI container has no hollow constructor dependencies', () => {
         continue;
       }
 
-      const undefinedFields = injectedFields(ctor, instance).filter(
+      const undefinedFields = injectedFields(ctor).filter(
         (field) => (instance as Record<string, unknown>)[field] === undefined
       );
       if (undefinedFields.length > 0) {

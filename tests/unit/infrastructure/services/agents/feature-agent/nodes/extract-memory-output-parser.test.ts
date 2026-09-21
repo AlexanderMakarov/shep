@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseMemoryEntries } from '@/infrastructure/services/agents/feature-agent/nodes/extract-memory-output-parser.js';
+import { FencedJsonFailure } from '@/infrastructure/services/agents/feature-agent/nodes/fenced-json.js';
 import { MemoryCategory } from '@/domain/generated/output.js';
 
 describe('parseMemoryEntries', () => {
@@ -12,7 +13,7 @@ describe('parseMemoryEntries', () => {
 ]
 \`\`\`
 more prose`;
-    const entries = parseMemoryEntries(out);
+    const { entries } = parseMemoryEntries(out);
     expect(entries).toHaveLength(2);
     expect(entries[0]).toEqual({
       category: MemoryCategory.Convention,
@@ -22,11 +23,11 @@ more prose`;
   });
 
   it('returns empty array when there is no JSON block', () => {
-    expect(parseMemoryEntries('just text')).toEqual([]);
+    expect(parseMemoryEntries('just text').entries).toEqual([]);
   });
 
   it('returns empty array on malformed JSON', () => {
-    expect(parseMemoryEntries('```json\n[ not json ]\n```')).toEqual([]);
+    expect(parseMemoryEntries('```json\n[ not json ]\n```').entries).toEqual([]);
   });
 
   it('drops entries with an invalid category', () => {
@@ -36,7 +37,7 @@ more prose`;
   { "category": "Library", "entryKey": "ok", "content": "keep" }
 ]
 \`\`\``;
-    const entries = parseMemoryEntries(out);
+    const { entries } = parseMemoryEntries(out);
     expect(entries).toHaveLength(1);
     expect(entries[0].entryKey).toBe('ok');
   });
@@ -49,7 +50,7 @@ more prose`;
   { "category": "Library", "entryKey": " trimmed ", "content": "  spaced  " }
 ]
 \`\`\``;
-    const entries = parseMemoryEntries(out);
+    const { entries } = parseMemoryEntries(out);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
       category: MemoryCategory.Library,
@@ -59,6 +60,37 @@ more prose`;
   });
 
   it('returns empty array when the JSON is not an array', () => {
-    expect(parseMemoryEntries('```json\n{"category":"Library"}\n```')).toEqual([]);
+    expect(parseMemoryEntries('```json\n{"category":"Library"}\n```').entries).toEqual([]);
+  });
+
+  // ── "found nothing" must be distinguishable from "could not read" ───────
+  it('reports no failure when the agent explicitly returned an empty list', () => {
+    const result = parseMemoryEntries('```json\n[]\n```');
+    expect(result.entries).toEqual([]);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it('reports NoBlock when the output contains no JSON at all', () => {
+    expect(parseMemoryEntries('just text').failure).toBe(FencedJsonFailure.NoBlock);
+  });
+
+  it('reports InvalidJson when the block cannot be parsed', () => {
+    expect(parseMemoryEntries('```json\n[ not json ]\n```').failure).toBe(
+      FencedJsonFailure.InvalidJson
+    );
+  });
+
+  it('reads an uppercase ```JSON fence', () => {
+    const { entries } = parseMemoryEntries(
+      '```JSON\n[{"category":"Library","entryKey":"k","content":"c"}]\n```'
+    );
+    expect(entries).toHaveLength(1);
+  });
+
+  it('reads a bare ``` fence', () => {
+    const { entries } = parseMemoryEntries(
+      '```\n[{"category":"Library","entryKey":"k","content":"c"}]\n```'
+    );
+    expect(entries).toHaveLength(1);
   });
 });

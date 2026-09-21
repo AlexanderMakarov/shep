@@ -10,6 +10,7 @@
  */
 
 import { Command, Option } from 'commander';
+import { formatBytes } from '@/domain/shared/format-bytes.js';
 import { OutputFormatter, type OutputFormat } from '../../ui/output.js';
 import { getShepDbPath } from '@/infrastructure/services/filesystem/shep-directory.service.js';
 import { getSettings } from '@/infrastructure/services/settings.service.js';
@@ -58,15 +59,9 @@ function getDatabaseMeta() {
   let size = 'unknown';
   try {
     const stats = statSync(dbPath);
-    size = formatFileSize(stats.size);
+    size = formatBytes(stats.size);
   } catch {
     // File may not be accessible
   }
   return { path: dbPath, size };
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

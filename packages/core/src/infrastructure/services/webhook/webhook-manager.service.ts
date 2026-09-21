@@ -22,6 +22,8 @@ import type {
   WebhookDeliveryRecord,
   GitHubWebhookService,
 } from './github-webhook.service.js';
+import type { ILogger } from '../../../application/ports/output/services/logger.interface.js';
+import { ConsoleLogger } from '../logging/console-logger';
 
 const SUBSCRIBED_EVENTS = ['pull_request', 'check_suite', 'check_run'] as const;
 
@@ -57,12 +59,24 @@ const TAG = '[WebhookManager]';
 export class WebhookManagerService {
   private readonly tunnelService: ITunnelService;
   private readonly webhookService: IWebhookService;
+  private readonly logger: ILogger;
   private running = false;
   private startedAt: string | null = null;
 
-  constructor(tunnelService: ITunnelService, webhookService: IWebhookService) {
+  constructor(
+    tunnelService: ITunnelService,
+    webhookService: IWebhookService,
+    /**
+     * Where this manager's output goes. It runs inside the daemon and wrote
+     * straight to `console.*`, so its output could not be levelled,
+     * filtered or redacted. Defaults to a ConsoleLogger so existing callers
+     * are unaffected; DI passes the container's ILogger.
+     */
+    logger: ILogger = new ConsoleLogger()
+  ) {
     this.tunnelService = tunnelService;
     this.webhookService = webhookService;
+    this.logger = logger;
   }
 
   /**
@@ -76,20 +90,17 @@ export class WebhookManagerService {
 
     try {
       // Step 1: Start the tunnel
-      // eslint-disable-next-line no-console
-      console.log(`${TAG} Starting Cloudflare Tunnel for port ${localPort}...`);
+      this.logger.info(`${TAG} Starting Cloudflare Tunnel for port ${localPort}...`);
       const publicUrl = await this.tunnelService.start(localPort);
 
       // Step 2: Listen for URL changes
       this.tunnelService.onUrlChange(async (newUrl) => {
-        // eslint-disable-next-line no-console
-        console.log(`${TAG} Tunnel URL changed, updating webhooks...`);
+        this.logger.info(`${TAG} Tunnel URL changed, updating webhooks...`);
         try {
           await this.webhookService.updateWebhookUrl(newUrl);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          // eslint-disable-next-line no-console
-          console.warn(`${TAG} Failed to update webhooks after URL change: ${msg}`);
+          this.logger.warn(`${TAG} Failed to update webhooks after URL change: ${msg}`);
         }
       });
 
@@ -98,12 +109,10 @@ export class WebhookManagerService {
 
       this.running = true;
       this.startedAt = new Date().toISOString();
-      // eslint-disable-next-line no-console
-      console.log(`${TAG} Webhook system ready (tunnel: ${publicUrl})`);
+      this.logger.info(`${TAG} Webhook system ready (tunnel: ${publicUrl})`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Failed to start webhook system (falling back to polling): ${msg}`);
+      this.logger.warn(`${TAG} Failed to start webhook system (falling back to polling): ${msg}`);
 
       // Clean up partial state
       try {
@@ -120,28 +129,24 @@ export class WebhookManagerService {
   async stop(): Promise<void> {
     if (!this.running) return;
 
-    // eslint-disable-next-line no-console
-    console.log(`${TAG} Shutting down webhook system...`);
+    this.logger.info(`${TAG} Shutting down webhook system...`);
 
     try {
       await this.webhookService.removeWebhooks();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Failed to remove webhooks during shutdown: ${msg}`);
+      this.logger.warn(`${TAG} Failed to remove webhooks during shutdown: ${msg}`);
     }
 
     try {
       await this.tunnelService.stop();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Failed to stop tunnel during shutdown: ${msg}`);
+      this.logger.warn(`${TAG} Failed to stop tunnel during shutdown: ${msg}`);
     }
 
     this.running = false;
-    // eslint-disable-next-line no-console
-    console.log(`${TAG} Webhook system stopped`);
+    this.logger.info(`${TAG} Webhook system stopped`);
   }
 
   async enableWebhookForRepo(repoPath: string): Promise<WebhookRepoResult> {
@@ -267,13 +272,16 @@ function setInstance(instance: WebhookManagerService | null): void {
  */
 export function initializeWebhookManager(
   tunnelService: ITunnelService,
-  webhookService: IWebhookService
+  webhookService: IWebhookService,
+  logger?: ILogger
 ): void {
   if (getInstance() !== null) {
     throw new Error('Webhook manager already initialized. Cannot re-initialize.');
   }
 
-  setInstance(new WebhookManagerService(tunnelService, webhookService));
+  setInstance(
+    new WebhookManagerService(tunnelService, webhookService, logger ?? new ConsoleLogger())
+  );
 }
 
 /**

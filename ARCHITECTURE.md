@@ -8,19 +8,21 @@ If you only read one section, read **The Four Layers**. Everything else in Shep 
 
 ## The Big Picture
 
-Shep is a TypeScript / Node.js SDLC platform that runs AI agents in parallel git worktrees. The codebase is a pnpm workspace with a single `packages/core/` package (the platform) and a top-level `src/` tree (the presentation surfaces — CLI, TUI, Web).
+Shep is a TypeScript / Node.js SDLC platform that runs AI agents in parallel git worktrees. The codebase is a pnpm workspace with **four packages** (`pnpm-workspace.yaml`): the root CLI package, `packages/core/` (the platform), `src/presentation/web/` (the Next.js dashboard) and `packages/electron/` (the desktop shell).
 
 ```
 shep/
 ├── tsp/                          # TypeSpec — domain models live here
-├── packages/core/src/
-│   ├── domain/                   # ← inner-most; no external deps
-│   ├── application/              # ← use cases + output ports
-│   └── infrastructure/           # ← adapters: SQLite, agents, GitHub, fs
-└── src/presentation/             # ← CLI, TUI, Web (Next.js)
+├── packages/
+│   ├── core/src/
+│   │   ├── domain/               # ← inner-most; no external deps
+│   │   ├── application/          # ← use cases + output ports
+│   │   └── infrastructure/       # ← adapters: SQLite, agents, GitHub, fs
+│   └── electron/                 # ← desktop shell (mac / win / linux builds)
+└── src/presentation/             # ← CLI, TUI, Web (Next.js; its own workspace)
 ```
 
-Dependencies point inward only: presentation depends on application, application depends on domain, infrastructure depends on application's port interfaces. Nothing outside infrastructure imports from infrastructure.
+Dependencies point inward only: presentation depends on application, application depends on domain, infrastructure depends on application's port interfaces. `domain/` and `application/` never import from `infrastructure/`. Presentation is the composition root, so it may resolve concrete services from the DI container — but only to reach a use case; business logic never lives in a command or component.
 
 ---
 
@@ -48,7 +50,7 @@ If you find yourself writing `if/else` business logic in a CLI command or React 
 
 ### 3. Infrastructure — `packages/core/src/infrastructure/`
 
-Adapters: SQLite repositories (`infrastructure/persistence/sqlite/`), agent executors (`infrastructure/agents/`), GitHub services, file-system utilities, Discord client, scheduling. Each adapter implements an output port from `application/ports/output/`.
+Adapters: SQLite repositories (`infrastructure/persistence/sqlite/`), agent executors (`infrastructure/services/agents/common/executors/`), GitHub services, file-system utilities, Discord client, scheduling. Each adapter implements an output port from `application/ports/output/`.
 
 This is the only layer allowed to import third-party SDKs (`@octokit/rest`, `better-sqlite3`, agent provider SDKs). DI wiring lives in `infrastructure/di/`.
 
@@ -70,10 +72,14 @@ The surfaces you actually interact with: a Commander-based CLI (`cli/`), an Ink-
 
 ### Agents
 
-Every LLM call goes through `IAgentExecutorProvider`. No component hardcodes Claude / Cursor / Gemini — the resolution flow is documented in [AGENTS.md](./AGENTS.md). Provider-specific code lives only in adapters under `infrastructure/agents/`.
+Every LLM call goes through `IAgentExecutorProvider`, which reads the user's choice from settings at call time. No component hardcodes an agent. Twelve agents are supported — Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline, OpenRouter, Together AI, Ollama, LLM Proxy and the `dev` mock; Aider and Continue are listed but have no executor yet.
 
+`packages/core/src/domain/shared/agent-catalog.ts` is the single source of truth for each agent's binary, tool id and model list, and is typed as a total `Record<AgentType, AgentDescriptor>` so a new enum member is a compile error until its row exists. Provider-specific code lives only in `packages/core/src/infrastructure/services/agents/common/executors/`.
+
+→ [AGENTS.md](./AGENTS.md#settings-driven-agent-resolution-mandatory)
 → [docs/architecture/agent-system.md](./docs/architecture/agent-system.md)
-→ [docs/development/adding-agents.md](./docs/development/adding-agents.md)
+→ [docs/development/adding-agent-types.md](./docs/development/adding-agent-types.md) — add a provider
+→ [docs/development/adding-agent-nodes.md](./docs/development/adding-agent-nodes.md) — add a LangGraph node
 
 ### Supervision & approval gates
 
@@ -113,16 +119,39 @@ A quick lookup when you're not sure which layer something belongs in:
 
 ## Mandatory Rules (skim before your first PR)
 
-These are enforced. Read [CLAUDE.md](./CLAUDE.md) for the canonical list.
+Read [CLAUDE.md](./CLAUDE.md) for the canonical list. The first group is checked mechanically —
+by CI, commitlint, or the compiler — so breaking one turns your PR red. The second group is a
+review convention the codebase does not yet fully satisfy: treat it as the direction of travel,
+and don't add to the debt.
 
-- **TDD**: failing test first, then implementation, then refactor
-- **TypeSpec-first**: domain concepts in `tsp/`, never in raw TS strings
-- **Agent resolution**: through `IAgentExecutorProvider`, never hardcoded
-- **Storybook stories**: every web component ships with `.stories.tsx`
-- **No infrastructure imports outside infrastructure**: define a port instead
-- **No singletons outside DI bootstrap**: inject by string token
-- **File length**: ~300 lines per file before refactor
-- **Conventional commits**: type + scope + lowercase imperative subject
+**Checked mechanically:**
+
+- **Tests pass**: unit, integration and E2E all run in CI, on Linux and Windows. (TDD itself —
+  failing test first, then implementation, then refactor — is a review expectation; what CI
+  checks is that the tests exist and are green.)
+- **TypeSpec-first**: domain concepts in `tsp/`, never in raw TS strings — CI re-runs
+  `pnpm generate` and fails if the generated output isn't committed
+- **`application/` never imports `infrastructure/`**: an ESLint `no-restricted-imports` rule
+  makes it an error, and `pnpm lint` runs with `--max-warnings 0`. `domain/` is clean by the
+  same convention. Presentation is the composition root and *does* import infrastructure to
+  resolve the DI container — that is expected; putting business logic there is not.
+- **Storybook stories**: every web component ships with `.stories.tsx` — the Storybook Build job
+  runs `check:stories`
+- **Conventional commits**: `type(scope): subject`, validated by commitlint in the `commit-msg`
+  hook and again on the PR. Scope is a **warning**, not an error, and `requireScope: false` on
+  the PR title check. Subject **case is not enforced** (`'subject-case': [0]`) — just keep it
+  under 72 characters with no trailing period.
+
+**Conventions (aspirational, not enforced):**
+
+- **Agent resolution**: every LLM call goes through `IAgentExecutorProvider`; no component
+  names an agent. Nothing lints this — it is caught in review.
+- **No singletons outside DI bootstrap**: inject by string token. A handful of module-level
+  accessors survive in infrastructure bootstrapping (`getSettings()`, `getShepHomeDir()`); never
+  call them from a use case.
+- **File length**: ~300 lines is the point at which a file probably does too much. It is a
+  smell, not a gate — no ESLint `max-lines` rule exists, and a few hundred files are currently
+  over it. Don't make a long file longer; split it while you're in there.
 
 ---
 

@@ -68,11 +68,11 @@ export function IdeTab({ applicationId }: IdeTabProps) {
   return (
     <div
       ref={containerRef}
-      className="bg-background flex h-full min-h-0 flex-1"
+      className="bg-background flex h-full min-h-0 flex-1 max-sm:flex-col-reverse"
       data-testid="ide-tab"
     >
       {/* Editor (left) */}
-      <section className="min-w-0 flex-1">
+      <section className="min-h-0 min-w-0 flex-1">
         <EditorPane
           applicationId={applicationId}
           openFiles={state.openFiles}
@@ -93,7 +93,7 @@ export function IdeTab({ applicationId }: IdeTabProps) {
         <div
           role="separator"
           aria-orientation="vertical"
-          className="border-border hover:bg-primary/20 relative w-px shrink-0 cursor-col-resize border-l transition-colors"
+          className="border-border hover:bg-primary/20 relative w-px shrink-0 cursor-col-resize border-l transition-colors max-sm:hidden"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -104,8 +104,9 @@ export function IdeTab({ applicationId }: IdeTabProps) {
 
       {/* File explorer (right) */}
       {!sidebarCollapsed && (
-        <aside
-          className="border-border flex min-h-0 shrink-0 flex-col border-l"
+        <section
+          aria-label="File explorer"
+          className="border-border flex min-h-0 shrink-0 flex-col border-l max-sm:h-44 max-sm:w-full! max-sm:border-b"
           style={{ width: treeWidth }}
         >
           <div className="text-muted-foreground border-border bg-muted/30 flex h-8 shrink-0 items-center justify-between border-b px-2 text-[10px] font-medium tracking-wide uppercase">
@@ -129,7 +130,7 @@ export function IdeTab({ applicationId }: IdeTabProps) {
               onOpenFile={handleTreeOpen}
             />
           </div>
-        </aside>
+        </section>
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation';
 import { resolve } from '@/lib/server-container';
 import type { IRepositoryRepository } from '@shepai/core/application/ports/output/repositories/repository-repository.interface';
 import { RepositoryDrawerClient } from '@/components/common/control-center-drawer/repository-drawer-client';
@@ -12,18 +13,17 @@ interface RepositoryDrawerPageProps {
 export default async function RepositoryDrawerPage({ params }: RepositoryDrawerPageProps) {
   const { repositoryId } = await params;
 
-  try {
-    const repoRepository = resolve<IRepositoryRepository>('IRepositoryRepository');
-    const repository = await repoRepository.findById(repositoryId);
+  // Deliberately uncaught: a catch-all here made every lookup failure
+  // indistinguishable from "no such repository" and opened nothing, with
+  // nothing logged. Real failures belong to `@drawer/error.tsx`.
+  const repoRepository = resolve<IRepositoryRepository>('IRepositoryRepository');
+  const repository = await repoRepository.findById(repositoryId);
 
-    if (!repository) return null;
+  if (!repository) notFound();
 
-    return (
-      <RepositoryDrawerClient
-        data={{ name: repository.name, repositoryPath: repository.path, id: repository.id }}
-      />
-    );
-  } catch {
-    return null;
-  }
+  return (
+    <RepositoryDrawerClient
+      data={{ name: repository.name, repositoryPath: repository.path, id: repository.id }}
+    />
+  );
 }

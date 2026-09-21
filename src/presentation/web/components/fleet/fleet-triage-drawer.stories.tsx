@@ -75,6 +75,10 @@ const ITEMS: FleetTriageItem[] = [
   },
 ];
 
+/**
+ * The working feed: every row links into its feature, the two P1 gates approve
+ * inline, and the footer clears both at once behind a confirmation.
+ */
 export const Default: Story = {
   args: {
     items: ITEMS,
@@ -94,9 +98,39 @@ export const Refreshing: Story = {
   },
 };
 
+/**
+ * The feed is still being read. Skeleton rows rather than the all-clear: an
+ * empty list mid-read is "not known yet", and saying "Nothing needs you right
+ * now" to an operator whose fleet is on fire is the worst thing this surface
+ * can do.
+ */
+export const Loading: Story = {
+  args: {
+    items: [],
+    open: true,
+    onOpenChange: noop,
+    onRefresh: noop,
+    loading: true,
+  },
+};
+
+/** A genuinely clear fleet — the read finished and found nothing. */
 export const Empty: Story = {
   args: {
     items: [],
+    open: true,
+    onOpenChange: noop,
+    onRefresh: noop,
+  },
+};
+
+/**
+ * Exceptions that exist but cannot be approved from here. The batch action is
+ * absent rather than disabled-at-zero, since there is nothing to explain.
+ */
+export const NothingApprovable: Story = {
+  args: {
+    items: ITEMS.filter((item) => item.category !== FleetTriageCategory.gate),
     open: true,
     onOpenChange: noop,
     onRefresh: noop,

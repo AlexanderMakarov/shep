@@ -201,6 +201,8 @@ export function ChatTab({
     runtime,
     status,
     clearChat,
+    stopAgent,
+    isStopping,
     sessionInfo,
     isChatLoading,
     pendingInteraction,
@@ -457,9 +459,17 @@ export function ChatTab({
   const showTracker = trackerSteps.length > 0;
   const workflowInFlight = isWorkflowInFlight(stepProgress);
 
+  // The composer's stop button must stop the AGENT (server-side), not just
+  // unwind local streaming state. `stopAgent` reports its own failure.
+  const handleStopAgent = useCallback(() => {
+    void stopAgent();
+  }, [stopAgent]);
+
   const composer = (
     <ChatComposer
       disabled={workflowInFlight}
+      onStop={handleStopAgent}
+      isStopping={isStopping}
       attachments={att.attachments}
       isDragOver={att.isDragOver}
       uploadError={att.uploadError}

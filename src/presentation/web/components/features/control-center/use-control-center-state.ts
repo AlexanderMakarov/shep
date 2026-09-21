@@ -508,20 +508,33 @@ export function useControlCenterState(
   const handleArchiveFeature = useCallback(
     (featureId: string) => {
       const nodeId = `feat-${featureId}`;
+
+      // Snapshot BEFORE the optimistic mutation. The rollback used to
+      // hard-code `'done'`, so a failed archive of a RUNNING feature
+      // repainted it as Done — a state it had never been in — and the
+      // canvas then disagreed with the database until the next poll.
+      // (Same pattern as handleDeleteFeature's prevStates map.)
+      const previousState = (
+        nodesRef.current.find((n) => n.id === nodeId)?.data as FeatureNodeData | undefined
+      )?.state;
+      const rollback = () => {
+        if (previousState) updateFeature(nodeId, { state: previousState });
+      };
+
       beginMutation();
       updateFeature(nodeId, { state: 'archived' });
 
       archiveFeature(featureId)
         .then((result) => {
           if (result.error) {
-            updateFeature(nodeId, { state: 'done' });
+            rollback();
             toast.error(result.error);
           } else {
             toast.success('Feature archived');
           }
         })
         .catch(() => {
-          updateFeature(nodeId, { state: 'done' });
+          rollback();
           toast.error('Failed to archive feature');
         })
         .finally(() => endMutation());

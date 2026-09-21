@@ -97,6 +97,25 @@ describe('createSupervisorAgent (LangGraph workflow)', () => {
     expect(decision.verdict).toBe(SupervisorVerdict.reject);
   });
 
+  it('does NOT approve when a rejection\'s rationale mentions "verdict: approve"', async () => {
+    // Regression: the gate evaluator auto-approves an agent run on an
+    // `approve` verdict, so a rejection that quotes the word must not parse
+    // as approval.
+    const executor = makeStubExecutor(
+      'I cannot give verdict: approve here.\nverdict: reject — the migration drops a table'
+    );
+    const agent = createSupervisorAgent({ executor });
+    const decision = await agent.evaluate({ event: gateEvent(), policy: makePolicy() });
+    expect(decision.verdict).toBe(SupervisorVerdict.reject);
+  });
+
+  it('escalates when the executor emits two conflicting verdict lines', async () => {
+    const executor = makeStubExecutor('verdict: approve\nverdict: reject');
+    const agent = createSupervisorAgent({ executor });
+    const decision = await agent.evaluate({ event: gateEvent(), policy: makePolicy() });
+    expect(decision.verdict).toBe(SupervisorVerdict.escalate);
+  });
+
   it('falls back to advise when the executor output omits a verdict line', async () => {
     const executor = makeStubExecutor('I have no opinion.');
     const agent = createSupervisorAgent({ executor });

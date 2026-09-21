@@ -16,6 +16,7 @@ export interface WebhooksPageClientProps {
 export function WebhooksPageClient({ initialStatus }: WebhooksPageClientProps) {
   const [status, setStatus] = useState<WebhookSystemStatus>(initialStatus);
   const [deliveries, setDeliveries] = useState<WebhookDeliveryRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -25,13 +26,14 @@ export function WebhooksPageClient({ initialStatus }: WebhooksPageClientProps) {
         fetch('/api/webhooks/status'),
         fetch('/api/webhooks/deliveries?limit=100'),
       ]);
-      if (statusRes.ok) {
-        setStatus(await statusRes.json());
-      }
-      if (deliveriesRes.ok) {
-        const data = await deliveriesRes.json();
-        setDeliveries(data.deliveries);
-      }
+      if (!statusRes.ok || !deliveriesRes.ok)
+        throw new Error('Unable to refresh webhooks. Try again.');
+      const [nextStatus, data] = await Promise.all([statusRes.json(), deliveriesRes.json()]);
+      setStatus(nextStatus);
+      setDeliveries(data.deliveries);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to refresh webhooks. Try again.');
     } finally {
       setRefreshing(false);
     }
@@ -55,6 +57,11 @@ export function WebhooksPageClient({ initialStatus }: WebhooksPageClientProps) {
         </Button>
       </PageHeader>
 
+      {error ? (
+        <p role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      ) : null}
       <WebhookStatusCards status={status} />
 
       <div className="grid gap-6 lg:grid-cols-3">

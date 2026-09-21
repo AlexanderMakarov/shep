@@ -105,7 +105,9 @@ function PromptSlotCard({
     >
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-col">
-          <h3 className="text-sm font-semibold">{entry.name}</h3>
+          <h2 id={`prompt-label-${entry.promptId}`} className="text-sm font-semibold">
+            {entry.name}
+          </h2>
           <p className="text-muted-foreground text-xs">{entry.description}</p>
           <p className="text-muted-foreground mt-1 font-mono text-[10px]">
             {entry.agentType}/{entry.promptId}
@@ -127,6 +129,7 @@ function PromptSlotCard({
       </header>
 
       <Textarea
+        aria-labelledby={`prompt-label-${entry.promptId}`}
         value={body}
         onChange={(e) => setBody(e.target.value)}
         rows={Math.min(20, Math.max(6, body.split('\n').length))}

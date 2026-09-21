@@ -1,0 +1,147 @@
+feature: 115-review-and-experience-polish
+run: c0057de92075
+status: completed-with-local-verification
+date: '2026-09-21'
+scope: >-
+  Follow the full-review skill across the web experience, starting from the user's dark-mode
+  Control Center screenshot. Preserve the existing PR history, shared checkout ownership,
+  visual language, domain catalog and settings-driven execution.
+baseline: e6e7e63eda77a386d26111dbbcc5a6c9d5331edd
+coverage:
+  routes: 43
+  routeViews: 172
+  themes: [light, dark]
+  viewports:
+    desktop: 1440x1000
+    phone: 390x844
+    narrow: 320x844
+    landscape: 844x390
+    zoomEquivalent: 1477x765
+  additionalViewportViews: 32
+  routeEvidence: ui-route-matrix.json
+  data: >-
+    An isolated SHEP_HOME with demo execution, test applications, repositories, features,
+    project states and work items, project memory, security findings and collaboration enabled.
+    The standard browser suite also exercises chat, attachments, approval questions, agent
+    editing, localization, messaging and cloud-provider connection UI with test fixtures.
+  architecture: >-
+    Changes stay in presentation components and their tests. Existing server actions and use
+    cases perform operations; agent artwork and tool IDs resolve through the domain catalog.
+  security: >-
+    Development origins are restricted to numeric loopback addresses in addition to Next's
+    existing localhost handling. Production request guards, credentials and authorization
+    remain unchanged. Browser fixture mutations use the isolated review home.
+  persistenceAndAgents: >-
+    No domain model, database migration, executor selection, provider SDK or dependency changes.
+    The complete unit and integration suites exercise the affected contracts.
+  performanceAndObservability: >-
+    Phone workspace switching preserves mounted pane state. Failed model loading, tool launches,
+    authentication checks, memory mutations and webhook refreshes provide visible errors and
+    recovery. No production throughput or memory benchmark was performed for this UI pass.
+repairs:
+  - title: Interactive development pages at numeric loopback addresses
+    trigger: >-
+      Next blocked development script requests opened through 127.0.0.1, leaving rendered pages
+      without working client controls.
+    result: >-
+      Explicit numeric loopback development origins restore hydration. Browser checks use the
+      user's 127.0.0.1 address instead of assuming localhost behaves identically.
+  - title: Dark agent artwork and broken Cursor image
+    trigger: Black monochrome artwork disappeared on the dark surface; Cursor failed to decode.
+    result: >-
+      A shared local-image component preserves colored artwork and inverts monochrome logos in
+      dark mode. Both agent and editor consumers use it, with colocated stories and regression tests.
+  - title: Mobile navigation and page reflow
+    trigger: >-
+      Phone navigation inherited collapsed desktop group behavior and stayed open after navigation;
+      application panes and project controls were squeezed or overflowed.
+    result: >-
+      A mobile shell trigger, route-aware drawer dismissal, independent group expansion,
+      full-width Conversation/Workspace switching and wrapping toolbars preserve reachable actions.
+      A final production screenshot also exposed a 10px overlap between the canvas status pill
+      and setup progress; mobile setup now reserves space below the pill.
+  - title: Settings navigation and early clicks
+    trigger: >-
+      Section controls clipped on narrow screens, smooth jumps were interrupted by loading content,
+      and an early toggle click was dropped before hydration with no settings save request.
+    result: >-
+      Named scrolling section navigation, stable jumps, responsive rows and a hydration guard keep
+      controls reachable and disable actions until handlers are ready. The existing disabled-chat
+      browser regression now confirms the setting takes effect.
+  - title: Accessible headings, landmarks, labels and menus
+    trigger: >-
+      Real browser scans found nested main landmarks, invalid heading roles, unnamed sliders and
+      filters, nested buttons, unnamed dialogs, missing tab-panel relationships and form controls
+      inside menu containers without menu semantics.
+    result: >-
+      Native controls and headings, explicit accessible names, linked panels, proper menu items,
+      keyboard menu navigation and larger dialog close targets repair the observed failures.
+  - title: Theme contrast in populated and error states
+    trigger: >-
+      Muted opacity, success and warning labels, unscanned security status and dark error text
+      failed contrast checks on their actual surfaces.
+    result: >-
+      Shared tokens and consumer colors now retain contrast in light and dark mode. Four new
+      design-token tests fail on the old dark error palette and pass on the corrected palette.
+  - title: Recoverable failed actions
+    trigger: >-
+      Rejected model loading, launch requests, authentication refreshes, memory saves/deletes and
+      webhook refreshes either rejected without useful feedback or lost their recovery path.
+    result: >-
+      Focused RED/GREEN tests now verify error announcements, preserved data, loading completion
+      and retry behavior. Cursor launch uses the catalog's tool ID.
+verification:
+  status: passed
+  unit: { files: 1062, tests: 12631, failures: 0 }
+  integration: { files: 152, tests: 1749, failures: 0, expectedFailures: 0 }
+  browser: { scenarios: 73, failures: 0, skipped: 0 }
+  interactionGroups: 13
+  interactionEvidence: ui-interactions.json
+  commandsAndRegressions: ui-verification.json
+  productionEvidence: ui-production-smoke.json
+  storyCoverage: { covered: 273, components: 340, grandfathered: 67 }
+  finalSpacingCheck: >-
+    After the full suites, the final mobile-only spacing correction passed both setup unit files
+    (21 tests). The production geometry assertion and screenshots verify the actual clearance.
+  additionalGates:
+    - Root and web TypeScript checks
+    - ESLint with zero warnings
+    - Prettier formatting
+    - Release and Storybook builds
+    - Story coverage
+    - Spec completeness, architecture and consistency
+delivery:
+  pullRequest: https://github.com/shep-ai/shep/pull/876
+  pushRemote: fork
+  branch: feat/115-review-and-experience-polish
+  integration: Existing history preserved; upstream main remains merged without conflicts.
+  localUrl: http://127.0.0.1:4050/control-center
+  localResult: >-
+    The release build was restarted on port 4050. Four production theme/viewport captures pass
+    image loading, automated accessibility, overflow and authenticated readiness checks. Both
+    numeric loopback and localhost Settings navigation work. Phone setup clears the status
+    badge by 22px. Existing user settings and projects were not changed by these smoke checks.
+limitations:
+  - >-
+    This is measured coverage of reachable routes, representative states and recorded interactions;
+    automated accessibility checks and screenshots do not prove every possible state is flawless.
+  - >-
+    The zoom check uses the equivalent CSS viewport for the user's 130% screenshot, rather than
+    automating the browser's zoom control.
+  - >-
+    Real paid LLM calls, cloud provisioning, production webhooks, operating-system tool installation,
+    desktop packaging and authenticated third-party flows were not executed by this UI review.
+  - >-
+    Existing coming-soon providers and CLI-only workflow creation remain explicit product states.
+    Gated workflow tests report a skip if the flag is disabled; this review enables it and requires
+    no skipped browser scenarios.
+  - >-
+    CI for the fork PR still requires maintainer workflow approval. Local verification is recorded
+    separately from GitHub's BLOCKED merge-state label.
+sources:
+  - url: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+    retrieved: '2026-09-21'
+  - url: https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html
+    retrieved: '2026-09-21'
+  - url: https://www.w3.org/WAI/WCAG22/Understanding/reflow.html
+    retrieved: '2026-09-21'

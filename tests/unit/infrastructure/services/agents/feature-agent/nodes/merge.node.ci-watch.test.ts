@@ -14,7 +14,10 @@
  * whose output is parsed via parseCiWatchResult (CI_STATUS markers).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Suppress logger output in tests
 vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -243,6 +246,22 @@ function baseState(overrides: Partial<FeatureAgentState> = {}): FeatureAgentStat
 
 describe('createMergeNode — CI watch/fix loop', () => {
   let deps: MergeNodeDeps;
+  // Two real directories: one with a GitHub Actions workflow, one without.
+  // "No CI run detected" means different things in each.
+  let repoWithCi: string;
+  let repoWithoutCi: string;
+
+  beforeAll(() => {
+    repoWithCi = mkdtempSync(join(tmpdir(), 'shep-ci-yes-'));
+    mkdirSync(join(repoWithCi, '.github', 'workflows'), { recursive: true });
+    writeFileSync(join(repoWithCi, '.github', 'workflows', 'ci.yml'), 'name: ci\n', 'utf-8');
+    repoWithoutCi = mkdtempSync(join(tmpdir(), 'shep-ci-no-'));
+  });
+
+  afterAll(() => {
+    rmSync(repoWithCi, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    rmSync(repoWithoutCi, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -306,26 +325,115 @@ describe('createMergeNode — CI watch/fix loop', () => {
       expect(result.ciStatus).toBe('Failure');
     });
 
-    it('should return Success ciStatus when no CI run and PR is mergeable', async () => {
+    it('should return NO ciStatus when no CI run and the repo has no CI configured', async () => {
+      // A repository with no workflows has nothing to wait for: record no CI
+      // status at all rather than inventing a pass, and do not block.
       deps.gitPrService.getCiStatus = vi.fn().mockResolvedValue({ status: 'pending' });
       deps.gitPrService.getMergeableStatus = vi.fn().mockResolvedValue(true);
       const node = createMergeNode(deps);
-      const state = baseState({ push: true, openPr: true });
+      const state = baseState({ push: true, openPr: true, worktreePath: repoWithoutCi });
       state.prNumber = 42;
       const result = await node(state);
 
       expect(deps.gitPrService.getMergeableStatus).toHaveBeenCalled();
-      expect(result.ciStatus).toBe('Success');
+      expect(result.ciStatus).toBeNull();
     });
 
-    it('should return Success ciStatus when no CI run and getMergeableStatus fails', async () => {
+    it('should return NO ciStatus when no CI run, no CI configured and getMergeableStatus fails', async () => {
       deps.gitPrService.getCiStatus = vi.fn().mockResolvedValue({ status: 'pending' });
       deps.gitPrService.getMergeableStatus = vi.fn().mockRejectedValue(new Error('API error'));
       const node = createMergeNode(deps);
-      const state = baseState({ push: true, openPr: true });
+      const state = baseState({ push: true, openPr: true, worktreePath: repoWithoutCi });
       state.prNumber = 42;
       const result = await node(state);
 
+      expect(result.ciStatus).toBeNull();
+    });
+
+    it('should return Indeterminate when CI IS configured but no run was observed', async () => {
+      // Absence of evidence is not evidence of success.
+      deps.gitPrService.getCiStatus = vi.fn().mockResolvedValue({ status: 'pending' });
+      deps.gitPrService.getMergeableStatus = vi.fn().mockResolvedValue(true);
+      const node = createMergeNode(deps);
+      const state = baseState({ push: true, openPr: true, worktreePath: repoWithCi });
+      state.prNumber = 42;
+      const result = await node(state);
+
+      expect(result.ciStatus).toBe('Indeterminate');
+      expect(result.merged).not.toBe(true);
+    });
+
+    it('should return Indeterminate when the GitHub API rate-limits the CI check', async () => {
+      deps.gitPrService.getCiStatus = vi
+        .fn()
+        .mockRejectedValue(new Error('API rate limit exceeded (403)'));
+      const node = createMergeNode(deps);
+      const result = await node(baseState({ push: true, worktreePath: repoWithCi }));
+
+      expect(result.ciStatus).toBe('Indeterminate');
+      expect(mockParseCiWatchResult).not.toHaveBeenCalled();
+    });
+
+    it('should escalate to the merge approval gate when CI is Indeterminate, even with allowMerge', async () => {
+      deps.gitPrService.getCiStatus = vi
+        .fn()
+        .mockRejectedValue(new Error('API rate limit exceeded (403)'));
+      mockShouldInterrupt.mockReturnValue(false); // allowMerge would auto-merge
+      const node = createMergeNode(deps);
+      const state = baseState({
+        push: true,
+        openPr: true,
+        worktreePath: repoWithCi,
+        approvalGates: { allowPrd: true, allowPlan: true, allowMerge: true },
+      });
+
+      await node(state);
+
+      expect(mockInterrupt).toHaveBeenCalledWith(
+        expect.objectContaining({ node: 'merge', ciStatus: 'Indeterminate' })
+      );
+      expect(deps.gitPrService.mergePr).not.toHaveBeenCalled();
+    });
+
+    it('should return Indeterminate when the watch agent reports INDETERMINATE', async () => {
+      mockParseCiWatchResult.mockReturnValue({
+        status: 'indeterminate',
+        summary: 'rate limited (403)',
+      });
+      const node = createMergeNode(deps);
+      const result = await node(baseState({ push: true, worktreePath: repoWithCi }));
+
+      expect(result.ciStatus).toBe('Indeterminate');
+      // No failure logs to fix against — the fix loop must not be entered.
+      expect(deps.gitPrService.getFailureLogs).not.toHaveBeenCalled();
+      expect(result.ciFixAttempts).toBe(0);
+    });
+
+    it('should return Indeterminate when the post-fix watch reports INDETERMINATE', async () => {
+      mockParseCiWatchResult
+        .mockReturnValueOnce({ status: 'failure', summary: 'Tests failed', runUrl: SAMPLE_RUN_URL })
+        .mockReturnValue({ status: 'indeterminate', summary: 'API error' });
+      const node = createMergeNode(deps);
+      const result = await node(baseState({ push: true, worktreePath: repoWithCi }));
+
+      expect(result.ciStatus).toBe('Indeterminate');
+      expect(result.ciFixAttempts).toBe(1);
+    });
+
+    it('should still auto-merge when CI passed and allowMerge is set', async () => {
+      mockParseCiWatchResult.mockReturnValue({ status: 'success' });
+      mockShouldInterrupt.mockReturnValue(false);
+      const node = createMergeNode(deps);
+      const state = baseState({
+        push: true,
+        openPr: true,
+        worktreePath: repoWithCi,
+        approvalGates: { allowPrd: true, allowPlan: true, allowMerge: true },
+      });
+
+      const result = await node(state);
+
+      expect(mockInterrupt).not.toHaveBeenCalled();
       expect(result.ciStatus).toBe('Success');
     });
   });

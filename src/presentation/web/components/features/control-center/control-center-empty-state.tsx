@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useId } from 'react';
 import {
   SendHorizontal,
   Paperclip,
@@ -25,6 +25,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAttachments } from '@/hooks/use-attachments';
@@ -77,6 +78,36 @@ const BUILD_MODE_CONFIG: Record<
   },
 };
 
+/**
+ * Physical key of the build-mode cycle chord: Alt+Shift+M ("M" = mode).
+ *
+ * It is deliberately NOT Shift+Tab — that belongs to backward keyboard
+ * navigation (WCAG 2.1.1 / 2.1.2) and must never be swallowed — and NOT
+ * Ctrl/Cmd+Shift+M, which the globally mounted `ChatSheet` already binds on
+ * `document` for maximize. `Alt+Shift+<letter>` is unclaimed by Chrome,
+ * Firefox, Safari and Edge.
+ *
+ * Matching on `event.code` keeps it layout independent: macOS composes
+ * Option+Shift+M into "Â", so `event.key` alone would miss it there.
+ */
+const MODE_CHORD_CODE = 'KeyM';
+const MODE_CHORD_KEY = 'm';
+
+/** True on macOS, for shortcut notation (see drawer-action-bar). */
+function isMacPlatform(): boolean {
+  return typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent);
+}
+
+/** Human-readable build-mode chord, in the platform's notation. */
+function getModeChordLabel(): string {
+  return isMacPlatform() ? '⌥⇧M' : 'Alt+Shift+M';
+}
+
+/** Human-readable submit chord (handled by the textarea's Ctrl/Cmd+Enter). */
+function getSubmitChordLabel(): string {
+  return isMacPlatform() ? '⌘↵' : 'Ctrl+↵';
+}
+
 export interface ControlCenterEmptyStateProps {
   onRepositorySelect?: (path: string) => void;
   onApplicationCreated?: (applicationId: string) => void;
@@ -113,7 +144,13 @@ export function ControlCenterEmptyState({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isFocused, setIsFocused] = useState(false);
+  // Announced to assistive tech whenever the build mode changes — switching
+  // mode changes what the agent does to the user's code, so it must not be a
+  // purely visual state change.
+  const [modeAnnouncement, setModeAnnouncement] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const promptId = useId();
+  const errorId = useId();
   const att = useAttachments();
 
   // Apps-only surface (no onRepositorySelect handler): fast/spec modes don't
@@ -122,27 +159,56 @@ export function ControlCenterEmptyState({
   const showModeDropdown = Boolean(onRepositorySelect);
   const effectiveMode: BuildMode = showModeDropdown ? buildMode : 'application';
 
-  // Circular mode switching with Shift+Tab, close overlay with Escape
-  const cycleBuildMode = useCallback(() => {
-    setBuildMode((prev) => {
-      const idx = BUILD_MODES.indexOf(prev);
-      return BUILD_MODES[(idx + 1) % BUILD_MODES.length];
-    });
-  }, []);
+  const modeChordLabel = getModeChordLabel();
+  const submitChordLabel = getSubmitChordLabel();
 
+  const selectBuildMode = useCallback(
+    (mode: BuildMode) => {
+      setBuildMode(mode);
+      setModeAnnouncement(
+        t('emptyState.buildModeChanged', 'Build mode: {{mode}}', {
+          mode: BUILD_MODE_CONFIG[mode].label,
+        })
+      );
+    },
+    [t]
+  );
+
+  const cycleBuildMode = useCallback(() => {
+    const idx = BUILD_MODES.indexOf(buildMode);
+    selectBuildMode(BUILD_MODES[(idx + 1) % BUILD_MODES.length]);
+  }, [buildMode, selectBuildMode]);
+
+  /**
+   * Build-mode chord, scoped to the composer subtree.
+   *
+   * This used to be a `window` listener that `preventDefault`ed EVERY
+   * Shift+Tab on the document, which made backward keyboard navigation
+   * impossible page-wide. It is now an explicit chord handled by React's
+   * `onKeyDown` on the composer container, so it can only fire while focus is
+   * inside the composer — and Shift+Tab is left alone.
+   */
+  const handleComposerKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!showModeDropdown) return;
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
+      if (e.code !== MODE_CHORD_CODE && e.key.toLowerCase() !== MODE_CHORD_KEY) return;
+      e.preventDefault();
+      cycleBuildMode();
+    },
+    [showModeDropdown, cycleBuildMode]
+  );
+
+  // Escape closes the overlay. Dialog-style dismissal is document-wide by
+  // convention, and it neither blocks navigation nor mutates anything.
   useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && onClose) onClose();
-      // Shift+Tab cycles only when the dropdown is actually visible —
-      // mutating hidden state would be confusing.
-      if (e.key === 'Tab' && e.shiftKey && onRepositorySelect) {
-        e.preventDefault();
-        cycleBuildMode();
-      }
+    if (!onClose) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
     };
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [onClose, cycleBuildMode, onRepositorySelect]);
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
 
   const handleSubmit = useCallback(async () => {
     if (!description.trim() || submitting) return;
@@ -330,6 +396,7 @@ export function ControlCenterEmptyState({
           <div
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
+            onKeyDown={handleComposerKeyDown}
             onDragEnter={att.handleDragEnter}
             onDragLeave={att.handleDragLeave}
             onDragOver={att.handleDragOver}
@@ -343,8 +410,14 @@ export function ControlCenterEmptyState({
               submitting && 'opacity-70'
             )}
           >
-            {/* Textarea — supports paste for images */}
+            {/* Textarea — supports paste for images. The placeholder rotates
+                with the build mode, so it can't serve as the field's name: a
+                visually hidden label carries it instead. */}
+            <label htmlFor={promptId} className="sr-only">
+              {t('emptyState.promptLabel', 'Describe what you want to build')}
+            </label>
             <textarea
+              id={promptId}
               ref={textareaRef}
               rows={2}
               autoFocus
@@ -354,6 +427,8 @@ export function ControlCenterEmptyState({
               onPaste={att.handlePaste}
               placeholder={modeConfig.placeholder}
               disabled={submitting}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? errorId : undefined}
               className="text-foreground placeholder:text-muted-foreground/60 max-h-[10rem] min-h-[4.5rem] w-full resize-none border-0 bg-transparent px-4 py-3.5 text-sm leading-relaxed focus:outline-none disabled:cursor-not-allowed"
             />
 
@@ -378,7 +453,9 @@ export function ControlCenterEmptyState({
 
             {/* Upload error */}
             {att.uploadError ? (
-              <p className="text-destructive px-4 pb-2 text-xs">{att.uploadError}</p>
+              <p role="alert" className="text-destructive px-4 pb-2 text-xs">
+                {att.uploadError}
+              </p>
             ) : null}
 
             {/* Controls bar */}
@@ -396,15 +473,22 @@ export function ControlCenterEmptyState({
               />
               <div className="flex-1" />
 
-              {/* Build mode dropdown — Shift+Tab to cycle. Only shown when
-                  the surface can actually act on fast/spec (i.e. there's an
-                  onRepositorySelect handler tied to a canvas). */}
+              {/* Build mode dropdown — Alt+Shift+M cycles it from inside the
+                  composer. Only shown when the surface can actually act on
+                  fast/spec (i.e. there's an onRepositorySelect handler tied to
+                  a canvas). */}
               {showModeDropdown ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
                       data-testid="build-mode-selector"
+                      title={`${t('emptyState.buildMode', 'Build mode')}: ${modeConfig.label} (${modeChordLabel})`}
+                      aria-label={`${t('emptyState.buildMode', 'Build mode')}: ${modeConfig.label}. ${t(
+                        'emptyState.buildModeChordHint',
+                        'Press {{chord}} to cycle build mode',
+                        { chord: modeChordLabel }
+                      )}`}
                       className="text-muted-foreground hover:text-foreground hover:bg-accent/50 flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors"
                     >
                       <span
@@ -425,7 +509,7 @@ export function ControlCenterEmptyState({
                       return (
                         <DropdownMenuItem
                           key={mode}
-                          onClick={() => setBuildMode(mode)}
+                          onClick={() => selectBuildMode(mode)}
                           data-testid={`build-mode-${mode}`}
                           className="flex items-center gap-2"
                         >
@@ -435,6 +519,16 @@ export function ControlCenterEmptyState({
                         </DropdownMenuItem>
                       );
                     })}
+                    <DropdownMenuSeparator />
+                    {/* Discoverability: the chord is only useful if it's
+                        visible. Hidden from ARIA because a `menu` should only
+                        expose `menuitem` children — screen-reader users get
+                        the same hint from the trigger's aria-label. */}
+                    <p aria-hidden="true" className="text-muted-foreground px-2 py-1 text-[11px]">
+                      {t('emptyState.buildModeChordHint', 'Press {{chord}} to cycle build mode', {
+                        chord: modeChordLabel,
+                      })}
+                    </p>
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
@@ -454,26 +548,47 @@ export function ControlCenterEmptyState({
                 <TooltipContent side="top">{t('chat.attachFiles')}</TooltipContent>
               </Tooltip>
 
-              <button
-                type="button"
-                onClick={handleSubmit}
-                disabled={!description.trim() || submitting}
-                className={cn(
-                  'bg-foreground text-background inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg',
-                  'hover:bg-foreground/90 disabled:pointer-events-none disabled:opacity-30',
-                  'transition-all duration-150'
-                )}
-              >
-                {submitting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <SendHorizontal className="h-3.5 w-3.5" />
-                )}
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={!description.trim() || submitting}
+                    aria-label={t('accessibility.send')}
+                    className={cn(
+                      'bg-foreground text-background inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg',
+                      'hover:bg-foreground/90 disabled:pointer-events-none disabled:opacity-30',
+                      'transition-all duration-150'
+                    )}
+                  >
+                    {submitting ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <SendHorizontal className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{`${t('accessibility.send')} (${submitChordLabel})`}</TooltipContent>
+              </Tooltip>
             </div>
           </div>
 
-          {error ? <p className="text-destructive mt-2 text-center text-sm">{error}</p> : null}
+          {/* Consequential state change — announce it rather than only
+              re-rendering the mode label. */}
+          <span
+            role="status"
+            aria-live="polite"
+            data-testid="build-mode-announcement"
+            className="sr-only"
+          >
+            {modeAnnouncement}
+          </span>
+
+          {error ? (
+            <p id={errorId} role="alert" className="text-destructive mt-2 text-center text-sm">
+              {error}
+            </p>
+          ) : null}
         </div>
 
         {/* Suggestion chips — re-animate on mode change */}

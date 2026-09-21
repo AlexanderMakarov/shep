@@ -58,9 +58,13 @@ describe('WorktreeService.addExisting', () => {
 
     await service.addExisting('/repo', 'my-branch', wtPath);
 
-    expect(mockExecFile).toHaveBeenCalledWith('git', ['worktree', 'add', wtPath, 'my-branch'], {
-      cwd: '/repo',
-    });
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'git',
+      ['worktree', 'add', '--', wtPath, 'my-branch'],
+      {
+        cwd: '/repo',
+      }
+    );
     // Verify -b is NOT in the args
     const addCall = mockExecFile.mock.calls[0];
     expect(addCall[1]).not.toContain('-b');
@@ -167,7 +171,7 @@ describe('WorktreeService.addExisting', () => {
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'git',
-      ['worktree', 'add', wtPath, 'origin/feat/remote'],
+      ['worktree', 'add', '--', wtPath, 'origin/feat/remote'],
       { cwd: '/repo' }
     );
     // Git creates a local branch tracking the remote, so the list shows the local branch name

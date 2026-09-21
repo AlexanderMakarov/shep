@@ -171,13 +171,62 @@ describe('ApplicationNode', () => {
       expect(onClick).toHaveBeenCalledOnce();
     });
 
-    it('calls onClick when Enter key is pressed', () => {
+    it('calls onClick when Enter key is pressed on the title', () => {
       const onClick = vi.fn();
       renderNode({ ...defaultData, onClick });
 
-      fireEvent.keyDown(screen.getByTestId('application-node-card'), { key: 'Enter' });
+      fireEvent.keyDown(screen.getByTestId('application-node-name'), { key: 'Enter' });
 
       expect(onClick).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('keyboard activation (P0-3)', () => {
+    it('exposes the application name — not the card — as the activatable control', () => {
+      renderNode({ ...defaultData, onClick: vi.fn() });
+
+      const title = screen.getByRole('button', { name: 'Dashboard App' });
+      expect(title).toBe(screen.getByTestId('application-node-name'));
+      expect(title).toHaveAttribute('tabindex', '0');
+      expect(screen.getByTestId('application-node-card')).not.toHaveAttribute('role', 'button');
+    });
+
+    it('gives the title a visible focus indicator', () => {
+      renderNode({ ...defaultData, onClick: vi.fn() });
+
+      expect(screen.getByTestId('application-node-name').className).toMatch(/focus-visible:/);
+    });
+
+    it('never nests a real button inside an element with role="button"', () => {
+      const { container } = renderNode({
+        ...defaultData,
+        onClick: vi.fn(),
+        onDelete: vi.fn(),
+        onCreateSddFeature: vi.fn(),
+      });
+
+      const nested = Array.from(container.querySelectorAll('button')).filter((b) =>
+        b.parentElement?.closest('[role="button"]')
+      );
+      expect(nested).toEqual([]);
+    });
+
+    it('opens the application on Space', () => {
+      const onClick = vi.fn();
+      renderNode({ ...defaultData, onClick });
+
+      fireEvent.keyDown(screen.getByTestId('application-node-name'), { key: ' ' });
+
+      expect(onClick).toHaveBeenCalledOnce();
+    });
+
+    it('ignores other keys', () => {
+      const onClick = vi.fn();
+      renderNode({ ...defaultData, onClick });
+
+      fireEvent.keyDown(screen.getByTestId('application-node-name'), { key: 'a' });
+
+      expect(onClick).not.toHaveBeenCalled();
     });
   });
 

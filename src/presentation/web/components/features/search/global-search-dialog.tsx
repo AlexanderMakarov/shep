@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { FolderKanban, FileText, Search, BookOpen } from 'lucide-react';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Command,
   CommandInput,
@@ -100,8 +100,14 @@ export function GlobalSearchDialog({ className }: GlobalSearchDialogProps) {
         data-testid="global-search-dialog"
         className="max-w-lg gap-0 overflow-hidden p-0"
       >
+        <DialogTitle className="sr-only">Search</DialogTitle>
+        <DialogDescription className="sr-only">
+          Search projects, work items, and pages.
+        </DialogDescription>
         <Command className={className}>
           <CommandInput
+            aria-label="Search projects, work items, and pages"
+            className="pe-10"
             placeholder="Search projects, work items, and pages..."
             value={query}
             onChange={handleQueryChange}

@@ -50,7 +50,11 @@ export const CircuitBreakerTripped: Story = {
   },
 };
 
-/** No features in the fleet — the dashboard renders nothing at all in this case. */
+/**
+ * No features in the fleet. This branch was unreachable dead code for as long
+ * as `FleetControl` returned `null` at zero; the control now renders through to
+ * it, so the bar holds its place instead of disappearing.
+ */
 export const Empty: Story = {
   args: {
     counts: {

@@ -14,22 +14,28 @@ Guides for developing and contributing to Shep AI CLI.
 | [building.md](./building.md)                           | Build process and tooling               |
 | [cicd.md](./cicd.md)                                   | CI/CD pipeline and Docker setup         |
 | [typespec-guide.md](./typespec-guide.md)               | TypeSpec domain modeling guide          |
-| [adding-agents.md](./adding-agents.md)                 | Adding new LangGraph agent nodes        |
+| [adding-agent-types.md](./adding-agent-types.md)       | Adding a new agent provider             |
+| [adding-agent-nodes.md](./adding-agent-nodes.md)       | Adding a new LangGraph agent node       |
 | [feature-yaml-protocol.md](./feature-yaml-protocol.md) | feature.yaml status tracking protocol   |
 | [web-component-library.md](./web-component-library.md) | Web UI component library reference      |
 | [shep-kit-reference.md](./shep-kit-reference.md)       | Shep-kit skills complete reference      |
+| [contributing-with-shep.md](./contributing-with-shep.md) | Contributing to Shep using Shep itself |
+| [dev-server-run-plan.md](./dev-server-run-plan.md)     | Dev-server run plans (`.shep/dev.json`) |
+| [messaging-local-setup.md](./messaging-local-setup.md) | Messaging remote control, local setup   |
 
 ## Quick Start for Contributors
+
+Requires **Node 22+** and **pnpm 10+**.
 
 ```bash
 # Clone repository
 git clone https://github.com/shep-ai/shep.git
-cd cli
+cd shep
 
 # Install dependencies
 pnpm install
 
-# Build
+# Build the CLI (alias for build:cli; use build:release for CLI + web)
 pnpm build
 
 # Run tests
@@ -58,7 +64,8 @@ pnpm dev:web
 - Write tests for new functionality (TDD mandatory)
 - Keep commits atomic and well-described
 - Update documentation for user-facing changes
-- All features start with `/shep-kit:new-feature`
+- All features start with `/shep-kit:new-feature`, then
+  `/shep-kit:research → /shep-kit:plan → /shep-kit:implement → /shep-kit:commit-pr`
 
 ## Related Documents
 

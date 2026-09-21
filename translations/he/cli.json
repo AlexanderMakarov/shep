@@ -119,7 +119,11 @@
       "nodeVersionLabel": "גרסת Node",
       "dbPathLabel": "נתיב מסד נתונים",
       "logFileLabel": "קובץ יומן",
-      "daemonConfigLabel": "הגדרת תהליך"
+      "daemonConfigLabel": "הגדרת תהליך",
+      "buildLabel": "בילד",
+      "gitShaLabel": "Git SHA",
+      "healthLabel": "מוכנות",
+      "osLabel": "מערכת הפעלה"
     },
     "ui": {
       "description": "הפעל את ממשק ה-Web של Shep",
@@ -815,6 +819,15 @@
           "empty": "לא הייתה תוכנית הרצה שמורה עבור {{path}}",
           "failed": "ניקוי תוכנית ההרצה נכשל"
         }
+      },
+      "approve": {
+        "description": "סקירה ואישור של פקודות הפיתוח במאגר",
+        "fingerprintOption": "אישור רק של טביעת האצבע שנבדקה",
+        "invalid": "אין קובץ .shep/dev.json תקין ב־{{path}}",
+        "review": "יש לבדוק את הפקודות ואז להריץ שוב עם --fingerprint {{fingerprint}}. האישור אינו מפעיל אותן.",
+        "changed": "טביעת האצבע אינה תואמת לתצורה הנוכחית. יש לבדוק אותה שוב לפני האישור.",
+        "approved": "פקודות הפיתוח אושרו. אפשר להפעיל את שרת הפיתוח כשמוכנים.",
+        "failed": "לא ניתן לאשר את פקודות הפיתוח"
       }
     },
     "agent": {

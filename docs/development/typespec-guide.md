@@ -16,61 +16,73 @@ TypeSpec-First Architecture ensures:
 ## TypeSpec Workflow
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  1. Define TypeSpec models (tsp/*.tsp)                         │
-│                                                                 │
-│  2. Compile → Generate TypeScript + OpenAPI + JSON Schema      │
-│     pnpm tsp:compile                                            │
-│                                                                 │
-│  3. Import generated types in application code                 │
-│     import type { Settings } from '@/domain/generated/output'  │
-│                                                                 │
-│  4. Build TypeScript → Compile to JavaScript                   │
-│     pnpm build                                                  │
-│                                                                 │
-│  5. Run tests → Verify types and behavior                      │
-│     pnpm test                                                   │
-│                                                                 │
-└────────────────────────────────────────────────────────────────┘
+1. Define TypeSpec models          tsp/**/*.tsp
+            │
+            ▼
+2. Generate                        pnpm generate
+   (= tsp compile tsp/ --emit @typespec-tools/emitter-typescript,
+      then prettier --write over the generated directory)
+            │
+            ▼
+3. Import generated types          import type { Settings }
+                                     from '@/domain/generated/output.js'
+            │
+            ▼
+4. Build                           pnpm build
+            │
+            ▼
+5. Test                            pnpm test
 ```
 
 ## Project Structure
 
+Every directory has an `index.tsp` barrel that imports its own files;
+`main.tsp` imports only the five top-level barrels. Adding a file means adding
+one import line to the nearest `index.tsp` — never to `main.tsp`.
+
 ```
 tsp/
-├── main.tsp              # Entry point (imports all models)
+├── main.tsp              # Entry point — imports the five barrels below
 ├── common/               # Shared types
+│   ├── index.tsp
 │   ├── base.tsp          # BaseEntity, SoftDeletableEntity, AuditableEntity
 │   ├── scalars.tsp       # UUID scalar
 │   ├── ask.tsp           # Askable interface pattern
 │   └── enums/            # Shared enumerations
-│       ├── lifecycle.tsp # SdlcLifecycle enum
-│       ├── status.tsp    # TaskStatus enum
+│       ├── index.tsp
+│       ├── lifecycle.tsp      # SdlcLifecycle enum
+│       ├── states.tsp         # status enums
+│       ├── agent-config.tsp   # AgentType enum
 │       └── ...
 ├── domain/               # Domain layer models
+│   ├── index.tsp
 │   ├── entities/         # One file per entity
-│   │   ├── feature.tsp   # Feature entity
-│   │   ├── task.tsp      # Task entity
-│   │   ├── settings.tsp  # Settings entity
+│   │   ├── index.tsp
+│   │   ├── feature.tsp
+│   │   ├── epic.tsp
 │   │   └── ...
 │   └── value-objects/    # Embedded value objects
-│       ├── gantt.tsp     # GanttChart value object
-│       └── ...
 ├── agents/               # Agent system models
-│   ├── analyze.tsp       # Analyze agent operations
-│   ├── requirements.tsp  # Requirements agent operations
+│   ├── index.tsp
+│   ├── agent-run.tsp
+│   ├── feature-agent.tsp
 │   └── ...
-└── deployment/           # Deployment configuration
-    ├── target.tsp        # DeployTarget model
-    ├── skill.tsp         # DeploySkill model
-    └── ...
+├── deployment/           # Deployment configuration
+│   ├── index.tsp
+│   ├── deploy-skill.tsp
+│   └── ...
+└── ui/                   # Presentation-layer value objects
 ```
 
 ## Generated Output
 
+`tspconfig.yaml` wires three emitters — `@typespec/openapi3`,
+`@typespec/json-schema` and `@typespec-tools/emitter-typescript` — and sets
+`output-dir` to `apis/`, overriding the TypeScript emitter's output directory to
+`packages/core/src/domain/generated`.
+
 ```
-# After running: pnpm tsp:compile
+# After running: pnpm generate  (or pnpm tsp:compile)
 
 apis/
 ├── openapi/
@@ -81,9 +93,15 @@ apis/
     ├── Settings.json
     └── ...
 
-src/domain/generated/
+packages/core/src/domain/generated/
 └── output.ts             # TypeScript types (DO NOT EDIT)
 ```
+
+Use **`pnpm generate`** rather than `pnpm tsp:compile` when you intend to commit
+the result: `generate` runs the TypeScript emitter and then `prettier --write`
+over the generated directory, which is exactly what CI re-runs when it checks
+that the committed output is current. `tsp:compile` alone skips the formatting
+pass and will leave the tree looking stale.
 
 ## Creating a New Domain Model
 
@@ -227,49 +245,48 @@ model SoftDeletableEntity extends BaseEntity {
 }
 ```
 
-### Step 4: Import in main.tsp
+### Step 4: Register the file in its barrel
+
+`main.tsp` imports only the five top-level barrels, so a new file is registered
+in the `index.tsp` of the directory it lives in — not in `main.tsp`.
 
 ```typescript
-// tsp/main.tsp
-import "@typespec/http";
-import "@typespec/openapi3";
+// tsp/domain/entities/index.tsp
+import "./feature.tsp";
+import "./epic.tsp";
+import "./settings.tsp"; // NEW
+```
 
-import "./common/base.tsp";
-import "./common/scalars.tsp";
-import "./common/ask.tsp";
-import "./common/enums/lifecycle.tsp";
-import "./common/enums/status.tsp";
-import "./common/enums/log-level.tsp";
-
-import "./domain/entities/feature.tsp";
-import "./domain/entities/task.tsp";
-import "./domain/entities/settings.tsp"; // NEW
-
-import "./agents/analyze.tsp";
-import "./agents/requirements.tsp";
+```typescript
+// tsp/main.tsp — unchanged when you add an entity
+import "./common/index.tsp";
+import "./domain/index.tsp";
+import "./agents/index.tsp";
+import "./deployment/index.tsp";
+import "./ui/index.tsp";
 
 @service({
-  title: "Shep AI CLI - Domain Models",
+  title: "Shep AI Domain Models",
 })
-namespace ShepAI;
+namespace ShepAI.Domain;
 ```
 
 ### Step 5: Compile and Generate Types
 
 ```bash
-# Compile TypeSpec → Generate TypeScript + OpenAPI + JSON Schema
-pnpm tsp:compile
+# Generate TypeScript + OpenAPI + JSON Schema, then format the output
+pnpm generate
 
 # Verify generated output
-cat src/domain/generated/output.ts | grep "export interface Settings"
+grep "export interface Settings" packages/core/src/domain/generated/output.ts
 ```
 
 ### Step 6: Use Generated Types in Code
 
 ```typescript
-// src/application/use-cases/settings/initialize-settings.use-case.ts
-import type { Settings } from '@/domain/generated/output';
-import type { ISettingsRepository } from '@/application/ports/output/settings.repository.interface';
+// packages/core/src/application/use-cases/settings/initialize-settings.use-case.ts
+import type { Settings } from '@/domain/generated/output.js';
+import type { ISettingsRepository } from '@/application/ports/output/repositories/settings.repository.interface.js';
 
 export class InitializeSettingsUseCase {
   constructor(private readonly settingsRepository: ISettingsRepository) {}
@@ -505,23 +522,30 @@ model Settings {
 
 ## TypeSpec Commands
 
-```bash
-# Compile TypeSpec → Generate TypeScript + OpenAPI + JSON Schema
-pnpm tsp:compile
+| Script         | Command                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `generate`     | `pnpm tsp:codegen` — the one you want before committing                                                     |
+| `tsp:codegen`  | `tsp compile tsp/ --emit @typespec-tools/emitter-typescript && prettier --write packages/core/src/domain/generated/` |
+| `tsp:compile`  | `tsp compile tsp/` — runs every emitter in `tspconfig.yaml`, no formatting pass                              |
+| `lint:tsp`     | `tsp compile tsp/ --no-emit` — validate only, emit nothing                                                  |
+| `tsp:format`   | `tsp format "tsp/**/*.tsp"` (`format:tsp` is the same command)                                              |
+| `tsp:watch`    | `tsp compile tsp/ --watch`                                                                                  |
+| `validate`     | `lint:fix` → `format` → `typecheck` → `tsp:compile`                                                         |
 
-# Format TypeSpec files with Prettier
-pnpm tsp:format
+```bash
+# Regenerate + format (what CI verifies)
+pnpm generate
+
+# Validate without emitting anything
+pnpm lint:tsp
 
 # Watch mode (recompile on changes)
 pnpm tsp:watch
 
-# Validate without generating (dry run)
-pnpm tsp:compile --no-emit
+# Format TypeSpec sources
+pnpm tsp:format
 
-# Generate only OpenAPI (skip TypeScript)
-pnpm tsp:compile --emit @typespec/openapi3
-
-# Validate TypeSpec + Lint + Format (full check)
+# Full local check before pushing
 pnpm validate
 ```
 
@@ -541,15 +565,21 @@ namespace Settings {
 }
 ```
 
-### Error: "Cannot find '@typespec/http'"
+### Error: "Cannot find '@typespec/…'"
 
-**Cause:** Missing TypeSpec dependencies.
+**Cause:** Missing or out-of-date TypeSpec dependencies.
 
-**Solution:**
+**Solution:** reinstall first — the toolchain is already declared in
+`devDependencies` (`@typespec/compiler`, `@typespec/json-schema`,
+`@typespec/openapi3`, `@typespec/protobuf`,
+`@typespec/prettier-plugin-typespec` and `@typespec-tools/emitter-typescript`).
 
 ```bash
-pnpm install @typespec/compiler @typespec/http @typespec/openapi3 --save-dev
+pnpm install
 ```
+
+Only add a package if you are genuinely introducing a new library (for example
+`@typespec/http`, which this project does not currently use).
 
 ### Generated TypeScript Types Don't Update
 
@@ -559,7 +589,7 @@ pnpm install @typespec/compiler @typespec/http @typespec/openapi3 --save-dev
 
 ```bash
 # Clear generated output
-rm -rf apis/ src/domain/generated/
+rm -rf apis/ packages/core/src/domain/generated/
 
 # Recompile
 pnpm tsp:compile
@@ -580,20 +610,26 @@ pnpm tsp:compile
 
 TypeSpec compilation runs in CI pipeline:
 
-```yaml
-# .github/workflows/ci.yml
-jobs:
-  lint:
-    steps:
-      - name: Compile TypeSpec
-        run: pnpm tsp:compile
+The **Lint & Format** job runs `pnpm tsp:compile` to prove the TypeSpec still
+compiles. The **Type Check** job is the one that catches stale generated output:
 
-      - name: Check for uncommitted changes
-        run: |
-          git diff --exit-code src/domain/generated/
+```yaml
+# .github/workflows/ci.yml — typecheck job
+- run: pnpm run generate
+- name: Verify generated code is committed
+  run: |
+    if ! git diff --exit-code -- packages/core/src/domain/generated apis; then
+      echo "::error::Generated output is stale. Run 'pnpm run generate' and commit the result."
+      exit 1
+    fi
+- run: pnpm run typecheck
 ```
 
-**IMPORTANT:** Always commit generated files (`src/domain/generated/output.ts`) to version control. This ensures:
+The `pre-commit` hook runs `pnpm generate` and stages
+`apis/json-schema/` and `packages/core/src/domain/generated/` for you, so in
+practice this only fires when the hook was bypassed.
+
+**IMPORTANT:** Always commit generated files (`packages/core/src/domain/generated/output.ts`) to version control. This ensures:
 
 - CI can detect if someone manually edited generated files
 - Code reviews show generated type changes

@@ -20,6 +20,8 @@ import type {
 import type { IFeatureRepository } from '../../../application/ports/output/repositories/feature-repository.interface.js';
 import type { IGitPrService } from '../../../application/ports/output/services/git-pr-service.interface.js';
 import type { INotificationService } from '../../../application/ports/output/services/notification-service.interface.js';
+import type { ILogger } from '../../../application/ports/output/services/logger.interface.js';
+import { ConsoleLogger } from '../logging/console-logger.js';
 import { SdlcLifecycle, PrStatus, CiStatus } from '../../../domain/generated/output.js';
 import { NotificationEventType, NotificationSeverity } from '../../../domain/generated/output.js';
 import type { NotificationEvent, Feature } from '../../../domain/generated/output.js';
@@ -62,6 +64,7 @@ export class GitHubWebhookService implements IWebhookService {
   private readonly gitPrService: IGitPrService;
   private readonly notificationService: INotificationService;
   private readonly execFn: ExecFunction;
+  private readonly logger: ILogger;
   private readonly registeredWebhooks: RegisteredWebhook[] = [];
   private readonly deliveryHistory: WebhookDeliveryRecord[] = [];
   private webhookSecret: string;
@@ -70,12 +73,22 @@ export class GitHubWebhookService implements IWebhookService {
     featureRepo: IFeatureRepository,
     gitPrService: IGitPrService,
     notificationService: INotificationService,
-    execFn: ExecFunction
+    execFn: ExecFunction,
+    /**
+     * Where this service's output goes. It runs inside the daemon and wrote
+     * straight to `console.*` with a per-line `no-console` suppression, so
+     * its output could not be levelled, filtered or redacted — and webhook
+     * URLs and repo names are exactly the sort of line that wants both.
+     * Defaults to a ConsoleLogger so existing callers are unaffected; DI
+     * passes the container's ILogger.
+     */
+    logger: ILogger = new ConsoleLogger()
   ) {
     this.featureRepo = featureRepo;
     this.gitPrService = gitPrService;
     this.notificationService = notificationService;
     this.execFn = execFn;
+    this.logger = logger;
     this.webhookSecret = randomBytes(32).toString('hex');
   }
 
@@ -149,12 +162,10 @@ export class GitHubWebhookService implements IWebhookService {
         ],
         { cwd: webhook.repositoryPath }
       );
-      // eslint-disable-next-line no-console
-      console.log(`${TAG} Removed webhook #${webhook.webhookId} for ${webhook.repoFullName}`);
+      this.logger.info(`${TAG} Removed webhook #${webhook.webhookId} for ${webhook.repoFullName}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Failed to remove webhook for ${webhook.repoFullName}: ${msg}`);
+      this.logger.warn(`${TAG} Failed to remove webhook for ${webhook.repoFullName}: ${msg}`);
     }
 
     this.registeredWebhooks.splice(index, 1);
@@ -176,8 +187,9 @@ export class GitHubWebhookService implements IWebhookService {
       await this.registerWebhookForRepo(repoPath, webhookUrl);
     }
 
-    // eslint-disable-next-line no-console
-    console.log(`${TAG} Registered webhooks for ${this.registeredWebhooks.length} repositories`);
+    this.logger.info(
+      `${TAG} Registered webhooks for ${this.registeredWebhooks.length} repositories`
+    );
   }
 
   async updateWebhookUrl(newUrl: string): Promise<void> {
@@ -204,12 +216,10 @@ export class GitHubWebhookService implements IWebhookService {
           { cwd: webhook.repositoryPath }
         );
 
-        // eslint-disable-next-line no-console
-        console.log(`${TAG} Updated webhook URL for ${webhook.repoFullName}`);
+        this.logger.info(`${TAG} Updated webhook URL for ${webhook.repoFullName}`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        // eslint-disable-next-line no-console
-        console.warn(`${TAG} Failed to update webhook for ${webhook.repoFullName}: ${msg}`);
+        this.logger.warn(`${TAG} Failed to update webhook for ${webhook.repoFullName}: ${msg}`);
       }
     }
   }
@@ -230,12 +240,10 @@ export class GitHubWebhookService implements IWebhookService {
           { cwd: webhook.repositoryPath }
         );
 
-        // eslint-disable-next-line no-console
-        console.log(`${TAG} Removed webhook for ${webhook.repoFullName}`);
+        this.logger.info(`${TAG} Removed webhook for ${webhook.repoFullName}`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        // eslint-disable-next-line no-console
-        console.warn(`${TAG} Failed to remove webhook for ${webhook.repoFullName}: ${msg}`);
+        this.logger.warn(`${TAG} Failed to remove webhook for ${webhook.repoFullName}: ${msg}`);
       }
     }
 
@@ -276,8 +284,7 @@ export class GitHubWebhookService implements IWebhookService {
 
   async handleEvent(event: WebhookEvent): Promise<void> {
     const startTime = Date.now();
-    // eslint-disable-next-line no-console
-    console.log(
+    this.logger.info(
       `${TAG} Received ${event.source}/${event.eventType} (delivery: ${event.deliveryId})`
     );
 
@@ -298,8 +305,7 @@ export class GitHubWebhookService implements IWebhookService {
         default:
           status = 'ignored';
           statusMessage = `Unhandled event type: ${event.eventType}`;
-          // eslint-disable-next-line no-console
-          console.log(`${TAG} Ignoring unhandled event type: ${event.eventType}`);
+          this.logger.info(`${TAG} Ignoring unhandled event type: ${event.eventType}`);
       }
     } catch (error) {
       status = 'error';
@@ -478,8 +484,7 @@ export class GitHubWebhookService implements IWebhookService {
       // Get the repo full name (owner/repo) from the remote URL
       const repoFullName = await this.getRepoFullName(repoPath);
       if (!repoFullName) {
-        // eslint-disable-next-line no-console
-        console.warn(`${TAG} Could not determine repo name for ${repoPath}`);
+        this.logger.warn(`${TAG} Could not determine repo name for ${repoPath}`);
         return;
       }
 
@@ -522,12 +527,10 @@ export class GitHubWebhookService implements IWebhookService {
         repositoryPath: repoPath,
       });
 
-      // eslint-disable-next-line no-console
-      console.log(`${TAG} Registered webhook #${webhookId} for ${repoFullName}`);
+      this.logger.info(`${TAG} Registered webhook #${webhookId} for ${repoFullName}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Failed to register webhook for ${repoPath}: ${msg}`);
+      this.logger.warn(`${TAG} Failed to register webhook for ${repoPath}: ${msg}`);
     }
   }
 
@@ -564,12 +567,10 @@ export class GitHubWebhookService implements IWebhookService {
               ],
               { cwd: repoPath }
             );
-            // eslint-disable-next-line no-console
-            console.log(`${TAG} Removed stale webhook #${hook.id} from ${repoFullName}`);
+            this.logger.info(`${TAG} Removed stale webhook #${hook.id} from ${repoFullName}`);
           } catch (deleteError) {
             const msg = deleteError instanceof Error ? deleteError.message : String(deleteError);
-            // eslint-disable-next-line no-console
-            console.warn(`${TAG} Failed to remove stale webhook #${hook.id}: ${msg}`);
+            this.logger.warn(`${TAG} Failed to remove stale webhook #${hook.id}: ${msg}`);
           }
         }
       }

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { getAgentDescriptor } from '@shepai/core/domain/shared/agent-catalog';
 import { pickFolder } from '@/components/common/add-repository-button/pick-folder';
 import { ReactFileManagerDialog } from '@/components/common/react-file-manager-dialog';
 import { useFeatureFlags } from '@/hooks/feature-flags-context';
@@ -43,6 +44,8 @@ export function ControlCenterOnboarding({
   const [loading, setLoading] = useState(false);
   const [showReactPicker, setShowReactPicker] = useState(false);
   const [agentReady, setAgentReady] = useState<boolean | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authChecking, setAuthChecking] = useState(false);
   const [authStatus, setAuthStatus] = useState<AgentAuthStatus | null>(null);
   const [cliExpanded, setCliExpanded] = useState(false);
   const [toolStatus, setToolStatus] = useState<ToolStatusResult | null>(null);
@@ -118,26 +121,44 @@ export function ControlCenterOnboarding({
     setAgentReady(true);
   }, []);
 
-  const handleRetryAuth = useCallback(() => {
-    setAuthStatus(null);
-    checkAgentAuth().then(setAuthStatus);
+  const handleRetryAuth = useCallback(async () => {
+    setAuthChecking(true);
+    setAuthError(null);
+    try {
+      setAuthStatus(await checkAgentAuth());
+    } catch (cause) {
+      setAuthError(
+        cause instanceof Error ? cause.message : 'Unable to check authentication. Try again.'
+      );
+    } finally {
+      setAuthChecking(false);
+    }
   }, []);
 
-  if (agentReady === null) return null;
+  if (agentReady === null)
+    return (
+      <div
+        role="status"
+        className="text-muted-foreground flex h-full items-center justify-center gap-2 text-sm"
+      >
+        <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+        {t('emptyState.checkingSetup')}
+      </div>
+    );
 
   return (
     <div
       data-testid="control-center-onboarding"
       className={cn(
-        'relative flex h-full w-full flex-col items-center justify-center px-8',
+        'relative flex h-full w-full flex-col items-center overflow-y-auto px-4 pt-16 pb-8 sm:px-8 sm:pt-8',
         className
       )}
     >
       {!agentReady ? (
-        <WelcomeAgentSetup onComplete={handleAgentSetupComplete} />
+        <WelcomeAgentSetup onComplete={handleAgentSetupComplete} className="my-auto" />
       ) : (
-        <div className="animate-in fade-in flex w-full max-w-md flex-col items-center duration-300">
-          <h1 className="text-foreground/90 text-center text-5xl font-extralight tracking-tight">
+        <div className="animate-in fade-in my-auto flex w-full max-w-md flex-col items-center duration-300">
+          <h1 className="text-foreground/90 text-center text-3xl font-light tracking-tight sm:text-5xl">
             {t('emptyState.addProject')}
           </h1>
           <p className="text-muted-foreground mt-3 text-center text-lg leading-relaxed font-light">
@@ -147,7 +168,16 @@ export function ControlCenterOnboarding({
           </p>
 
           <div className="mt-8 flex w-full flex-col gap-3">
-            <AgentAuthBanner status={authStatus} onRetry={handleRetryAuth} />
+            <AgentAuthBanner
+              status={authStatus}
+              onRetry={handleRetryAuth}
+              checking={authChecking}
+            />
+            {authError ? (
+              <p role="alert" className="text-destructive text-sm">
+                {authError}
+              </p>
+            ) : null}
             <ToolStatusRow
               label={t('emptyState.git')}
               status={toolStatus?.git ?? null}
@@ -197,7 +227,7 @@ export function ControlCenterOnboarding({
             Import from GitHub
           </button>
 
-          <p className="text-muted-foreground/60 mt-3 text-center text-sm">
+          <p className="text-muted-foreground mt-3 text-center text-sm">
             {t('emptyState.folderHint')}
           </p>
         </div>
@@ -205,7 +235,7 @@ export function ControlCenterOnboarding({
 
       {agentReady ? (
         <div
-          className="absolute bottom-8 flex flex-col items-center"
+          className="mt-8 flex w-full shrink-0 flex-col items-center"
           style={{
             animationDelay: '400ms',
             animationDuration: '600ms',
@@ -228,7 +258,7 @@ export function ControlCenterOnboarding({
           </button>
 
           {cliExpanded ? (
-            <div className="animate-in fade-in slide-in-from-top-1 mt-3 w-80 duration-200">
+            <div className="animate-in fade-in slide-in-from-top-1 mt-3 w-full max-w-80 duration-200">
               <div
                 data-testid="cli-code-block"
                 className="relative rounded-xl bg-zinc-900 px-5 py-4 font-mono text-[13px] leading-relaxed text-zinc-400"
@@ -279,16 +309,20 @@ export function ControlCenterOnboarding({
 function AgentAuthBanner({
   status,
   onRetry,
+  checking,
 }: {
   status: AgentAuthStatus | null;
   onRetry: () => void;
+  checking: boolean;
 }) {
   const { t } = useTranslation('web');
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const toolId = status ? getAgentDescriptor(status.agentType)?.toolId : null;
 
   if (!status) {
     return (
-      <ChecklistRow icon={<Loader2 className="text-muted-foreground/50 h-4 w-4 animate-spin" />}>
-        <span className="text-muted-foreground/50 text-sm">{t('emptyState.checkingSetup')}</span>
+      <ChecklistRow icon={<Loader2 className="text-muted-foreground h-4 w-4 animate-spin" />}>
+        <span className="text-muted-foreground text-sm">{t('emptyState.checkingSetup')}</span>
       </ChecklistRow>
     );
   }
@@ -313,6 +347,7 @@ function AgentAuthBanner({
         <button
           type="button"
           onClick={onRetry}
+          disabled={checking}
           className="text-xs text-amber-600 underline underline-offset-2 hover:text-amber-800 dark:text-amber-400"
         >
           {t('emptyState.reCheck')}
@@ -328,17 +363,19 @@ function AgentAuthBanner({
       </span>
       {status.authCommand ? <CopyableCommand command={status.authCommand} /> : null}
       <div className="flex items-center gap-3">
-        {status.binaryName ? (
+        {toolId ? (
           <button
             type="button"
             data-testid="auth-banner-open-terminal"
             onClick={async () => {
+              setLaunchError(null);
               try {
-                const toolId =
-                  status.agentType === 'claude-code' ? 'claude-code' : status.agentType;
-                await fetch(`/api/tools/${toolId}/launch`, { method: 'POST' });
-              } catch {
-                /* best effort */
+                const response = await fetch(`/api/tools/${toolId}/launch`, { method: 'POST' });
+                if (!response.ok) throw new Error('Unable to open the agent. Try again.');
+              } catch (cause) {
+                setLaunchError(
+                  cause instanceof Error ? cause.message : 'Unable to open the agent. Try again.'
+                );
               }
             }}
             className="flex items-center gap-1 text-xs font-medium text-amber-600 underline underline-offset-2 hover:text-amber-800 dark:text-amber-400"
@@ -350,11 +387,17 @@ function AgentAuthBanner({
         <button
           type="button"
           onClick={onRetry}
+          disabled={checking}
           className="text-xs text-amber-600 underline underline-offset-2 hover:text-amber-800 dark:text-amber-400"
         >
           {t('emptyState.reCheck')}
         </button>
       </div>
+      {launchError ? (
+        <p role="alert" className="text-destructive text-xs">
+          {launchError}
+        </p>
+      ) : null}
     </ChecklistRow>
   );
 }
@@ -372,10 +415,8 @@ function ToolStatusRow({
 
   if (!status) {
     return (
-      <ChecklistRow icon={<Loader2 className="text-muted-foreground/50 h-4 w-4 animate-spin" />}>
-        <span className="text-muted-foreground/50 text-sm">
-          {t('emptyState.checking', { label })}
-        </span>
+      <ChecklistRow icon={<Loader2 className="text-muted-foreground h-4 w-4 animate-spin" />}>
+        <span className="text-muted-foreground text-sm">{t('emptyState.checking', { label })}</span>
       </ChecklistRow>
     );
   }
@@ -388,7 +429,7 @@ function ToolStatusRow({
             {t('emptyState.ready', { label })}
           </span>
           {status.version ? (
-            <span className="text-muted-foreground/40 text-xs">v{status.version}</span>
+            <span className="text-muted-foreground text-xs">v{status.version}</span>
           ) : null}
         </span>
       </ChecklistRow>
@@ -400,7 +441,7 @@ function ToolStatusRow({
       <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
         {t('emptyState.notFound', { label })}
       </span>
-      <span className="text-muted-foreground/50 text-xs">{missingHint}</span>
+      <span className="text-muted-foreground text-xs">{missingHint}</span>
       {status.installCommand ? <CopyableCommand command={status.installCommand} /> : null}
       {status.installUrl ? (
         <a

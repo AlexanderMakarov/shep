@@ -4,8 +4,8 @@ This guide walks you through installing Shep AI CLI and creating your first feat
 
 ## Prerequisites
 
-- **Node.js** 18 or higher
-- **pnpm** 8 or higher (`npm install -g pnpm`)
+- **Node.js** 22 or higher (the repo pins `22` in `.nvmrc`, and `package.json` declares `engines.node >= 22.0.0`)
+- **pnpm** 10 or higher (`npm install -g pnpm`)
 - A repository to work with
 - Access to at least one supported AI agent provider
 
@@ -31,111 +31,114 @@ shep --version
 
 ## First Run
 
-Navigate to your project directory and run Shep:
+Navigate to your project directory and start Shep:
 
 ```bash
 cd my-awesome-repository
 shep
 ```
 
-### Initial Setup Wizard
-
-On first run, Shep launches a TUI wizard to configure your agent provider.
-
-#### Step 1: Select Agent Provider
+Bare `shep` is the same as `shep start`: it starts the Shep daemon in the background, prints the
+control-center URL, and opens it in your browser.
 
 ```
-┌─────────────────────────────────────────────┐
-│      Shep AI CLI Setup                      │
-├─────────────────────────────────────────────┤
-│                                             │
-│  Welcome to Shep!                           │
-│  Select your AI agent provider:             │
-│                                             │
-│  ● Claude Code (Recommended)                │
-│  ○ Cursor                                   │
-│  ○ Gemini CLI                               │
-│  ○ GitHub Copilot                           │
-│  ○ Codeium                                  │
-│  ○ Amazon Q Developer                       │
-│  ○ Cody (Sourcegraph)                       │
-│  ○ Tabnine                                  │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-> **Note:** Each provider has different capabilities and authentication methods. Claude Code is recommended for full autonomous SDLC support.
-
-#### Step 2: Authentication
-
-After selecting a provider, Shep prompts for authentication:
-
-```
-┌─────────────────────────────────────────────┐
-│      Shep AI CLI Setup                      │
-├─────────────────────────────────────────────┤
-│                                             │
-│  Configure Claude Code authentication       │
-│                                             │
-│  How would you like to authenticate?        │
-│                                             │
-│  ○ Use existing session                     │
-│  ○ Set up new token                         │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-> **Note:** Authentication options vary by provider. Some support session reuse, others require API keys or OAuth.
-
-#### Option 1: Use Existing Session
-
-If you're already logged into your selected provider, Shep can use that session:
-
-1. Select "Use existing session"
-2. Shep detects your existing authentication
-3. Setup complete
-
-#### Option 2: Set Up New Token
-
-To use a new API token:
-
-1. Select "Set up new token"
-2. Enter your API key for the selected provider
-3. Shep validates and stores the token securely
-
-### Repository Analysis
-
-After authentication, Shep analyzes your repository:
-
-```
-Analyzing Repository... [████████░░░░░░░░] (75%)
-
-✓ Architecture analysis complete
-✓ Dependency analysis complete
-● Pattern detection in progress...
-○ Convention extraction pending
-```
-
-> **Note:** Progress indicators: ✓ = complete, ● = in progress, ○ = pending.
-
-This analysis runs once per repository and is cached for future sessions.
-
-### Web UI Launch
-
-After analysis completes, start the web UI:
-
-```bash
-shep ui
-```
-
-```
-✓ Web server started
+✓ Shep started
 
   Open in your browser:
   http://localhost:4050/
 
-  Press Ctrl+C to stop
 ```
+
+If a daemon is already running, `shep` just prints the existing URL. Port 4050 is the default; if
+it is taken, Shep picks the next free port. Use `shep start --port 8080` to choose one yourself.
+
+To run the web UI in the foreground instead of as a background daemon — useful when you want to
+watch its output — use `shep ui` (`--port <n>`, `--no-open`). `shep stop`, `shep restart` and
+`shep status` manage the background daemon.
+
+### Initial Setup Happens in the Browser
+
+There is no terminal setup wizard on the default `shep` path — onboarding lives in the web UI.
+The first time you open the control center, it walks you through two steps.
+
+#### Step 1: Select Your Agent
+
+The control center lists every supported agent, grouped with the models each one offers:
+
+| Agent       | Type | Binary         | Notes                                   |
+| ----------- | ---- | -------------- | --------------------------------------- |
+| Claude Code | CLI  | `claude`       | Default                                 |
+| Kimi Code   | CLI  | `kimi`         |                                         |
+| Codex CLI   | CLI  | `codex`        |                                         |
+| Copilot CLI | CLI  | `copilot`      |                                         |
+| Cursor CLI  | CLI  | `cursor-agent` | Not the `cursor` desktop editor         |
+| Gemini CLI  | CLI  | `gemini`       |                                         |
+| Cline       | CLI  | `cline`        |                                         |
+| OpenRouter  | SDK  | —              | Needs an API token                      |
+| Together AI | SDK  | —              | Needs an API token                      |
+| Ollama      | SDK  | —              | Local models, no key                    |
+| LLM Proxy   | SDK  | —              | Local OpenAI-compatible proxy           |
+| Demo        | Mock | —              | Scripted responses, for trying Shep out |
+
+#### Step 2: Select a Model
+
+After picking an agent, choose its default model. Only models that agent supports are offered.
+Both choices are written to the settings database at `~/.shep/data`.
+
+The control center then checks that the agent's binary is installed and authenticated, and shows
+the install / login command if it is not.
+
+### Configuring From the Terminal Instead
+
+Everything the browser wizard does is also available as a command:
+
+```bash
+# Full interactive wizard (agent + IDE + workflow)
+shep settings
+
+# Or set the agent directly — --auth is required whenever --agent is given
+shep settings agent --agent claude-code --auth session
+shep settings agent --agent openrouter --auth token --token sk-xxx
+
+# Pick the default model
+shep settings model
+
+# Check what is configured
+shep settings show
+```
+
+> **Note:** `shep feat new` has its own short terminal onboarding gate when it detects an
+> interactive TTY and nothing is configured yet. That is separate from the browser flow above.
+
+### Adding a Repository
+
+The control center asks you to point it at a repository — pick a folder in the browser, or add
+one from the terminal:
+
+```bash
+# Register folders that already exist on disk — the argument is the PARENT
+# directory whose subfolders become import candidates
+shep repo import ~/projects
+shep repo import ~/projects --all --git-only
+
+# Or clone one from GitHub (interactive picker when --url is omitted)
+shep repo add --url https://github.com/me/my-awesome-repository
+
+shep repo ls
+```
+
+### Optional: Analyze the Repository
+
+Shep does not analyze a repository on its own. When you want a standalone structure,
+dependency, and architecture pass, run the `analyze-repository` agent:
+
+```bash
+shep run analyze-repository
+shep run analyze-repository --prompt "Focus on security"
+shep run analyze-repository --stream
+```
+
+Analysis also happens implicitly as the first phase of every feature, so this step is optional.
 
 ## Creating Your First Feature
 
@@ -261,6 +264,30 @@ Implementing: User Authentication | Progress: 2/5 tasks complete
 
 > **Note:** ✓ = completed tasks, ● = in progress (with current file being modified), ○ = pending tasks.
 
+### Doing the Same From the Terminal
+
+The whole flow also works without the browser:
+
+```bash
+# Create a feature (the description is a required argument)
+shep feat new "Add user authentication with OAuth"
+
+# Watch it
+shep feat ls
+shep feat show <id>
+shep feat logs <id>
+
+# Answer an approval gate
+shep feat approve <id>
+shep feat reject <id> --reason "Use magic links instead of OAuth"
+
+# Open the feature's worktree in your editor
+shep ide <id>
+```
+
+`--reason` is required on `shep feat reject`. To skip the gates entirely for one feature, pass
+`--allow-prd`, `--allow-plan`, `--allow-merge`, or `--allow-all` to `shep feat new`.
+
 ## Next Steps
 
 - Learn about [configuration options](./configuration.md)
@@ -271,22 +298,19 @@ Implementing: User Authentication | Progress: 2/5 tasks complete
 
 ### Analysis Takes Too Long
 
-Large repositories may take longer. You can:
+Large repositories take longer. There is no exclude-list config file — analysis is driven by the
+agent, so narrow it with a prompt instead:
 
-1. Add exclusions to `.shep/config.json`:
+```bash
+shep run analyze-repository --prompt "Skip vendor/ and generated code; focus on src/"
+```
 
-   ```json
-   {
-     "analysis": {
-       "additionalExcludes": ["**/large-folder/**"]
-     }
-   }
-   ```
+If the daemon itself looks stuck, restart it:
 
-2. Restart and let analysis complete:
-   ```bash
-   shep restart
-   ```
+```bash
+shep restart
+shep status
+```
 
 ### Authentication Failed
 
@@ -304,8 +328,12 @@ If authentication fails:
 If port 4050 is busy:
 
 ```bash
-shep ui --port 4051
+shep start --port 4051   # background daemon
+shep ui --port 4051      # foreground
 ```
+
+Shep also falls back to the next free port on its own, so this is only needed when you want a
+specific one.
 
 ---
 
@@ -320,5 +348,5 @@ shep ui --port 4051
 
 **Related docs:**
 
-- [configuration.md](./configuration.md) - Detailed config
+- [configuration.md](./configuration.md) - Settings, agents, and environment variables
 - [cli-commands.md](./cli-commands.md) - CLI reference

@@ -20,6 +20,7 @@
 import { test, expect } from '@playwright/test';
 import type Database from 'better-sqlite3';
 import { openShepDb } from './helpers/collaboration-flag';
+import { COLD_ROUTE_READY_TIMEOUT_MS, COLD_ROUTE_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 const AGENT_TYPE = 'feature-agent';
 const PROMPT_ID = 'implement.system';
@@ -48,6 +49,7 @@ function readOverride(db: Database.Database): OverrideRow | undefined {
 }
 
 test.describe('Agent editor round-trip (spec 093)', () => {
+  test.describe.configure({ timeout: COLD_ROUTE_TEST_TIMEOUT_MS });
   let db: Database.Database;
 
   test.beforeAll(() => {
@@ -78,7 +80,9 @@ test.describe('Agent editor round-trip (spec 093)', () => {
     );
 
     // Agents list renders the feature-agent row.
-    await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible({
+      timeout: COLD_ROUTE_READY_TIMEOUT_MS,
+    });
     const row = page.getByTestId(`agent-row-${AGENT_TYPE}`);
     await expect(row).toBeVisible();
 

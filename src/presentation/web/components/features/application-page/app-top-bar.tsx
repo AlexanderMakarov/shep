@@ -86,24 +86,30 @@ export function AppTopBar({
     <header
       className={cn(
         'bg-background/95 supports-[backdrop-filter]:bg-background/70 sticky top-0 z-20 flex shrink-0 items-center gap-2 border-b px-3 backdrop-blur',
-        TOP_BAR_HEIGHT_CLASS
+        TOP_BAR_HEIGHT_CLASS,
+        '@max-[1100px]:h-auto @max-[1100px]:flex-wrap @max-[1100px]:py-2'
       )}
     >
       {/* ── Group 1: identity ────────────────────────────────── */}
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500 to-violet-500 shadow-xs">
-        <LayoutGrid className="h-3.5 w-3.5 text-white" />
+      <div className="flex min-w-0 shrink-0 items-center gap-2 @max-[1100px]:w-full">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500 to-violet-500 shadow-xs">
+          <LayoutGrid className="h-3.5 w-3.5 text-white" />
+        </div>
+        <h1 className="min-w-0 truncate text-sm font-semibold @max-[1100px]:flex-1">
+          {application.name}
+        </h1>
+        <StatusPill
+          applicationId={application.id}
+          persistedStatus={application.status}
+          deployReady={deploy.status === DeploymentState.Ready}
+        />
       </div>
-      <h1 className="min-w-0 truncate text-sm font-semibold">{application.name}</h1>
-      <StatusPill
-        applicationId={application.id}
-        persistedStatus={application.status}
-        deployReady={deploy.status === DeploymentState.Ready}
-      />
-
       <Divider />
 
       {/* ── Group 2: source context (slug + repo path + branch) ─ */}
-      <PathCluster applicationId={application.id} repositoryPath={application.repositoryPath} />
+      <div className="max-w-72 min-w-0 flex-1 @max-[1100px]:order-last @max-[1100px]:w-full @max-[1100px]:max-w-none @max-[1100px]:flex-none">
+        <PathCluster applicationId={application.id} repositoryPath={application.repositoryPath} />
+      </div>
 
       {/* ── Spacer ──────────────────────────────────────────── */}
       <div className="flex-1" />
@@ -124,6 +130,7 @@ export function AppTopBar({
           glance tells the user what's happening. Stop is reachable
           from inside the Web pane content (web-preview-tab URL bar). */}
       <AppViewTabs
+        panelIdPrefix={`application-${application.id}-view`}
         active={activeView}
         onChange={onViewChange}
         disabledTabs={[]}
@@ -197,6 +204,7 @@ export function AppTopBar({
           <div className="text-muted-foreground text-[10px] tracking-wide uppercase">Session</div>
           <div className="mt-1">
             <SessionChip
+              menuItem
               featureId={featureIdForApplication(application.id)}
               initialChatState={initialChatState}
               persistedSessionId={application.agentSessionId}
@@ -204,13 +212,14 @@ export function AppTopBar({
           </div>
         </div>
         <div className="px-2 pb-2">
-          <CopyPromptButton applicationId={application.id} />
+          <CopyPromptButton menuItem applicationId={application.id} />
         </div>
         {bedrockIntegration ? (
           <>
             <DropdownMenuSeparator />
             <div className="px-2 py-1.5">
               <BedrockMemoryToggle
+                menuItem
                 applicationId={application.id}
                 initialEnabled={application.bedrockEnabled}
               />
@@ -240,5 +249,5 @@ export function AppTopBar({
 }
 
 function Divider() {
-  return <span className="bg-border/60 mx-1 h-5 w-px shrink-0" />;
+  return <span className="bg-border/60 mx-1 h-5 w-px shrink-0 @max-[1100px]:hidden" />;
 }

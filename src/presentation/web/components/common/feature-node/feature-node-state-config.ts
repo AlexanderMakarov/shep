@@ -333,19 +333,32 @@ export interface FeatureNodeStateConfig {
   borderClass: string;
   labelClass: string;
   progressClass: string;
+  /**
+   * Badge icon + text colour. MUST carry a `dark:` variant: the card renders
+   * on `dark:bg-neutral-800/80` (~#202020) and dark is the default theme, where
+   * the light-mode `-700`/`-600` shades measure 2.1:1 – 3.2:1 — well under the
+   * 4.5:1 WCAG AA floor for this text size.
+   */
   badgeClass: string;
+  /** Light-mode-only badge surface. Never pair it with a `dark:` text colour. */
   badgeBgClass: string;
   label: string;
   showProgressBar: boolean;
 }
 
+/**
+ * Verified contrast on the dark card surface #202020 (Tailwind v4 sRGB):
+ * blue-400 6.18:1 · red-400 5.63:1 · amber-400 9.49:1 · emerald-400 8.43:1 ·
+ * gray-400 6.26:1 · slate-400 6.20:1 — all pass AA. The light-mode shades
+ * (6.4:1 – 7.6:1 on the white card) are unchanged.
+ */
 export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateConfig> = {
   creating: {
     icon: Loader2,
     borderClass: 'border-s-blue-500',
     labelClass: 'text-blue-500',
     progressClass: 'bg-blue-500',
-    badgeClass: 'text-blue-700',
+    badgeClass: 'text-blue-700 dark:text-blue-400',
     badgeBgClass: 'bg-blue-50',
     label: 'Creating...',
     showProgressBar: false,
@@ -355,7 +368,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-blue-500',
     labelClass: 'text-blue-500',
     progressClass: 'bg-blue-500',
-    badgeClass: 'text-blue-700',
+    badgeClass: 'text-blue-700 dark:text-blue-400',
     badgeBgClass: 'bg-blue-50',
     label: 'Running',
     showProgressBar: false,
@@ -365,7 +378,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-amber-500',
     labelClass: 'text-amber-500',
     progressClass: 'bg-amber-500',
-    badgeClass: 'text-amber-700',
+    badgeClass: 'text-amber-700 dark:text-amber-400',
     badgeBgClass: 'bg-amber-50',
     label: 'User action required',
     showProgressBar: false,
@@ -375,7 +388,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-emerald-500',
     labelClass: 'text-emerald-500',
     progressClass: 'bg-emerald-500',
-    badgeClass: 'text-emerald-700',
+    badgeClass: 'text-emerald-700 dark:text-emerald-400',
     badgeBgClass: 'bg-emerald-50',
     label: 'Done',
     showProgressBar: false,
@@ -385,7 +398,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-gray-400',
     labelClass: 'text-gray-400',
     progressClass: 'bg-gray-400',
-    badgeClass: 'text-gray-600',
+    badgeClass: 'text-gray-600 dark:text-gray-400',
     badgeBgClass: 'bg-gray-100',
     label: 'Blocked',
     showProgressBar: false,
@@ -395,7 +408,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-slate-400',
     labelClass: 'text-slate-400',
     progressClass: 'bg-slate-400',
-    badgeClass: 'text-slate-600',
+    badgeClass: 'text-slate-600 dark:text-slate-400',
     badgeBgClass: 'bg-slate-100',
     label: 'Pending',
     showProgressBar: false,
@@ -405,7 +418,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-red-500',
     labelClass: 'text-red-500',
     progressClass: 'bg-red-500',
-    badgeClass: 'text-red-700',
+    badgeClass: 'text-red-700 dark:text-red-400',
     badgeBgClass: 'bg-red-50',
     label: 'Error',
     showProgressBar: false,
@@ -415,7 +428,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-gray-400',
     labelClass: 'text-gray-400',
     progressClass: 'bg-gray-400',
-    badgeClass: 'text-gray-600',
+    badgeClass: 'text-gray-600 dark:text-gray-400',
     badgeBgClass: 'bg-gray-100',
     label: 'Deleting...',
     showProgressBar: false,
@@ -425,7 +438,7 @@ export const featureNodeStateConfig: Record<FeatureNodeState, FeatureNodeStateCo
     borderClass: 'border-s-gray-500',
     labelClass: 'text-gray-500',
     progressClass: 'bg-gray-500',
-    badgeClass: 'text-gray-600',
+    badgeClass: 'text-gray-600 dark:text-gray-400',
     badgeBgClass: 'bg-gray-100',
     label: 'Archived',
     showProgressBar: false,

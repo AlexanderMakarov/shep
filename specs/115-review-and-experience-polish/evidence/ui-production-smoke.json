@@ -1,0 +1,352 @@
+[
+  {
+    "mode": "desktop-light",
+    "status": 200,
+    "health": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "checks": {
+          "container": {
+            "ok": true
+          },
+          "features": {
+            "ok": true,
+            "detail": "0 features (0 with agent runs)"
+          },
+          "agentRuns": {
+            "ok": true,
+            "detail": "0 runs (0 active)"
+          }
+        }
+      }
+    },
+    "setupClearance": null,
+    "logos": [
+      {
+        "alt": "Claude Code",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Kimi Code",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Codex CLI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Copilot CLI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Cursor",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Gemini CLI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Cline",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "OpenRouter",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Together AI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Ollama",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "LLM Proxy",
+        "loaded": true,
+        "filter": "none"
+      }
+    ],
+    "overflow": false,
+    "violations": [],
+    "errors": [],
+    "screenshot": "control-center-verified-desktop-light.png"
+  },
+  {
+    "mode": "desktop-dark",
+    "status": 200,
+    "health": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "checks": {
+          "container": {
+            "ok": true
+          },
+          "features": {
+            "ok": true,
+            "detail": "0 features (0 with agent runs)"
+          },
+          "agentRuns": {
+            "ok": true,
+            "detail": "0 runs (0 active)"
+          }
+        }
+      }
+    },
+    "setupClearance": null,
+    "logos": [
+      {
+        "alt": "Claude Code",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Kimi Code",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Codex CLI",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Copilot CLI",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Cursor",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Gemini CLI",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Cline",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "OpenRouter",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Together AI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Ollama",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "LLM Proxy",
+        "loaded": true,
+        "filter": "invert(1)"
+      }
+    ],
+    "overflow": false,
+    "violations": [],
+    "errors": [],
+    "screenshot": "control-center-verified-desktop-dark.png"
+  },
+  {
+    "mode": "phone-light",
+    "status": 200,
+    "health": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "checks": {
+          "container": {
+            "ok": true
+          },
+          "features": {
+            "ok": true,
+            "detail": "0 features (0 with agent runs)"
+          },
+          "agentRuns": {
+            "ok": true,
+            "detail": "0 runs (0 active)"
+          }
+        }
+      }
+    },
+    "setupClearance": 22,
+    "logos": [
+      {
+        "alt": "Claude Code",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Kimi Code",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Codex CLI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Copilot CLI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Cursor",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Gemini CLI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Cline",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "OpenRouter",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Together AI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Ollama",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "LLM Proxy",
+        "loaded": true,
+        "filter": "none"
+      }
+    ],
+    "overflow": false,
+    "violations": [],
+    "errors": [],
+    "screenshot": "control-center-verified-phone-light.png"
+  },
+  {
+    "mode": "phone-dark",
+    "status": 200,
+    "health": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "checks": {
+          "container": {
+            "ok": true
+          },
+          "features": {
+            "ok": true,
+            "detail": "0 features (0 with agent runs)"
+          },
+          "agentRuns": {
+            "ok": true,
+            "detail": "0 runs (0 active)"
+          }
+        }
+      }
+    },
+    "setupClearance": 22,
+    "logos": [
+      {
+        "alt": "Claude Code",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Kimi Code",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Codex CLI",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Copilot CLI",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Cursor",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Gemini CLI",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Cline",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "OpenRouter",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "Together AI",
+        "loaded": true,
+        "filter": "none"
+      },
+      {
+        "alt": "Ollama",
+        "loaded": true,
+        "filter": "invert(1)"
+      },
+      {
+        "alt": "LLM Proxy",
+        "loaded": true,
+        "filter": "invert(1)"
+      }
+    ],
+    "overflow": false,
+    "violations": [],
+    "errors": [],
+    "screenshot": "control-center-verified-phone-dark.png"
+  },
+  {
+    "host": "127.0.0.1",
+    "settingsStatus": 200,
+    "hydratedNavigation": true
+  },
+  {
+    "host": "localhost",
+    "settingsStatus": 200,
+    "hydratedNavigation": true
+  }
+]

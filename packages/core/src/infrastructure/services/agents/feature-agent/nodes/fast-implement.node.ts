@@ -87,7 +87,9 @@ export function createFastImplementNode(executor: IAgentExecutor, selectMemory?:
       // --- Evidence sub-agent: capture proof of completion (feature-gated) ---
       let evidence: FeatureAgentState['evidence'] = [];
       if (state.enableEvidence) {
-        const evidenceNode = createEvidenceNode(executor);
+        // Fast mode has no plan phase and never writes tasks.yaml, so a
+        // missing task list here is correct, not an unreadable one.
+        const evidenceNode = createEvidenceNode(executor, { requireTaskList: false });
         const evidenceResult = await evidenceNode(state);
         evidence = evidenceResult.evidence ?? [];
       } else {

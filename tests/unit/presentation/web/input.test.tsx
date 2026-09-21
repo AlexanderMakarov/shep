@@ -60,3 +60,23 @@ describe('Input', () => {
     expect(input).toBeInTheDocument();
   });
 });
+
+describe('Input boundary contrast (WCAG 1.4.11 non-text contrast)', () => {
+  // `border-input` resolves to --color-input (#e2e8f0), which is 1.23:1 on
+  // white — far below the 3:1 a control boundary needs. --color-input is also
+  // reused as a SURFACE (the Switch track, `dark:bg-input/30` fills), so the
+  // fix is applied at this call site via a dedicated boundary token rather
+  // than by repainting --color-input itself.
+  it('uses the dedicated control-boundary token, not the surface token', () => {
+    render(<Input placeholder="Bordered" />);
+    const classes = screen.getByPlaceholderText('Bordered').className.split(/\s+/);
+
+    expect(classes).toContain('border-input-border');
+    expect(classes).not.toContain('border-input');
+  });
+
+  it('still renders a 1px border box', () => {
+    render(<Input placeholder="Bordered" />);
+    expect(screen.getByPlaceholderText('Bordered').className.split(/\s+/)).toContain('border');
+  });
+});

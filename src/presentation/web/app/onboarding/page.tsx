@@ -89,7 +89,7 @@ export default async function OnboardingRoute() {
         initialDoctorReport={doctor.report}
         doctorError={doctor.error}
       />
-      <OnboardingTutorial />
+      <OnboardingTutorial headingLevel={2} />
     </div>
   );
 }

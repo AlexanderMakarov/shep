@@ -1,0 +1,91 @@
+name: review-and-experience-polish
+phase: Planning
+summary: >-
+  Review first, implement tested repairs, improve the existing application surface, then verify
+  behavior and record evidence.
+openQuestions: []
+phases:
+  - id: phase-1
+    name: Audit and regression repairs
+    parallel: false
+    description: >-
+      RED: reproduce an observed failure or missing user behavior. GREEN: implement the smallest
+      cohesive repair. REFACTOR: integrate with existing patterns and verify affected checks.
+  - id: phase-2
+    name: Application workspace discovery and presentation
+    parallel: false
+    description: >-
+      RED: reproduce an observed failure or missing user behavior. GREEN: implement the smallest
+      cohesive repair. REFACTOR: integrate with existing patterns and verify affected checks.
+  - id: phase-3
+    name: Browser verification and quality gates
+    parallel: false
+    description: >-
+      RED: reproduce an observed failure or missing user behavior. GREEN: implement the smallest
+      cohesive repair. REFACTOR: integrate with existing patterns and verify affected checks.
+  - id: phase-4
+    name: Close remaining review gaps
+    parallel: false
+    description: >-
+      RED: reproduce queued PR cleanup, archive traversal and TypeSpec output traversal in isolated
+      fixtures, and exercise previously omitted browser workflows. GREEN: repair the confirmed
+      failures. REFACTOR: retain existing architecture and verify final gates. Contain
+      browser-observed asynchronous HTTP handler failures with focused tests and a shared
+      infrastructure adapter.
+  - id: phase-5
+    name: Comprehensive UI and interaction review
+    parallel: false
+    description: >-
+      RED: capture dark-mode artwork failures and audit all web routes, menus and seeded workflows
+      in an isolated instance at desktop and mobile sizes; add regression tests for verified
+      defects. GREEN: repair shared components, responsive layouts and interaction feedback using
+      existing tokens. REFACTOR: deduplicate artwork and retain settings-driven agent resolution;
+      verify keyboard navigation, failure states, browser zoom, light/dark screenshots and all
+      quality gates before publishing and restarting the user's local instance.
+  - id: phase-6
+    name: PR review and CI completion
+    parallel: false
+    description: >-
+      RED: capture the four failed CI jobs and add focused traversal, UTF-8 and CLI approval
+      regressions. GREEN: repair Linux packaging, Windows fixtures, Control Center target sizes,
+      and the reviewed consent and request handling gaps. REFACTOR: share existing primitives,
+      document contributor requirements and verify every required job on the final pushed head.
+      Run the identical source tree and workflow matrix in the owned fork while upstream
+      approval is pending. Inspect successful browser jobs for retries and reproduce any
+      remaining cold-navigation stalls before accepting the browser gate.
+      Exercise the release built by CI through its production CLI server, keep failed browser
+      traces available, and reject retry-only passes instead of accepting flaky jobs.
+      Repair any production-only accessibility regression and cover disabled chat composition
+      alongside its still-enabled agent picker in Storybook.
+filesToModify:
+  - packages/electron/electron-builder.yml
+  - packages/electron/electron-builder.apps-only.yml
+  - src/presentation/web/lib/request-guard.ts
+  - packages/core/src/infrastructure/services/agents/dev-server-agent/nodes/install-deps.node.ts
+  - packages/core/src/infrastructure/services/deployment/repo-dev-config-reader.ts
+  - src/presentation/web/components/features/control-center/welcome-agent-setup.tsx
+  - src/presentation/web/components/features/settings/settings-page-client.tsx
+  - src/presentation/web/components/features/application-page/resizable-split.tsx
+  - src/presentation/web/components/layouts/app-shell/app-shell.tsx
+  - src/presentation/web/app/globals.css
+  - src/presentation/web/components/features/applications/applications-page-client.tsx
+  - src/presentation/web/components/features/applications/applications-page-client.stories.tsx
+  - src/presentation/web/components/features/applications/application-card.tsx
+content: >
+  ## Architecture
+
+  Follow Clean Architecture; keep discovery in the presentation layer using existing domain status.
+  RED-GREEN-REFACTOR is required for every behavior change. Preserve query caching, polling,
+  stale-data recovery and imports. Test before changing implementation. Roll back only changes owned
+  by this review.
+filesToCreate:
+  - src/presentation/web/components/common/brand-icon.tsx
+  - src/presentation/web/components/features/settings/settings-section-nav.tsx
+  - src/presentation/web/hooks/use-hydrated.ts
+  - tests/e2e/web/ui-experience.spec.ts
+  - tests/e2e/web/ui-populated-experience.spec.ts
+  - packages/core/src/infrastructure/services/http-request-listener.ts
+  - tests/unit/infrastructure/services/http-request-listener.test.ts
+  - tests/integration/security/dependency-path-traversal.test.ts
+  - patches/extract-zip@2.0.1.patch
+  - patches/@typespec__openapi3@0.60.0.patch

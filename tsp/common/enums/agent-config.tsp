@@ -7,23 +7,26 @@
  *
  * ## Supported Agents
  *
- * Claude Code, Codex CLI, Copilot CLI, Cursor, Cline, OpenRouter, Together AI, and Ollama
- * are fully supported. Other agents (Gemini CLI, Aider, Continue) are listed for future
- * extensibility and appear as "Coming Soon" in the TUI wizard.
+ * Claude Code, Kimi Code, Codex CLI, Copilot CLI, Gemini CLI, Cursor, Cline, OpenRouter,
+ * Together AI, Ollama and LLMProxy are fully supported. Aider and Continue are listed for
+ * future extensibility and appear as "Coming Soon" in the TUI wizard.
  */
 /**
  * The AI coding agent tool used by Shep for all LLM-powered operations.
  *
  * ```
- * claude-code  ← Currently supported
- * codex-cli    ← Currently supported
- * copilot-cli  ← Currently supported
- * cursor       ← Currently supported
+ * claude-code  ← Currently supported (CLI-based)
+ * kimi-code    ← Currently supported (CLI-based, Moonshot AI Kimi models)
+ * codex-cli    ← Currently supported (CLI-based)
+ * copilot-cli  ← Currently supported (CLI-based)
+ * gemini-cli   ← Currently supported (CLI-based)
+ * cursor       ← Currently supported (CLI-based)
  * cline        ← Currently supported (CLI-based, multi-provider agentic)
  * openrouter   ← Currently supported (SDK-based, HTTP API)
  * together-ai  ← Currently supported (SDK-based, HTTP API)
  * ollama       ← Currently supported (SDK-based, local inference)
- * gemini-cli   ← Coming Soon
+ * llmproxy     ← Currently supported (SDK-based, local proxy)
+ * dev          ← Currently supported (no binary — local mock)
  * aider        ← Coming Soon
  * continue     ← Coming Soon
  * ```
@@ -32,10 +35,19 @@
 enum AgentType {
   /**
    * Anthropic's Claude Code CLI tool.
-   * The only currently supported agent.
+   * Supported — uses the `claude` binary for CLI execution.
    */
   @doc("Claude Code CLI by Anthropic")
   ClaudeCode: "claude-code",
+
+  /**
+   * Moonshot AI's Kimi Code CLI terminal agent.
+   * Supported — uses the `kimi` binary in print mode (`--print`) with
+   * newline-delimited JSON output for non-interactive execution against
+   * Kimi K-series models.
+   */
+  @doc("Kimi Code CLI by Moonshot AI")
+  KimiCode: "kimi-code",
 
   /**
    * OpenAI's Codex CLI terminal agent.
@@ -53,9 +65,9 @@ enum AgentType {
 
   /**
    * Google's Gemini CLI tool.
-   * Not yet supported — listed for future extensibility.
+   * Supported — uses the `gemini` binary for CLI execution with Gemini models.
    */
-  @doc("Gemini CLI by Google (coming soon)")
+  @doc("Gemini CLI by Google")
   GeminiCli: "gemini-cli",
 
   /**
@@ -74,7 +86,7 @@ enum AgentType {
 
   /**
    * Cursor AI coding agent.
-   * Supported — uses the `agent` binary for CLI execution.
+   * Supported — uses the `cursor-agent` binary for CLI execution.
    */
   @doc("Cursor AI coding agent")
   Cursor: "cursor",

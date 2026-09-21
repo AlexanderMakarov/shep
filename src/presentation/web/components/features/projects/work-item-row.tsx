@@ -4,10 +4,10 @@ import { Badge } from '@/components/ui/badge';
 import type { WorkItem, WorkItemState } from '@shepai/core/domain/generated/output';
 
 const PRIORITY_COLORS: Record<string, string> = {
-  Urgent: 'bg-red-500/10 text-red-500',
-  High: 'bg-orange-500/10 text-orange-500',
-  Medium: 'bg-yellow-500/10 text-yellow-500',
-  Low: 'bg-blue-500/10 text-blue-500',
+  Urgent: 'bg-red-500/10 text-red-700 dark:text-red-300',
+  High: 'bg-orange-500/10 text-orange-700 dark:text-orange-300',
+  Medium: 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-300',
+  Low: 'bg-blue-500/10 text-blue-700 dark:text-blue-300',
   None: 'bg-muted text-muted-foreground',
 };
 

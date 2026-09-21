@@ -24,11 +24,17 @@ export async function openDirectory(dirPath: string): Promise<{ error?: string }
         ? ['explorer', normalized.replace(/\//g, '\\')]
         : ['xdg-open', normalized];
 
-  spawn(cmd[0]!, cmd.slice(1), {
+  const child = spawn(/* turbopackIgnore: true */ cmd[0]!, cmd.slice(1), {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
-  }).unref();
+  });
 
-  return {};
+  return new Promise((resolve) => {
+    child.once('error', (error) => resolve({ error: error.message }));
+    child.once('spawn', () => {
+      child.unref();
+      resolve({});
+    });
+  });
 }

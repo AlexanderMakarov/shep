@@ -1,139 +1,22 @@
 import { getModelMeta } from '@/lib/model-metadata';
+// Relative rather than an `@shepai/core` specifier: Storybook's vite config
+// aliases only the `@/…` web paths, and domain/ is plain TypeScript with no
+// runtime dependencies, so a direct path resolves in every consumer.
+import { listAgentDescriptors } from '../../../../packages/core/src/domain/shared/agent-catalog';
 
-const CATALOG: { agentType: string; label: string; models: string[] }[] = [
-  {
-    agentType: 'claude-code',
-    label: 'Claude Code',
-    models: [
-      'claude-fable-5',
-      'claude-opus-5',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-opus-4-6',
-      'claude-sonnet-5',
-      'claude-sonnet-4-6',
-      'claude-haiku-4-5',
-      'glm-5.2',
-      'glm-5.1',
-    ],
-  },
-  {
-    agentType: 'codex-cli',
-    label: 'Codex CLI',
-    models: [
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.3-codex',
-      'gpt-5.3-codex-spark',
-      'gpt-5.2-codex',
-      'gpt-5.2',
-      'gpt-5.1-codex-max',
-      'gpt-5.1-codex',
-      'gpt-5.1',
-      'gpt-5-codex',
-      'gpt-5-codex-mini',
-      'gpt-5',
-    ],
-  },
-  {
-    agentType: 'copilot-cli',
-    label: 'Copilot CLI',
-    models: [
-      'claude-haiku-4.5',
-      'claude-opus-4.5',
-      'claude-opus-4.6',
-      'claude-opus-4.7',
-      'claude-opus-4.8',
-      'claude-sonnet-4',
-      'claude-sonnet-4.5',
-      'claude-sonnet-4.6',
-      'gpt-4.1',
-      'gpt-5-mini',
-      'gpt-5.2',
-      'gpt-5.2-codex',
-      'gpt-5.3-codex',
-      'gpt-5.4',
-      'gpt-5.4-mini',
-    ],
-  },
-  {
-    agentType: 'cursor',
-    label: 'Cursor CLI',
-    models: [
-      'claude-opus-5',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-opus-4-6',
-      'claude-sonnet-5',
-      'claude-sonnet-4-6',
-      'gpt-5.4-high',
-      'gpt-5.2',
-      'gpt-5.3-codex',
-      'gemini-3.1-pro-preview',
-      'composer-1.5',
-      'grok-code',
-    ],
-  },
-  {
-    agentType: 'gemini-cli',
-    label: 'Gemini CLI',
-    models: [
-      'gemini-3.1-pro-preview',
-      'gemini-3-flash-preview',
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-    ],
-  },
-  {
-    agentType: 'cline',
-    label: 'Cline',
-    models: [
-      'claude-sonnet-4-20250514',
-      'claude-haiku-4-5-20251001',
-      'gpt-4.1',
-      'gpt-4.1-mini',
-      'deepseek-chat',
-      'llama3.2',
-    ],
-  },
-  {
-    agentType: 'openrouter',
-    label: 'OpenRouter',
-    models: [
-      'anthropic/claude-sonnet-4.5',
-      'anthropic/claude-haiku-4.5',
-      'openai/gpt-5.4',
-      'openai/gpt-5.2',
-      'meta-llama/llama-4-maverick',
-      'meta-llama/llama-4-scout',
-      'google/gemini-3-flash-preview',
-      'google/gemini-3.1-pro-preview',
-      'deepseek/deepseek-chat-v3-0324',
-      'mistralai/mistral-large-latest',
-    ],
-  },
-  {
-    agentType: 'together-ai',
-    label: 'Together AI',
-    models: [
-      'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-      'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo',
-      'Qwen/Qwen2.5-Coder-32B-Instruct',
-      'deepseek-ai/DeepSeek-V3',
-      'deepseek-ai/DeepSeek-R1',
-      'mistralai/Mistral-Small-24B-Instruct-2501',
-      'google/gemma-2-27b-it',
-      'codellama/CodeLlama-70b-Instruct-hf',
-    ],
-  },
-  { agentType: 'dev', label: 'Demo', models: ['gpt-8', 'opus-7'] },
-];
-
+/**
+ * Storybook stand-in for the real server action, which needs the DI container.
+ *
+ * The model lists are derived from the domain agent catalog rather than copied,
+ * so a story can never show a different set of agents or models than the app.
+ * This file used to be a fourth hand-maintained copy and had already drifted.
+ */
 export async function getAllAgentModels() {
-  return CATALOG.map(({ agentType, label, models }) => ({
-    agentType,
-    label,
-    models: models.map((id) => ({ id, ...getModelMeta(id) })),
-  }));
+  return listAgentDescriptors()
+    .filter((descriptor) => descriptor.supported && descriptor.models.length > 0)
+    .map((descriptor) => ({
+      agentType: descriptor.type as string,
+      label: descriptor.label,
+      models: descriptor.models.map((id) => ({ id, ...getModelMeta(id) })),
+    }));
 }

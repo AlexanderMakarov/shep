@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Server, GitBranch, LayoutGrid, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { ACTIVATABLE_TITLE_CLASS, useActivatableTitle } from '@/hooks/use-activatable-title';
 import { ClusterStatusBadge } from './cluster-status-badge';
 import type { ClusterNodeData } from './cluster-node-config';
 
@@ -32,6 +33,11 @@ export function ClusterNode({
   const targetHandlePos = isRtl ? Position.Right : Position.Left;
   const sourceHandlePos = isRtl ? Position.Left : Position.Right;
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const activateTitle = useCallback(() => {
+    data.onClick?.();
+  }, [data]);
+  const titleProps = useActivatableTitle(activateTitle);
 
   return (
     <div className="group relative" style={{ direction: isRtl ? 'rtl' : 'ltr' }}>
@@ -101,20 +107,11 @@ export function ClusterNode({
       ) : null}
 
       <div
-        role="button"
-        tabIndex={0}
         data-testid="cluster-node-card"
         data-cluster-name={data.name}
         onClick={(e) => {
           e.stopPropagation();
           data.onClick?.();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            e.stopPropagation();
-            data.onClick?.();
-          }
         }}
         className={cn(
           'nodrag bg-card flex w-[22rem] cursor-pointer flex-col overflow-hidden rounded-xl border shadow-sm transition-[border-color,box-shadow] duration-200 dark:bg-neutral-800/80',
@@ -126,7 +123,13 @@ export function ClusterNode({
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-teal-500">
             <Server className="h-4 w-4 text-white" />
           </div>
-          <span data-testid="cluster-node-name" className="min-w-0 truncate text-sm font-medium">
+          {/* The name — not the card — is the activatable control: the card
+              holds real buttons, which may not be nested inside `role="button"`. */}
+          <span
+            {...titleProps}
+            data-testid="cluster-node-name"
+            className={cn('min-w-0 truncate text-sm font-medium', ACTIVATABLE_TITLE_CLASS)}
+          >
             {data.name}
           </span>
           <span className="ms-auto">

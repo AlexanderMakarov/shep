@@ -47,7 +47,7 @@ export function PathCluster({ applicationId, repositoryPath }: PathClusterProps)
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground hover:text-foreground h-5 w-5"
+        className="text-muted-foreground hover:text-foreground h-8 w-8"
         onClick={handleCopy}
         aria-label="Copy path"
         title="Copy path"
@@ -57,7 +57,7 @@ export function PathCluster({ applicationId, repositoryPath }: PathClusterProps)
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground hover:text-foreground h-5 w-5"
+        className="text-muted-foreground hover:text-foreground h-8 w-8"
         onClick={handleOpen}
         aria-label="Open in file manager"
         title="Open in file manager"

@@ -323,8 +323,8 @@ test.describe('Chat tab — hidden when interactive agent is disabled', () => {
     const isChecked = await enableSwitch.getAttribute('data-state');
     if (isChecked === 'checked') {
       await enableSwitch.click();
-      // Wait for the save to complete
-      await page.waitForTimeout(500);
+      // Wait for the action to finish before navigation can abort its POST.
+      await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
     }
 
     // Now navigate to the feature detail page
@@ -347,7 +347,7 @@ test.describe('Chat tab — hidden when interactive agent is disabled', () => {
     const stateAfter = await switchAfter.getAttribute('data-state');
     if (stateAfter === 'unchecked') {
       await switchAfter.click();
-      await page.waitForTimeout(500);
+      await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
     }
   });
 });

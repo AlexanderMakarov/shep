@@ -222,3 +222,98 @@ export const RootLevelFiles: Story = {
     ],
   },
 };
+
+/**
+ * A binary file has no textual hunks. It used to select into an empty pane;
+ * now it says why there is nothing to show.
+ */
+export const BinaryFile: Story = {
+  args: {
+    fileDiffs: [
+      {
+        path: 'public/assets/logo.png',
+        additions: 0,
+        deletions: 0,
+        status: 'modified',
+        hunks: [],
+      },
+    ],
+  },
+};
+
+/** A pure rename — no content changed, so there are no hunks to render. */
+export const RenameOnly: Story = {
+  args: {
+    fileDiffs: [
+      {
+        path: 'src/services/billing-service.ts',
+        oldPath: 'src/services/billing.ts',
+        additions: 0,
+        deletions: 0,
+        status: 'renamed',
+        hunks: [],
+      },
+    ],
+  },
+};
+
+/**
+ * A generated file well past `MAX_LINES_PER_FILE`. Select it to see the
+ * gate — rendering tens of thousands of rows synchronously inside a drawer
+ * is what the "Show anyway" escape is protecting you from.
+ */
+export const OversizedFile: Story = {
+  args: {
+    fileDiffs: [
+      {
+        path: 'dist/bundle.generated.js',
+        additions: 5000,
+        deletions: 0,
+        status: 'modified',
+        hunks: [
+          {
+            header: '@@ -0,0 +1,5000 @@',
+            lines: Array.from({ length: 5000 }, (_, i) => ({
+              type: 'added' as const,
+              content: `export const value${i} = ${i};`,
+              newNumber: i + 1,
+            })),
+          },
+        ],
+      },
+    ],
+  },
+};
+
+/** A long unbroken identifier — kept on one line, with the pane scrolling. */
+export const LongLines: Story = {
+  args: {
+    fileDiffs: [
+      {
+        path: 'src/handlers/submit.ts',
+        additions: 1,
+        deletions: 1,
+        status: 'modified',
+        hunks: [
+          {
+            header: '@@ -1,2 +1,2 @@',
+            lines: [
+              {
+                type: 'removed',
+                content:
+                  'export const handleSubmitFeedbackForVeryLongNamedComponent = createHandlerWithRetryAndTelemetry(options);',
+                oldNumber: 1,
+              },
+              {
+                type: 'added',
+                content:
+                  'export const handleSubmitFeedbackForVeryLongNamedComponent = createHandlerWithRetryAndTelemetryAndAbort(options);',
+                newNumber: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+};

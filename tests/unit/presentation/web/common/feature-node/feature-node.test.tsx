@@ -131,7 +131,8 @@ const defaultData: FeatureNodeData = {
 
 function renderFeatureNode(
   dataOverrides?: Partial<FeatureNodeData>,
-  nodeOverrides?: Partial<Omit<FeatureNodeType, 'data'>>
+  nodeOverrides?: Partial<Omit<FeatureNodeType, 'data'>>,
+  onNodeClick?: (event: React.MouseEvent, node: FeatureNodeType) => void
 ) {
   const data = { ...defaultData, ...dataOverrides };
   const nodes: FeatureNodeType[] = [
@@ -139,7 +140,12 @@ function renderFeatureNode(
   ];
   return render(
     <ReactFlowProvider>
-      <ReactFlow nodes={nodes} nodeTypes={nodeTypes} proOptions={{ hideAttribution: true }} />
+      <ReactFlow
+        nodes={nodes}
+        nodeTypes={nodeTypes}
+        proOptions={{ hideAttribution: true }}
+        {...(onNodeClick && { onNodeClick })}
+      />
     </ReactFlowProvider>
   );
 }
@@ -493,5 +499,226 @@ describe('FeatureNode', () => {
 
       expect(screen.getByText('Delete feature?')).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * React Flow leaves a node it has not measured at `visibility: hidden`, and
+ * jsdom never resolves that. Accessible-name computation treats the whole card
+ * as hidden, so these tests assert the ARIA attributes directly instead of
+ * querying by accessible name — the attributes are what a real AT reads.
+ */
+function liveRegion(container: HTMLElement, label: string): HTMLElement | null {
+  return container.querySelector<HTMLElement>(`[role="status"][aria-label="${label}"]`);
+}
+
+describe('FeatureNode keyboard activation (P0-3)', () => {
+  it('exposes the title — not the card — as the activatable control', () => {
+    renderFeatureNode({ name: 'Auth Module' });
+
+    const title = screen.getByTestId('feature-node-title');
+    expect(title).toHaveAttribute('role', 'button');
+    expect(title).toHaveAttribute('tabindex', '0');
+    expect(title).toHaveTextContent('Auth Module');
+    expect(screen.getByTestId('feature-node-card')).not.toHaveAttribute('role', 'button');
+    expect(screen.getByTestId('feature-node-card')).not.toHaveAttribute('tabindex');
+  });
+
+  it('gives the title a visible focus indicator', () => {
+    renderFeatureNode({ name: 'Auth Module' });
+
+    expect(screen.getByTestId('feature-node-title').className).toMatch(/focus-visible:/);
+  });
+
+  it('never nests a real button inside an element with role="button"', () => {
+    // Delete + add + start + the copy-id and chat buttons all render here —
+    // every one of them used to sit inside the card's `role="button"`.
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      onDelete: vi.fn(),
+      onAction: vi.fn(),
+      state: 'pending',
+      onStart: vi.fn(),
+    });
+    expect(container.querySelectorAll('button').length).toBeGreaterThan(3);
+
+    const nested = Array.from(container.querySelectorAll('button')).filter((b) =>
+      b.parentElement?.closest('[role="button"]')
+    );
+    expect(nested).toEqual([]);
+  });
+
+  it('opens the feature on Enter through the same handler the mouse uses', () => {
+    const onNodeClick = vi.fn();
+    renderFeatureNode({ name: 'Auth Module' }, undefined, onNodeClick);
+
+    fireEvent.keyDown(screen.getByTestId('feature-node-title'), { key: 'Enter' });
+
+    expect(onNodeClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the feature on Space', () => {
+    const onNodeClick = vi.fn();
+    renderFeatureNode({ name: 'Auth Module' }, undefined, onNodeClick);
+
+    fireEvent.keyDown(screen.getByTestId('feature-node-title'), { key: ' ' });
+
+    expect(onNodeClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores keys that are not Enter or Space', () => {
+    const onNodeClick = vi.fn();
+    renderFeatureNode({ name: 'Auth Module' }, undefined, onNodeClick);
+
+    fireEvent.keyDown(screen.getByTestId('feature-node-title'), { key: 'a' });
+
+    expect(onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mouse path working — a click on the card still opens it once', () => {
+    const onNodeClick = vi.fn();
+    renderFeatureNode({ name: 'Auth Module' }, undefined, onNodeClick);
+
+    fireEvent.click(screen.getByTestId('feature-node-card'));
+
+    expect(onNodeClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('keyboard activation lands inside the card, where the open handler looks', () => {
+    // control-center's handleNodeClick ignores clicks whose target is not
+    // inside `[data-testid="feature-node-card"]`, so the synthesized event
+    // has to originate there — otherwise the keyboard path would be a no-op
+    // in production while still passing a naive handler-called assertion.
+    const onNodeClick = vi.fn();
+    renderFeatureNode({ name: 'Auth Module' }, undefined, onNodeClick);
+
+    fireEvent.keyDown(screen.getByTestId('feature-node-title'), { key: 'Enter' });
+
+    const event = onNodeClick.mock.calls[0]?.[0] as unknown as { target: HTMLElement };
+    expect(event.target.closest('[data-testid="feature-node-card"]')).not.toBeNull();
+  });
+
+  it('does not open the feature when an inner button is clicked', () => {
+    const onNodeClick = vi.fn();
+    renderFeatureNode(
+      { name: 'Auth Module', onDelete: vi.fn(), featureId: '#f1' },
+      undefined,
+      onNodeClick
+    );
+
+    fireEvent.click(screen.getByTestId('feature-node-delete-button'));
+
+    expect(onNodeClick).not.toHaveBeenCalled();
+  });
+});
+
+describe('FeatureNode status announcements (A8)', () => {
+  it('announces the running status in words', () => {
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'running',
+      lifecycle: 'implementation',
+    });
+
+    const live = liveRegion(container, 'Auth Module: Implementing');
+    expect(live).not.toBeNull();
+    expect(live).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('announces an error with its message, not just a red glyph', () => {
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'error',
+      errorMessage: 'Build failed',
+    });
+
+    const live = liveRegion(container, 'Auth Module: Build failed');
+    expect(live).not.toBeNull();
+    expect(live).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('announces the done status', () => {
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'done',
+      runtime: '2h 15m',
+    });
+
+    expect(liveRegion(container, 'Auth Module: Completed in 2h 15m')).not.toBeNull();
+  });
+
+  it('announces the blocked status', () => {
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'blocked',
+      blockedBy: 'API Layer',
+    });
+
+    expect(liveRegion(container, 'Auth Module: Waiting on API Layer')).not.toBeNull();
+  });
+
+  it('announces action-required — the state that demands attention', () => {
+    // This state renders only a button. A button appearing is not announced,
+    // so without a live region the one status a user must react to is the one
+    // they are never told about.
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'action-required',
+      lifecycle: 'requirements',
+    });
+
+    const live = liveRegion(container, 'Auth Module: Review Requirements');
+    expect(live).not.toBeNull();
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    // the approve button stays reachable and keeps its own label
+    expect(screen.getByTestId('feature-node-approve-button')).toHaveAttribute(
+      'aria-label',
+      'Review Requirements'
+    );
+  });
+
+  it('announces the lifecycle phase from a persistent live region', () => {
+    renderFeatureNode({ name: 'Auth Module', state: 'running', lifecycle: 'review' });
+
+    const phase = screen.getByTestId('feature-node-phase-badge');
+    expect(phase).toHaveAttribute('role', 'status');
+    expect(phase).toHaveAttribute('aria-live', 'polite');
+    expect(phase).toHaveAttribute('aria-label', 'Auth Module: Merge Review');
+  });
+
+  it('announces once per status — the card carries no duplicate live region', () => {
+    const { container } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'running',
+      lifecycle: 'implementation',
+    });
+
+    expect(container.querySelectorAll('[aria-label="Auth Module: Implementing"]')).toHaveLength(1);
+  });
+
+  it('tracks the status text — a state change changes what is announced', () => {
+    const { container, rerender } = renderFeatureNode({
+      name: 'Auth Module',
+      state: 'running',
+      lifecycle: 'implementation',
+    });
+    expect(liveRegion(container, 'Auth Module: Implementing')).not.toBeNull();
+
+    const nodes: FeatureNodeType[] = [
+      {
+        id: 'test-node',
+        type: 'featureNode',
+        position: { x: 0, y: 0 },
+        data: { ...defaultData, name: 'Auth Module', state: 'error', errorMessage: 'Build failed' },
+      },
+    ];
+    rerender(
+      <ReactFlowProvider>
+        <ReactFlow nodes={nodes} nodeTypes={nodeTypes} proOptions={{ hideAttribution: true }} />
+      </ReactFlowProvider>
+    );
+
+    expect(liveRegion(container, 'Auth Module: Implementing')).toBeNull();
+    expect(liveRegion(container, 'Auth Module: Build failed')).not.toBeNull();
   });
 });

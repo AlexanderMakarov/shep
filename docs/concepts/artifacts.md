@@ -293,7 +293,9 @@ Artifacts are stored in the Shep data directory:
 ## Generation Process
 
 ```typescript
-// src/infrastructure/agents/planning.agent.ts
+// Illustrative only — there is no PlanningAgent class in the tree.
+// Artifact generation lives in the feature agent's graph nodes under
+// packages/core/src/infrastructure/services/agents/feature-agent/nodes/.
 class PlanningAgent {
   async generateArtifacts(
     feature: Feature,

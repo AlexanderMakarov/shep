@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, useRef, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MessageCircle, Check, Copy, Link2, ShieldCheck, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,17 +18,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { updateSettingsAction } from '@/app/actions/update-settings';
+import { useSettingsSave } from '@/hooks/use-settings-save';
 import {
   beginMessagingPairingAction,
   confirmMessagingPairingAction,
   disconnectMessagingAction,
 } from '@/app/actions/messaging';
 import type { MessagingConfig } from '@shepai/core/domain/generated/output';
+import type {
+  SecretPresence,
+  SettingsSecretPresence,
+} from '@shepai/core/application/use-cases/settings/load-settings.use-case';
+import { secretPlaceholder } from '@/lib/secret-placeholder';
 import { MessagingPlatform } from '@shepai/core/domain/generated/output';
 
 export interface MessagingSettingsSectionProps {
+  /** `botToken` / `routeToken` are always `undefined` — the server masks them. */
   messaging?: MessagingConfig;
+  /** What is stored for each credential, without the values. */
+  secrets?: SettingsSecretPresence;
 }
 
 interface PairingSessionState {
@@ -60,54 +68,44 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-export function MessagingSettingsSection({ messaging }: MessagingSettingsSectionProps) {
+export function MessagingSettingsSection({ messaging, secrets }: MessagingSettingsSectionProps) {
   const config = messaging ?? DEFAULT_CONFIG;
 
   const [enabled, setEnabled] = useState(config.enabled);
   const [gatewayUrl, setGatewayUrl] = useState(config.gatewayUrl ?? '');
-  const [telegram, setTelegram] = useState(config.telegram);
-  const [whatsapp, setWhatsapp] = useState(config.whatsapp);
-  const [isPending, startTransition] = useTransition();
-  const [showSaved, setShowSaved] = useState(false);
-  const prevPendingRef = useRef(false);
+  const previousGatewayUrl = useRef(config.gatewayUrl ?? '');
+  const telegram = config.telegram;
+  const whatsapp = config.whatsapp;
+  const { save, showSaving: isPending, showSaved } = useSettingsSave();
 
   const [pairing, setPairing] = useState<PairingSessionState | null>(null);
   const [pairingLoading, setPairingLoading] = useState(false);
   const [chatIdInput, setChatIdInput] = useState('');
 
   useEffect(() => {
-    if (prevPendingRef.current && !isPending) {
-      setShowSaved(true);
-      const timer = setTimeout(() => setShowSaved(false), 2000);
-      return () => clearTimeout(timer);
-    }
-    prevPendingRef.current = isPending;
-  }, [isPending]);
-
-  // Keep local state in sync when the server prop changes after a server action.
-  useEffect(() => {
     setEnabled(config.enabled);
-    setGatewayUrl(config.gatewayUrl ?? '');
-    setTelegram(config.telegram);
-    setWhatsapp(config.whatsapp);
-  }, [config.enabled, config.gatewayUrl, config.telegram, config.whatsapp]);
+  }, [config.enabled]);
+
+  // Server actions refresh all settings props. Preserve a newer local draft
+  // while adopting server changes to a field the user has not edited.
+  useEffect(() => {
+    const previous = previousGatewayUrl.current;
+    const next = config.gatewayUrl ?? '';
+    setGatewayUrl((current) => (current === previous ? next : current));
+    previousGatewayUrl.current = next;
+  }, [config.gatewayUrl]);
 
   const saveTopLevel = useCallback(
     (payload: { enabled?: boolean; gatewayUrl?: string }) => {
-      startTransition(async () => {
-        const result = await updateSettingsAction({
-          messaging: {
-            ...config,
-            enabled: payload.enabled ?? enabled,
-            gatewayUrl: payload.gatewayUrl ?? gatewayUrl,
-          },
-        });
-        if (!result.success) {
-          toast.error(result.error ?? 'Failed to save messaging settings');
-        }
+      save({
+        messaging: {
+          ...config,
+          enabled: payload.enabled ?? enabled,
+          gatewayUrl: payload.gatewayUrl ?? gatewayUrl,
+        },
       });
     },
-    [config, enabled, gatewayUrl]
+    [save, config, enabled, gatewayUrl]
   );
 
   const savePlatformBotToken = useCallback(
@@ -119,19 +117,14 @@ export function MessagingSettingsSection({ messaging }: MessagingSettingsSection
         toast.error('Pair this platform before setting a bot token.');
         return;
       }
-      startTransition(async () => {
-        const result = await updateSettingsAction({
-          messaging: {
-            ...config,
-            [key]: { ...existing, botToken: botToken || undefined },
-          },
-        });
-        if (!result.success) {
-          toast.error(result.error ?? 'Failed to save bot token');
-        }
+      save({
+        messaging: {
+          ...config,
+          [key]: { ...existing, botToken: botToken || undefined },
+        },
       });
     },
-    [config]
+    [save, config]
   );
 
   function handleEnableChange(value: boolean) {
@@ -282,6 +275,7 @@ export function MessagingSettingsSection({ messaging }: MessagingSettingsSection
           onPair={() => handlePair(MessagingPlatform.Telegram)}
           onDisconnect={() => handleDisconnect(MessagingPlatform.Telegram)}
           onSaveBotToken={(value) => savePlatformBotToken(MessagingPlatform.Telegram, value)}
+          storedBotToken={secrets?.telegramBotToken}
         />
 
         <PlatformRow
@@ -291,6 +285,7 @@ export function MessagingSettingsSection({ messaging }: MessagingSettingsSection
           onPair={() => handlePair(MessagingPlatform.WhatsApp)}
           onDisconnect={() => handleDisconnect(MessagingPlatform.WhatsApp)}
           onSaveBotToken={(value) => savePlatformBotToken(MessagingPlatform.WhatsApp, value)}
+          storedBotToken={secrets?.messagingWhatsappBotToken}
         />
 
         {telegram?.paired === true || whatsapp?.paired === true ? (
@@ -419,6 +414,7 @@ function PlatformRow({
   onPair,
   onDisconnect,
   onSaveBotToken,
+  storedBotToken,
 }: {
   platform: MessagingPlatform;
   config: MessagingConfig['telegram'];
@@ -426,6 +422,7 @@ function PlatformRow({
   onPair: () => void;
   onDisconnect: () => void;
   onSaveBotToken: (value: string) => void;
+  storedBotToken?: SecretPresence;
 }) {
   const label = platformLabel(platform);
   const paired = !!config?.paired;
@@ -433,14 +430,13 @@ function PlatformRow({
   const chatId = config?.chatId;
   const testIdPrefix = platform === MessagingPlatform.Telegram ? 'telegram' : 'whatsapp';
 
-  const [botToken, setBotToken] = useState(config?.botToken ?? '');
-  useEffect(() => {
-    setBotToken(config?.botToken ?? '');
-  }, [config?.botToken]);
+  // Write-only: the stored token never reaches the browser, so the input
+  // starts empty and shows a masked placeholder instead.
+  const [botToken, setBotToken] = useState('');
 
   function handleBotTokenBlur() {
-    if (botToken === (config?.botToken ?? '')) return;
-    onSaveBotToken(botToken);
+    if (botToken.trim().length === 0) return;
+    onSaveBotToken(botToken.trim());
   }
 
   return (
@@ -500,9 +496,10 @@ function PlatformRow({
             id={`${testIdPrefix}-bot-token`}
             data-testid={`input-${testIdPrefix}-bot-token`}
             type="password"
-            placeholder={
+            placeholder={secretPlaceholder(
+              storedBotToken,
               platform === MessagingPlatform.Telegram ? '123456:ABC-...' : 'WhatsApp access token'
-            }
+            )}
             value={botToken}
             disabled={disabled}
             onChange={(e) => setBotToken(e.target.value)}

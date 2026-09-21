@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Plus, Trash2, ArrowRightLeft, Play, CheckCircle2, Clock } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -92,6 +93,8 @@ export function CyclePanel({ projectId, cycles, onCyclesChange, className }: Cyc
       const result = await deleteCycle(cycleId);
       if (!result.error) {
         onCyclesChange?.(cycles.filter((c) => c.id !== cycleId));
+      } else {
+        toast.error(result.error);
       }
     },
     [cycles, onCyclesChange]
@@ -194,6 +197,7 @@ export function CyclePanel({ projectId, cycles, onCyclesChange, className }: Cyc
                     size="sm"
                     className="text-destructive h-6 px-2 text-[10px]"
                     onClick={() => handleDelete(cycle.id)}
+                    data-testid={`delete-cycle-${cycle.id}`}
                   >
                     <Trash2 className="h-3 w-3" />
                   </Button>

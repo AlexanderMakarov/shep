@@ -16,7 +16,7 @@ Push/PR to main or develop:
 
 On PR only:
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Claude Review  │  Documentation & Architecture compliance check    │
+│  PR Check  │  commitlint over the PR range + PR-title check         │
 └──────────────────────────────────────────────────────────────────────┘
 
 On push to main only (after ALL jobs pass, including security):
@@ -34,20 +34,24 @@ On published GitHub Release (created by Release) or manual dispatch:
 
 ### Parallel Jobs (All Branches)
 
-| Job                   | Description                                                 | Duration |
-| --------------------- | ----------------------------------------------------------- | -------- |
-| **Lint & Format**     | ESLint + Prettier + TypeSpec compile (`pnpm tsp:compile`)   | ~30s     |
-| **Type Check**        | TypeScript strict mode validation (requires TypeSpec types) | ~20s     |
-| **Unit Tests**        | Vitest unit + integration tests (Linux + Windows)           | ~20s     |
-| **E2E (CLI)**         | CLI command execution tests (Linux + Windows)               | ~30s     |
-| **E2E (TUI)**         | Terminal UI interaction tests                               | ~20s     |
-| **E2E (Web)**         | Playwright browser tests                                    | ~25s     |
-| **Storybook Build**   | Builds all stories (catches missing mocks/broken imports)   | ~40s     |
-| **Electron**          | Desktop installers for macOS/Windows/Linux                  | ~5m      |
+All of these live in `ci.yml` and run on Node 22.
+
+| Job                       | Description                                                                 |
+| ------------------------- | --------------------------------------------------------------------------- |
+| **Lint & Format**         | `pnpm lint`, `pnpm format:check`, `pnpm tsp:compile`                        |
+| **Type Check**            | `pnpm generate`, fails if the regenerated output differs from what is committed, then `pnpm typecheck` |
+| **Unit Tests**            | `pnpm tsp:compile`, then `test:unit` + `test:int` (ubuntu + windows matrix) |
+| **E2E CLI**               | `pnpm build:release`, then `test:e2e:cli` (ubuntu + windows matrix)         |
+| **E2E (TUI)**             | `pnpm build:release`, then `test:e2e:tui`                                   |
+| **E2E (Web)**             | `pnpm build:release`, Playwright chromium install, then `test:e2e:web`      |
+| **Storybook Build**       | `pnpm check:stories`, then `pnpm build:storybook`                           |
+| **Electron**              | Desktop installers for macOS/Windows/Linux (matrix), uploaded as artifacts  |
+| **Electron Apps-Only**    | Second matrix building the `apps-only` shell variant                        |
 
 > **Note:** Docker images are not built in the CI matrix. They are published by
 > the separate [`docker-publish.yml`](../../.github/workflows/docker-publish.yml)
-> workflow, triggered by the `v*` release tag (see [Docker Images](#docker-images)).
+> workflow, which fires on the **published GitHub Release** — deliberately not on
+> the `v*` tag push (see [Docker Images](#docker-images)).
 
 ### Security Jobs (All Branches)
 
@@ -57,25 +61,31 @@ Security scanners run in parallel and **block releases on main**:
 | --------------------- | --------------------------------------------------------------- | --------------- |
 | **Gitleaks**          | Secret detection (API keys, passwords, tokens)                  | All findings    |
 | **Semgrep**           | SAST rules (`p/typescript`, `p/javascript`, `p/security-audit`) | All findings    |
-| **Security Enforce**  | `shep security enforce` — supply-chain/governance posture       | Gates release   |
+| **Security Enforce**  | `pnpm dev:cli security enforce --output json` — supply-chain/governance posture | Gates release |
 
 > **Note:** Gitleaks uses the CLI directly (not gitleaks-action) because the GitHub Action requires a paid license for organizations.
 
-### Claude Review Job (PRs Only)
+A fourth job, **Security Summary**, depends on Gitleaks and Semgrep. It is not a
+scanner: it runs only on pull requests and only when one of those two failed, and
+posts (or updates) a single tagged PR comment summarising which scanner failed.
 
-Automated code review using Claude Code, focusing on:
+### PR Check Job (PRs Only)
 
-| Check Area                    | What It Validates                                     |
-| ----------------------------- | ----------------------------------------------------- |
-| **Documentation Consistency** | Changes reflected in docs/, CLAUDE.md, AGENTS.md      |
-| **Architecture Compliance**   | Clean Architecture layers, dependency rule, patterns  |
-| **TDD & Testing**             | Test coverage for new functionality                   |
-| **Spec-Driven Workflow**      | Feature PRs have specs/ directory with required files |
+[`pr-check.yml`](../../.github/workflows/pr-check.yml) runs on
+`pull_request: [opened, synchronize, reopened, edited]` and does two things:
 
-**Review Output:**
+- runs **commitlint** over the PR's commit range
+- validates the **PR title** with `amannn/action-semantic-pull-request@v5`, with
+  `requireScope: false` — a scope is optional
 
-- Inline comments on specific code issues
-- Summary PR comment with findings and action items
+### Claude Code (On Demand)
+
+[`claude.yml`](../../.github/workflows/claude.yml) is **not** an automatic PR
+reviewer. It is an on-demand responder: it triggers on `issue_comment`,
+`pull_request_review_comment`, `pull_request_review` and `issues`, and its job
+only runs when the comment, review or issue body/title contains **`@claude`**.
+It then runs `anthropics/claude-code-action@v1`, which carries out whatever the
+mentioning comment asked for.
 
 **Required Secret:** `CLAUDE_CODE_OAUTH_TOKEN` (org-level)
 
@@ -111,10 +121,13 @@ ghcr.io/shep-ai/shep
 
 ### Tagging Strategy
 
-| Trigger                     | Tags                                                        |
-| --------------------------- | ----------------------------------------------------------- |
-| Published Release (`v*` tag) | `latest`, `1.2.3`, `1.2`, `1`, `sha-<full-commit-sha>`     |
-| Manual dispatch (main)      | `latest`, `sha-<full-commit-sha>`                           |
+| Trigger                      | Tags                                                    |
+| ---------------------------- | ------------------------------------------------------- |
+| Published Release (`v*` tag) | `latest`, `1.2.3`, `1.2`, `1`, `sha-<full-commit-sha>` |
+| Manual dispatch (main)       | `latest`, `sha-<full-commit-sha>`                       |
+
+Tags come from `docker/metadata-action@v5` (`type=semver` ×3, `type=sha` with a
+`sha-` prefix and full format, plus `latest` on the default branch or a `v*` tag).
 
 ### Pull & Run
 
@@ -148,7 +161,7 @@ Releases are fully automated based on [Conventional Commits](https://www.convent
 | `feat:`           | Minor (0.X.0) | `feat(cli): add analyze command`            |
 | `fix:`            | Patch (0.0.X) | `fix(agents): resolve memory leak`          |
 | `perf:`           | Patch         | `perf(db): optimize query performance`      |
-| `refactor:`       | Patch         | `refactor(core): simplify state management` |
+| `refactor:`       | Patch         | `refactor(domain): simplify state management` |
 | `BREAKING CHANGE` | Major (X.0.0) | Footer in commit message                    |
 
 Commits that **don't** trigger releases:
@@ -174,10 +187,16 @@ NPM_TOKEN=xxx GITHUB_TOKEN=xxx npx semantic-release
 
 | File                                  | Purpose                                              |
 | ------------------------------------- | ---------------------------------------------------- |
-| `.github/workflows/ci.yml`            | Main CI/CD workflow (build, test, security, release) |
-| `.github/workflows/docker-publish.yml`| Build & push the image to ghcr.io on `v*` tags       |
-| `.github/workflows/pr-check.yml`      | PR-specific checks (commitlint, PR title)            |
-| `.github/workflows/claude-review.yml` | Claude Code automated review                         |
+| `.github/workflows/ci.yml`            | Main CI/CD workflow (lint, typecheck, tests, storybook, electron, security, release) — `push`/`pull_request` on `main` and `develop` |
+| `.github/workflows/pr-check.yml`      | commitlint over the PR range + PR-title check — `pull_request` |
+| `.github/workflows/claude.yml`        | On-demand Claude Code responder — `issue_comment`, `pull_request_review_comment`, `pull_request_review`, `issues`, gated on an `@claude` mention |
+| `.github/workflows/docker-publish.yml`| Build & push the image to ghcr.io — `release: [published]` + `workflow_dispatch` |
+| `.github/workflows/deploy.yml`        | Bumps `core.pin` in the `shep-ai/shep-cloud` repo to the new CLI SHA — `push` to `main` |
+| `.github/workflows/shep-e2e.yml`      | Full `feat new → feat ls → feat show` lifecycle across platforms/agents — hourly `schedule` + `workflow_dispatch` |
+| `.github/workflows/agent-request.yml` | Free-form "describe a fix, get a PR" agent run — `workflow_dispatch` only |
+| `.github/workflows/label-by-lane.yml` | Runs `shep contributors groom-issue` to label new issues — `issues: [opened]` |
+| `.github/workflows/welcome-first-time-contributor.yml` | Runs `shep contributors welcome-pr` — `pull_request: [opened]` (on open, **not** on merge) |
+| `.github/workflows/generate-good-first-issues.yml` | Good-first-issue generation — **schedule disabled**; `workflow_dispatch` only |
 | `release.config.mjs`                  | semantic-release plugins and settings                |
 | `Dockerfile`                          | Multi-stage build for production image               |
 | `.dockerignore`                       | Files excluded from Docker build context             |
@@ -185,17 +204,24 @@ NPM_TOKEN=xxx GITHUB_TOKEN=xxx npx semantic-release
 
 ## Limitations & Considerations
 
-### Docker Cache
+### Docker Builds
 
-- **PR builds**: Use GitHub Actions cache (`type=gha`) for layer caching
-- **Release builds**: No cache sharing with PR builds (semantic-release uses standard `docker build`)
-- **Workaround**: Release builds are optimized via multi-stage Dockerfile caching
+- The image is **never** built on a PR — `docker-publish.yml` only runs on a
+  published release or a manual dispatch. A Dockerfile change therefore is not
+  exercised by CI until it is on `main` and released.
+- The one build that does run uses `docker/build-push-action@v6` with
+  `cache-from: type=gha` / `cache-to: type=gha,mode=max`, on top of the
+  multi-stage Dockerfile.
 
 ### Concurrency
 
-- PRs cancel previous runs on the same branch
-- Main branch runs are never cancelled
-- Release job has exclusive access via `[skip ci]` in release commits
+`ci.yml` groups runs by workflow + ref with
+`cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`:
+
+- PRs and `develop` cancel their own in-flight runs
+- `main` runs are never cancelled
+- The Release job is skipped for commits whose message contains `[skip ci]`,
+  which is how semantic-release's own release commit avoids re-triggering it
 
 ### Required Secrets
 
@@ -203,13 +229,17 @@ NPM_TOKEN=xxx GITHUB_TOKEN=xxx npx semantic-release
 | ------------------------- | ------------------------------------- | -------------------- |
 | `GITHUB_TOKEN`            | Automatic, provided by GitHub Actions | Built-in             |
 | `NPM_TOKEN`               | Publishing to npm registry            | Repository secrets   |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code automated PR review       | Organization secrets |
+| `RELEASE_TOKEN`           | PAT used by semantic-release to create the release, and by `docker-publish.yml` to push to ghcr.io (`GITHUB_TOKEN` 403s on the first org package publish) | Repository secrets |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `@claude` responder + agent-request workflow | Organization secrets |
+| `CURSOR_API_KEY`          | Cursor agent in the scheduled `shep-e2e` run | Repository secrets |
+| `SHEP_CLOUD_PAT`          | `deploy.yml` push to the `shep-cloud` repo | Repository secrets |
+| `SLACK_WEBHOOK`           | semantic-release Slack release notification | Repository secrets |
 
 ### Branch Protection
 
 Recommended settings for `main`:
 
-- Require status checks: `Lint & Format`, `Type Check`, `Unit Tests`, all E2E jobs, all Security jobs
+- Require status checks: `Lint & Format`, `Type Check`, `Unit Tests (…)`, all E2E jobs, `Storybook Build`, and the `Gitleaks` / `Semgrep` / `Security Enforce` jobs
 - Require branches to be up to date
 - Require linear history (optional, for cleaner git log)
 
@@ -270,6 +300,6 @@ echo "feat(cli): add new command" | npx commitlint
 
 - [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
 - [.github/workflows/pr-check.yml](../../.github/workflows/pr-check.yml)
-- [.github/workflows/claude-review.yml](../../.github/workflows/claude-review.yml)
+- [.github/workflows/claude.yml](../../.github/workflows/claude.yml)
 - [release.config.mjs](../../release.config.mjs)
 - [Dockerfile](../../Dockerfile)

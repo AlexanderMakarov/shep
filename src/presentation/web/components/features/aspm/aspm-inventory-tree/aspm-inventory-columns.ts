@@ -161,7 +161,7 @@ function aspmLastScannedFormatter(cell: CellComponent): string {
   if (row._isGroupHeader) {
     const best = mostRecentScan(row._children ?? []);
     if (best === null) {
-      return `<span style="color:#b91c1c;font-size:12px;font-weight:500">Never</span>`;
+      return `<span class="text-red-700 dark:text-red-400" style="font-size:12px;font-weight:500">Never</span>`;
     }
     return `<span style="font-size:12px;color:var(--color-muted-foreground,#64748b)" title="Latest across apps: ${best.toLocaleString()}">${relativeTime(best)}</span>`;
   }
@@ -178,7 +178,7 @@ function aspmLastScannedFormatter(cell: CellComponent): string {
   if (!row._isApplication) return '';
   const date = row._aspmLastScannedAt;
   if (date === null || date === undefined) {
-    return `<span style="color:#b91c1c;font-size:12px;font-weight:500">Never</span>`;
+    return `<span class="text-red-700 dark:text-red-400" style="font-size:12px;font-weight:500">Never</span>`;
   }
   return `<span style="font-size:12px;color:var(--color-muted-foreground,#64748b)" title="${new Date(date).toLocaleString()}">${relativeTime(date)}</span>`;
 }

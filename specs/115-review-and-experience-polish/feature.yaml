@@ -1,0 +1,57 @@
+feature:
+  id: 115-review-and-experience-polish
+  name: review-and-experience-polish
+  number: 115
+  branch: feat/115-review-and-experience-polish
+  lifecycle: review
+  createdAt: '2026-09-20T19:18:58.457Z'
+status:
+  phase: review-watching
+  progress:
+    completed: 5
+    total: 6
+    percentage: 83
+  currentTask: task-6
+  lastUpdated: '2026-09-21T11:05:00.000Z'
+  lastUpdatedBy: ci-review-followup
+checkpoints:
+  - phase: feature-created
+    completedAt: '2026-09-20T19:18:58.457Z'
+    completedBy: shep-kit
+  - phase: research-complete
+    completedAt: '2026-09-20T19:18:58.457Z'
+    completedBy: shep-kit
+  - phase: plan-complete
+    completedAt: '2026-09-20T19:18:58.457Z'
+    completedBy: shep-kit
+  - phase: implementation-complete
+    completedAt: '2026-09-20T20:15:29.803Z'
+    completedBy: full-review-resume
+validation:
+  lastRun: '2026-09-20T20:46:01.553Z'
+  gatesPassed:
+    - regressions
+    - release-build
+    - web-build
+    - storybook-build
+    - typecheck
+    - web-typecheck
+    - lint
+    - format
+    - stories
+    - spec-validation
+    - browser-applications
+    - browser-settings
+    - dependency-regressions
+    - remote-merge-regressions
+    - http-request-failures
+    - browser-all-standard
+    - cli-tui-e2e
+    - frozen-lockfile
+tasks:
+  current: task-6
+  blocked: []
+  failed: []
+errors:
+  current: null
+  history: []

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useRouter } from 'next/navigation';
 import { Handle, Position } from '@xyflow/react';
@@ -30,6 +30,7 @@ import { useTurnStatus } from '@/hooks/turn-statuses-provider';
 import { useDeployAction } from '@/hooks/use-deploy-action';
 import { isDeploymentActive as computeIsDeploymentActive } from '@/hooks/deployment-status-store';
 import { useFeatureFlags } from '@/hooks/feature-flags-context';
+import { ACTIVATABLE_TITLE_CLASS, useActivatableTitle } from '@/hooks/use-activatable-title';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -68,6 +69,17 @@ function getActionRequiredLabel(data: FeatureNodeData, t: (key: string) => strin
   if (data.lifecycle === 'implementation') return t('featureNode.reviewTechnicalPlan');
   if (data.lifecycle === 'review') return t('featureNode.reviewChanges');
   return t('featureNode.review');
+}
+
+/**
+ * Turns a status line into a polite live region that announces itself in
+ * words. Without this a screen-reader user gets no notice when a feature
+ * moves Running → Error: the change is carried by colour and a glyph only.
+ * `role="status"` also makes the `aria-label` valid — a bare `<div>` is
+ * name-prohibited.
+ */
+function statusLiveRegion(label: string) {
+  return { role: 'status' as const, 'aria-live': 'polite' as const, 'aria-label': label };
 }
 
 function getBadgeText(
@@ -138,6 +150,21 @@ export function FeatureNode({
   const deployAction = useDeployAction(deployTarget);
   const isDeployActive = computeIsDeploymentActive(deployAction.status);
   const isDeployReady = deployAction.status === 'Ready';
+
+  // Opening a feature is React Flow's mouse-only `onNodeClick`, and the
+  // control center's handler ignores anything that did not land inside
+  // `[data-testid="feature-node-card"]`. Re-emitting a bubbling click from
+  // the title — which lives inside the card — gives the keyboard the exact
+  // same open action, guards included, instead of a parallel route that
+  // could drift from what the mouse does.
+  const openFromKeyboard = useCallback((titleElement: HTMLElement) => {
+    titleElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }, []);
+  const titleProps = useActivatableTitle(openFromKeyboard);
+
+  // Announced whenever the state changes; the feature name identifies which
+  // card moved when several sit on the canvas.
+  const statusAnnouncement = `${data.name}: ${getBadgeText(data, t)}`;
 
   return (
     <div
@@ -307,12 +334,16 @@ export function FeatureNode({
                 <TooltipTrigger asChild>
                   <span
                     data-testid="feature-node-phase-badge"
+                    {...statusLiveRegion(
+                      `${data.name}: ${lifecyclePhaseBadge[data.lifecycle].tooltip}`
+                    )}
                     className="flex items-center gap-1.5"
                   >
                     <span className="text-muted-foreground text-[10px]">
                       {lifecyclePhaseBadge[data.lifecycle].tooltip}
                     </span>
                     <span
+                      aria-hidden="true"
                       className={cn(
                         'h-1.5 w-1.5 -translate-y-px rounded-full',
                         lifecyclePhaseBadge[data.lifecycle].dot
@@ -359,7 +390,18 @@ export function FeatureNode({
             </Tooltip>
           </TooltipProvider>
           {data.securityMode ? <SecurityBadge mode={data.securityMode} /> : null}
-          <h3 className="min-w-0 truncate text-sm font-bold">{data.name}</h3>
+          {/* The title — not the card — is the activatable control: the card
+              holds real buttons, which may not be nested inside `role="button"`. */}
+          <h2 className="min-w-0 truncate text-sm font-bold">
+            <button
+              type="button"
+              {...titleProps}
+              data-testid="feature-node-title"
+              className={cn('max-w-full truncate text-left', ACTIVATABLE_TITLE_CLASS)}
+            >
+              {data.name}
+            </button>
+          </h2>
         </div>
 
         {/* Description */}
@@ -406,6 +448,7 @@ export function FeatureNode({
           ].includes(data.state) ? (
             <div
               data-testid="feature-node-badge"
+              {...statusLiveRegion(statusAnnouncement)}
               className="relative flex min-w-0 items-center gap-1.5 text-xs"
             >
               {(() => {
@@ -629,37 +672,52 @@ export function FeatureNode({
 
             {/* Right: in-progress status or action buttons */}
             {data.state === 'deleting' ? (
-              <div className="flex items-center gap-1.5 text-xs">
+              <div
+                {...statusLiveRegion(`${data.name}: ${t('featureNode.deleting')}`)}
+                className="flex items-center gap-1.5 text-xs"
+              >
                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-gray-400" />
                 <span className="text-muted-foreground">{t('featureNode.deleting')}</span>
               </div>
             ) : data.state === 'creating' ? (
-              <div className="flex items-center gap-1.5 text-xs">
+              <div
+                {...statusLiveRegion(statusAnnouncement)}
+                className="flex items-center gap-1.5 text-xs"
+              >
                 <Icon className="h-3.5 w-3.5 shrink-0 animate-spin text-teal-600 dark:text-teal-400" />
                 <span className="font-medium text-teal-600 dark:text-teal-400">
                   {getBadgeText(data, t)}
                 </span>
               </div>
             ) : data.state === 'running' ? (
-              <div className="flex items-center gap-1.5 text-xs">
+              <div
+                {...statusLiveRegion(statusAnnouncement)}
+                className="flex items-center gap-1.5 text-xs"
+              >
                 <Icon className="h-3.5 w-3.5 shrink-0 animate-spin text-teal-600 dark:text-teal-400" />
                 <span className="font-medium text-teal-600 dark:text-teal-400">
                   {getBadgeText(data, t)}
                 </span>
               </div>
             ) : data.state === 'action-required' ? (
-              <Button
-                variant="default"
-                size="xs"
-                aria-label={getActionRequiredLabel(data, t)}
-                data-testid="feature-node-approve-button"
-                // eslint-disable-next-line @typescript-eslint/no-empty-function -- click bubbles to card's onNodeClick
-                onClick={() => {}}
-                className="nodrag dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/90 cursor-pointer bg-neutral-900 text-[11px] text-white hover:bg-neutral-800"
-              >
-                <Eye className="h-3 w-3" />
-                {getActionRequiredLabel(data, t)}
-              </Button>
+              // This state renders a button and nothing else, and a button
+              // appearing is never announced — so the one status the user has
+              // to react to would be the one they are never told about. The
+              // region wraps only the gate's own label.
+              <span {...statusLiveRegion(statusAnnouncement)} className="flex items-center">
+                <Button
+                  variant="default"
+                  size="xs"
+                  aria-label={getActionRequiredLabel(data, t)}
+                  data-testid="feature-node-approve-button"
+                  // eslint-disable-next-line @typescript-eslint/no-empty-function -- click bubbles to card's onNodeClick
+                  onClick={() => {}}
+                  className="nodrag dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/90 cursor-pointer bg-neutral-900 text-[11px] text-white hover:bg-neutral-800"
+                >
+                  <Eye className="h-3 w-3" />
+                  {getActionRequiredLabel(data, t)}
+                </Button>
+              </span>
             ) : data.state === 'error' && data.onRetry ? (
               <Button
                 variant="outline"
@@ -676,7 +734,11 @@ export function FeatureNode({
                 {t('featureNode.retry')}
               </Button>
             ) : data.state === 'blocked' ? (
-              <div className="flex items-center gap-1.5 text-xs" data-testid="feature-node-badge">
+              <div
+                className="flex items-center gap-1.5 text-xs"
+                data-testid="feature-node-badge"
+                {...statusLiveRegion(statusAnnouncement)}
+              >
                 {(() => {
                   const BadgeIcon = getBadgeIcon(data);
                   return <BadgeIcon className={cn('h-3.5 w-3.5 shrink-0', config.badgeClass)} />;
@@ -686,7 +748,11 @@ export function FeatureNode({
                 </span>
               </div>
             ) : data.state === 'done' ? (
-              <div className="flex items-center gap-1.5 text-xs" data-testid="feature-node-badge">
+              <div
+                className="flex items-center gap-1.5 text-xs"
+                data-testid="feature-node-badge"
+                {...statusLiveRegion(statusAnnouncement)}
+              >
                 {(() => {
                   const BadgeIcon = getBadgeIcon(data);
                   return <BadgeIcon className={cn('h-3.5 w-3.5 shrink-0', config.badgeClass)} />;

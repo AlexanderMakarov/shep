@@ -16,12 +16,23 @@
  *   - recreates the unique scope index over the new tuple
  *
  * Idempotent: if `scope_type` already exists, the migration is a no-op.
+ *
+ * Atomic, and it has to be. The add/copy/drop sequence is only safe as a unit:
+ * a process killed between the ADD COLUMN and the UPDATE was never logged, so
+ * the migration re-ran — but `hasScopeId` was now true, so the copy was
+ * skipped permanently while the DROP still fired, and the only copy of
+ * `app_id` was deleted. The runner wraps every migration in a transaction; the
+ * explicit one here states the requirement at the place that depends on it.
  */
 
 import type { MigrationParams } from 'umzug';
 import type Database from 'better-sqlite3';
 
 export async function up({ context: db }: MigrationParams<Database.Database>): Promise<void> {
+  db.transaction(() => backfillCascadingScope(db))();
+}
+
+function backfillCascadingScope(db: Database.Database): void {
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='supervisor_policies'")
     .all() as { name: string }[];
@@ -47,32 +58,30 @@ export async function up({ context: db }: MigrationParams<Database.Database>): P
     }
   }
 
-  // Replace legacy indexes that referenced app_id with the new scope-based
-  // index. Drop unconditionally (IF EXISTS) so a partial prior run is fine.
+  // Every index that mentions app_id has to go BEFORE the column does:
+  // SQLite refuses `DROP COLUMN` while an index still references it
+  // ("error in index ... after drop column: no such column: app_id").
+  //
+  // Dropped unconditionally (IF EXISTS) because the index may or may not
+  // exist depending on which version of 089 created the table — NOT because
+  // a partial prior run would be survivable. It would not be: the enclosing
+  // transaction is what makes re-running this migration safe.
   db.exec('DROP INDEX IF EXISTS idx_supervisor_policies_app_id');
+
+  const legacyUniqueScopeSql = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_supervisor_policies_unique_scope'"
+    )
+    .get() as { sql: string | null } | undefined;
+  if (legacyUniqueScopeSql?.sql?.includes('app_id')) {
+    db.exec('DROP INDEX idx_supervisor_policies_unique_scope');
+  }
 
   // Drop the legacy app_id column once values are copied — it carries a
   // NOT NULL constraint that breaks INSERTs from the new code path.
   // Requires SQLite >= 3.35; better-sqlite3 ships a newer build.
   if (hasAppId) {
     db.exec('ALTER TABLE supervisor_policies DROP COLUMN app_id');
-  }
-
-  const indexes = db.pragma('index_list(supervisor_policies)') as {
-    name: string;
-    unique: number;
-  }[];
-  const uniqueScope = indexes.find((i) => i.name === 'idx_supervisor_policies_unique_scope');
-  if (uniqueScope) {
-    // Determine whether the existing index is the legacy app_id-based one.
-    const indexSql = db
-      .prepare(
-        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_supervisor_policies_unique_scope'"
-      )
-      .get() as { sql: string | null } | undefined;
-    if (indexSql?.sql?.includes('app_id')) {
-      db.exec('DROP INDEX idx_supervisor_policies_unique_scope');
-    }
   }
 
   const indexNamesAfter = new Set(

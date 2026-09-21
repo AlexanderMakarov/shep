@@ -163,14 +163,14 @@ export function StepTracker({
       {totals ? (
         <li className="border-border/40 text-muted-foreground mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-[10px] tracking-wide uppercase">
           <span className="flex items-center gap-1">
-            <span className="text-muted-foreground/70">Total</span>
+            <span className="text-muted-foreground">Total</span>
             <span className="text-foreground font-semibold tracking-normal normal-case">
               {formatDuration(totals.durationMs)}
             </span>
           </span>
           {totals.costUsd > 0 ? (
             <span className="flex items-center gap-1">
-              <span className="text-muted-foreground/70">Cost</span>
+              <span className="text-muted-foreground">Cost</span>
               <span className="text-foreground font-semibold tracking-normal normal-case">
                 {formatCost(totals.costUsd)}
               </span>
@@ -178,7 +178,7 @@ export function StepTracker({
           ) : null}
           {totals.inputTokens > 0 || totals.outputTokens > 0 ? (
             <span className="flex items-center gap-1">
-              <span className="text-muted-foreground/70">Tokens</span>
+              <span className="text-muted-foreground">Tokens</span>
               <span className="text-foreground font-semibold tracking-normal normal-case">
                 {formatTokens(totals.inputTokens)} in · {formatTokens(totals.outputTokens)} out
               </span>
@@ -367,108 +367,109 @@ function StepCard({ step, liveStatus, mountIndex, onRetry, onForceStop }: StepCa
         )}
         style={{ animationDelay: `${Math.min(mountIndex, 6) * 40}ms`, animationDuration: '300ms' }}
       >
-        <Collapsible.Trigger asChild>
-          <button
-            type="button"
-            disabled={!hasBody}
-            className={cn(
-              'flex w-full items-center gap-3 px-3 py-1.5 text-left transition-colors duration-200',
-              hasBody && 'hover:bg-muted/40 cursor-pointer',
-              !hasBody && 'cursor-default'
-            )}
-          >
-            <StatusIcon status={status} />
-            {/* Single-row title + subtle inline subtitle / live status. */}
-            <div className="flex min-w-0 flex-1 items-baseline gap-2">
-              <span
-                className={cn(
-                  'shrink-0 truncate text-sm font-medium transition-colors duration-300',
-                  status === 'pending' && 'text-muted-foreground/60'
-                )}
-              >
-                {definition.title}
-              </span>
-              {status === 'interrupted' ? (
-                <span className="min-w-0 truncate text-xs font-medium text-amber-600 dark:text-amber-400">
-                  Interrupted
-                </span>
-              ) : liveStatus && status === 'running' ? (
-                <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-violet-700 dark:text-violet-300">
-                  <span className="inline-flex h-1 w-1 shrink-0 translate-y-[-1px] animate-pulse rounded-full bg-violet-500" />
-                  <span
-                    key={liveStatus}
-                    className="animate-in fade-in-0 slide-in-from-left-1 truncate duration-300"
-                  >
-                    {liveStatus}
-                  </span>
-                </span>
-              ) : definition.description ? (
+        <div className="flex items-center pr-2">
+          <Collapsible.Trigger asChild>
+            <button
+              type="button"
+              disabled={!hasBody}
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-3 px-3 py-1.5 text-left transition-colors duration-200',
+                hasBody && 'hover:bg-muted/40 cursor-pointer',
+                !hasBody && 'cursor-default'
+              )}
+            >
+              <StatusIcon status={status} />
+              {/* Single-row title + subtle inline subtitle / live status. */}
+              <div className="flex min-w-0 flex-1 items-baseline gap-2">
                 <span
                   className={cn(
-                    'min-w-0 truncate text-xs font-normal',
-                    status === 'pending' ? 'text-muted-foreground/40' : 'text-muted-foreground/70'
+                    'shrink-0 truncate text-sm font-medium transition-colors duration-300',
+                    status === 'pending' && 'text-muted-foreground'
                   )}
                 >
-                  {definition.description}
+                  {definition.title}
+                </span>
+                {status === 'interrupted' ? (
+                  <span className="min-w-0 truncate text-xs font-medium text-amber-600 dark:text-amber-400">
+                    Interrupted
+                  </span>
+                ) : liveStatus && status === 'running' ? (
+                  <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-violet-700 dark:text-violet-300">
+                    <span className="inline-flex h-1 w-1 shrink-0 translate-y-[-1px] animate-pulse rounded-full bg-violet-500" />
+                    <span
+                      key={liveStatus}
+                      className="animate-in fade-in-0 slide-in-from-left-1 truncate duration-300"
+                    >
+                      {liveStatus}
+                    </span>
+                  </span>
+                ) : definition.description ? (
+                  <span
+                    className={cn(
+                      'min-w-0 truncate text-xs font-normal',
+                      status === 'pending' ? 'text-muted-foreground' : 'text-muted-foreground'
+                    )}
+                  >
+                    {definition.description}
+                  </span>
+                ) : null}
+              </div>
+              {durationMs !== null ? (
+                <span
+                  className={cn(
+                    'shrink-0 text-[10px] font-medium tabular-nums transition-colors duration-300',
+                    status === 'running'
+                      ? 'text-violet-600 dark:text-violet-300'
+                      : 'text-muted-foreground'
+                  )}
+                  title={`Step duration — ${formatDuration(durationMs)}`}
+                >
+                  {formatDuration(durationMs)}
                 </span>
               ) : null}
-            </div>
-            {durationMs !== null ? (
-              <span
-                className={cn(
-                  'shrink-0 text-[10px] font-medium tabular-nums transition-colors duration-300',
-                  status === 'running'
-                    ? 'text-violet-600 dark:text-violet-300'
-                    : 'text-muted-foreground/70'
-                )}
-                title={`Step duration — ${formatDuration(durationMs)}`}
-              >
-                {formatDuration(durationMs)}
-              </span>
-            ) : null}
-            {onForceStop && (status === 'running' || status === 'pending') ? (
-              <span
-                role="button"
-                tabIndex={0}
-                aria-label="Force stop this step"
-                title="Force stop this step (mark as interrupted)"
-                onClick={(e) => {
+              {items.length > 0 ? (
+                <span
+                  key={items.length}
+                  className="text-muted-foreground animate-in fade-in-0 zoom-in-95 mr-1 shrink-0 text-[10px] tabular-nums duration-200"
+                >
+                  {items.length}
+                </span>
+              ) : null}
+              {hasBody ? (
+                <ChevronRight
+                  className={cn(
+                    'text-muted-foreground h-4 w-4 shrink-0 transition-transform duration-200 ease-out',
+                    expanded && 'rotate-90'
+                  )}
+                />
+              ) : null}
+            </button>
+          </Collapsible.Trigger>
+          {onForceStop && (status === 'running' || status === 'pending') ? (
+            <button
+              type="button"
+              aria-label="Force stop this step"
+              title="Force stop this step (mark as interrupted)"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setOptimisticInterrupted(true);
+                onForceStop(step.definition.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
                   e.stopPropagation();
                   e.preventDefault();
                   setOptimisticInterrupted(true);
                   onForceStop(step.definition.id);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    setOptimisticInterrupted(true);
-                    onForceStop(step.definition.id);
-                  }
-                }}
-                className="text-muted-foreground/50 hover:bg-muted/60 hover:text-foreground focus-visible:ring-ring/50 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none"
-              >
-                <X className="h-3 w-3" strokeWidth={2.5} />
-              </span>
-            ) : null}
-            {items.length > 0 ? (
-              <span
-                key={items.length}
-                className="text-muted-foreground/60 animate-in fade-in-0 zoom-in-95 mr-1 shrink-0 text-[10px] tabular-nums duration-200"
-              >
-                {items.length}
-              </span>
-            ) : null}
-            {hasBody ? (
-              <ChevronRight
-                className={cn(
-                  'text-muted-foreground h-4 w-4 shrink-0 transition-transform duration-200 ease-out',
-                  expanded && 'rotate-90'
-                )}
-              />
-            ) : null}
-          </button>
-        </Collapsible.Trigger>
+                }
+              }}
+              className="text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:ring-ring/50 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none"
+            >
+              <X className="h-3 w-3" strokeWidth={2.5} />
+            </button>
+          ) : null}
+        </div>
         <Collapsible.Content
           className={cn(
             'overflow-hidden',
@@ -514,7 +515,7 @@ function StepCard({ step, liveStatus, mountIndex, onRetry, onForceStop }: StepCa
               </ul>
             ) : null}
             {costUsd > 0 || inputTokens > 0 || outputTokens > 0 ? (
-              <div className="text-muted-foreground/70 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] tabular-nums">
+              <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] tabular-nums">
                 {costUsd > 0 ? <span>{formatCost(costUsd)}</span> : null}
                 {inputTokens > 0 || outputTokens > 0 ? (
                   <span>

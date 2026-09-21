@@ -1,10 +1,16 @@
 // @vitest-environment node
 
 /**
- * API Route Tests: GET /api/tools/[id]/install/stream
+ * API Route Tests: POST /api/tools/[id]/install/stream
  *
  * Tests for the SSE tool installation streaming endpoint that delegates
  * to InstallToolUseCase via the DI container with an onOutput callback.
+ *
+ * The route used to export GET. A GET with a side effect needs no CSRF
+ * token, no preflight and no readable response, so
+ * `<img src="http://localhost:4050/api/tools/docker/install/stream">` on any
+ * page the operator visited ran the tool's `curl … | bash` install command.
+ * It is POST-only now, behind the middleware's auth + Origin checks.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -29,12 +35,12 @@ function makeParams(id: string): { params: Promise<{ id: string }> } {
 }
 
 function makeRequest(id = 'tmux'): Request {
-  return new Request(`http://localhost:3000/api/tools/${id}/install/stream`);
+  return new Request(`http://localhost:3000/api/tools/${id}/install/stream`, { method: 'POST' });
 }
 
 // --- Tests ---
 
-describe('GET /api/tools/[id]/install/stream', () => {
+describe('POST /api/tools/[id]/install/stream', () => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   let routeModule: typeof import('@/app/api/tools/[id]/install/stream/route');
 
@@ -45,10 +51,14 @@ describe('GET /api/tools/[id]/install/stream', () => {
     );
   });
 
+  it('exports no GET handler — a drive-by <img> must not be able to install', () => {
+    expect((routeModule as Record<string, unknown>).GET).toBeUndefined();
+  });
+
   it('returns SSE content-type headers', async () => {
     mockExecute.mockResolvedValue({ status: 'available', toolName: 'tmux' });
 
-    const response = await routeModule.GET(makeRequest(), makeParams('tmux'));
+    const response = await routeModule.POST(makeRequest(), makeParams('tmux'));
 
     expect(response.headers.get('Content-Type')).toBe('text/event-stream');
     expect(response.headers.get('Cache-Control')).toBe('no-cache');
@@ -62,7 +72,7 @@ describe('GET /api/tools/[id]/install/stream', () => {
       return { status: 'available', toolName };
     });
 
-    const response = await routeModule.GET(makeRequest(), makeParams('tmux'));
+    const response = await routeModule.POST(makeRequest(), makeParams('tmux'));
     const text = await response.text();
 
     expect(text).toContain('data: Installing tmux...');
@@ -73,7 +83,7 @@ describe('GET /api/tools/[id]/install/stream', () => {
   it('passes the dynamic route id to the use case', async () => {
     mockExecute.mockResolvedValue({ status: 'available', toolName: 'vscode' });
 
-    await routeModule.GET(makeRequest('vscode'), makeParams('vscode'));
+    await routeModule.POST(makeRequest('vscode'), makeParams('vscode'));
 
     expect(mockExecute).toHaveBeenCalledWith('vscode', expect.any(Function));
   });
@@ -81,7 +91,7 @@ describe('GET /api/tools/[id]/install/stream', () => {
   it('streams error event when use case throws', async () => {
     mockExecute.mockRejectedValue(new Error('Installation failed'));
 
-    const response = await routeModule.GET(makeRequest(), makeParams('tmux'));
+    const response = await routeModule.POST(makeRequest(), makeParams('tmux'));
     const text = await response.text();
 
     expect(text).toContain('event: done');

@@ -225,7 +225,7 @@ function SummaryTile({ testId, label, value, tone }: SummaryTileProps) {
   return (
     <div
       data-testid={testId}
-      role="region"
+      role="group"
       aria-label={label}
       className={cn(
         'bg-card flex flex-col gap-1 rounded-md border p-3',

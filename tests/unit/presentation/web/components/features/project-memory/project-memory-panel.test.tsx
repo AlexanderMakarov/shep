@@ -41,9 +41,40 @@ describe('ProjectMemoryPanel', () => {
     setProjectMemoryScope.mockReset();
   });
 
+  it('keeps an edit available and announces a transport error', async () => {
+    updateProjectMemory.mockRejectedValueOnce(new Error('Connection lost'));
+    render(<ProjectMemoryPanel entries={[entry({})]} />);
+    await userEvent.click(screen.getByTestId('project-memory-edit'));
+    await userEvent.click(screen.getByTestId('project-memory-save'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Connection lost');
+    expect(screen.getByTestId('project-memory-edit-input')).toBeInTheDocument();
+  });
+
+  it('preserves an entry when deletion cannot reach the server', async () => {
+    deleteProjectMemory.mockRejectedValueOnce(new Error('Connection lost'));
+    render(<ProjectMemoryPanel entries={[entry({})]} />);
+    await userEvent.click(screen.getByTestId('project-memory-delete'));
+    await userEvent.click(await screen.findByTestId('project-memory-delete-confirm'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Connection lost');
+    expect(screen.getByText(entry({}).content)).toBeInTheDocument();
+  });
+
+  it('preserves scope and announces a failed scope change', async () => {
+    setProjectMemoryScope.mockRejectedValueOnce(new Error('Connection lost'));
+    render(<ProjectMemoryPanel entries={[entry({ scope: MemoryScope.Project })]} />);
+    await userEvent.click(screen.getByTestId('project-memory-scope-toggle'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Connection lost');
+    expect(screen.queryByTestId('project-memory-org-badge')).not.toBeInTheDocument();
+  });
+
   it('renders the empty state when there are no entries', () => {
     render(<ProjectMemoryPanel entries={[]} />);
     expect(screen.getByTestId('project-memory-empty')).toBeInTheDocument();
+  });
+
+  it('keeps the page heading when the memory list is empty', () => {
+    render(<ProjectMemoryPanel entries={[]} />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Project Memory' })).toBeInTheDocument();
   });
 
   it('groups entries into labelled category sections', () => {

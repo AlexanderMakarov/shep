@@ -15,6 +15,7 @@
  */
 
 import type { Feature } from '../../../../domain/generated/output.js';
+import { normalizeRepositoryPath } from '../../../../domain/shared/repository-path.js';
 import {
   BuildMode,
   type SdlcLifecycle,
@@ -123,7 +124,9 @@ export function toDatabase(feature: Feature): FeatureRow {
     slug: feature.slug,
     description: feature.description,
     user_query: feature.userQuery,
-    repository_path: feature.repositoryPath,
+    // Stored in one canonical separator form so the column can be compared —
+    // and indexed — directly, instead of through REPLACE() at read time.
+    repository_path: normalizeRepositoryPath(feature.repositoryPath),
     branch: feature.branch,
     lifecycle: feature.lifecycle,
     messages: JSON.stringify(feature.messages),

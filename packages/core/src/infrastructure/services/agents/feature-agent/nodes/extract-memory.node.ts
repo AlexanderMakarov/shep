@@ -52,10 +52,26 @@ export function createExtractMemoryNode(deps: ExtractMemoryNodeDeps) {
       };
 
       const result = await deps.executor.execute(prompt, options);
-      const entries = parseMemoryEntries(result.result);
+      const { entries, failure } = parseMemoryEntries(result.result);
 
       if (entries.length === 0) {
-        log.info('No durable memory entries extracted');
+        // Two very different events. "The agent reported nothing durable" is
+        // a normal outcome; "we could not read the agent's answer" means
+        // project memory has silently stopped accumulating, and that must be
+        // visible in the log rather than hidden behind the same line.
+        if (failure) {
+          log.error(
+            `Could not read memory entries from agent output (${failure}) — nothing recorded`
+          );
+          return {
+            currentNode: NODE_NAME,
+            messages: [
+              `[${NODE_NAME}] No memory entries extracted — unreadable output (${failure})`,
+            ],
+            _needsReexecution: false,
+          };
+        }
+        log.info('Agent reported no durable memory entries');
         return {
           currentNode: NODE_NAME,
           messages: [`[${NODE_NAME}] No memory entries extracted`],

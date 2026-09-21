@@ -19,6 +19,7 @@ import { OllamaExecutorService } from '@/infrastructure/services/agents/common/e
 import type { SpawnFunction } from '@/infrastructure/services/agents/common/types.js';
 import { AgentType, AgentAuthMethod } from '@/domain/generated/output.js';
 import type { AgentConfig } from '@/domain/generated/output.js';
+import { AGENT_CATALOG, listSupportedAgentTypes } from '@/domain/shared/agent-catalog.js';
 
 describe('AgentExecutorFactory', () => {
   let factory: AgentExecutorFactory;
@@ -294,7 +295,10 @@ describe('AgentExecutorFactory', () => {
       expect(supported).toContain('ollama');
       expect(supported).toContain('cline');
       expect(supported).toContain('llmproxy');
-      expect(supported).toHaveLength(11);
+      expect(supported).toContain('kimi-code');
+      // Length comes from the catalog so adding an agent does not require
+      // editing a magic number here.
+      expect(supported).toHaveLength(listSupportedAgentTypes().length);
     });
 
     it('should not include unsupported agents', () => {
@@ -415,61 +419,27 @@ describe('AgentExecutorFactory', () => {
       ]);
     });
 
-    it('should return copilot-cli model list with 15 models', () => {
+    it('should return the catalog copilot-cli model list', () => {
       const models = factory.getSupportedModels(AgentType.CopilotCli);
 
-      expect(models).toHaveLength(15);
-      expect(models).toEqual([
-        'claude-haiku-4.5',
-        'claude-opus-4.5',
-        'claude-opus-4.6',
-        'claude-opus-4.7',
-        'claude-opus-4.8',
-        'claude-sonnet-4',
-        'claude-sonnet-4.5',
-        'claude-sonnet-4.6',
-        'gpt-4.1',
-        'gpt-5-mini',
-        'gpt-5.2',
-        'gpt-5.2-codex',
-        'gpt-5.3-codex',
-        'gpt-5.4',
-        'gpt-5.4-mini',
-      ]);
+      expect(models).toEqual([...AGENT_CATALOG[AgentType.CopilotCli].models]);
+      expect(models).toContain('claude-opus-5');
+      expect(models).toContain('gpt-5.4');
     });
 
-    it('should return openrouter model list with 10 models', () => {
+    it('should return the catalog openrouter model list', () => {
       const models = factory.getSupportedModels(AgentType.OpenRouter);
 
-      expect(models).toHaveLength(10);
-      expect(models).toEqual([
-        'anthropic/claude-sonnet-4.5',
-        'anthropic/claude-haiku-4.5',
-        'openai/gpt-5.4',
-        'openai/gpt-5.2',
-        'meta-llama/llama-4-maverick',
-        'meta-llama/llama-4-scout',
-        'google/gemini-3-flash-preview',
-        'google/gemini-3.1-pro-preview',
-        'deepseek/deepseek-chat-v3-0324',
-        'mistralai/mistral-large-latest',
-      ]);
+      expect(models).toEqual([...AGENT_CATALOG[AgentType.OpenRouter].models]);
+      expect(models).toContain('anthropic/claude-sonnet-5');
+      expect(models.every((m) => m.includes('/'))).toBe(true);
     });
 
-    it('should return together-ai model list with 8 models', () => {
+    it('should return the catalog together-ai model list', () => {
       const models = factory.getSupportedModels(AgentType.TogetherAi);
 
-      expect(models).toHaveLength(8);
-      expect(models).toEqual([
-        'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-        'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo',
-        'Qwen/Qwen2.5-Coder-32B-Instruct',
-        'deepseek-ai/DeepSeek-V3',
-        'deepseek-ai/DeepSeek-R1',
-        'mistralai/Mistral-Small-24B-Instruct-2501',
-        'google/gemma-2-27b-it',
-        'codellama/CodeLlama-70b-Instruct-hf',
-      ]);
+      expect(models).toEqual([...AGENT_CATALOG[AgentType.TogetherAi].models]);
+      expect(models).toContain('deepseek-ai/DeepSeek-V3');
     });
 
     it('should return cline model list with 6 models', () => {
@@ -560,7 +530,11 @@ describe('AgentExecutorFactory - LlmProxy', () => {
     const factory = new AgentExecutorFactory(mockSpawn);
     const models = factory.getSupportedModels(AgentType.LlmProxy);
     expect(models.length).toBeGreaterThan(0);
-    expect(models).toContain('gpt-4o');
+    expect(models).toEqual([...AGENT_CATALOG[AgentType.LlmProxy].models]);
+    // Retired identifiers (gpt-4o, o1-preview, claude-3-5-*) were removed —
+    // a picker that offers a dead model fails on the user's first run.
+    expect(models).not.toContain('gpt-4o');
+    expect(models).toContain('claude-sonnet-5');
   });
 });
 

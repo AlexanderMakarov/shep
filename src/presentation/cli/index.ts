@@ -25,11 +25,15 @@
  *   shep settings     Configure Shep settings
  *   shep upgrade      Upgrade Shep CLI to the latest version
  *   shep mcp          Start the MCP server for AI agent integration
+ *   shep logs         Inspect and prune Shep log files
+ *   shep usage        Report agent duration, token, cost and failure stats
  *   shep --version    Display version number only
  *
  * Global Options:
- *   -v, --version  Display version number
- *   -h, --help     Display help
+ *   -v, --version         Display version number
+ *   -h, --help            Display help
+ *   --verbose, --debug    Log at debug level (sets SHEP_LOG_LEVEL=debug)
+ *   --log-level <level>   debug | info | warn | error | silent
  */
 
 // IMPORTANT: reflect-metadata must be imported first for tsyringe DI
@@ -69,7 +73,10 @@ import { createWorkflowCommand } from './commands/workflow/index.js';
 import { createPluginCommand } from './commands/plugin/index.js';
 import { createMcpCommand } from './commands/mcp.command.js';
 import { createFleetCommand } from './commands/fleet/index.js';
+import { createLogsCommand } from './commands/logs/index.js';
+import { createUsageCommand } from './commands/usage.command.js';
 import { messages } from './ui/index.js';
+import { registerGlobalVerbosityOptions } from './global-options.js';
 
 // Daemon lifecycle commands
 import { createStartCommand } from './commands/start.command.js';
@@ -92,6 +99,7 @@ import { initI18n as initTuiI18n } from '../tui/i18n.js';
  * Performs async initialization (database, settings) before parsing commands.
  */
 async function bootstrap() {
+  let errorReported = false;
   try {
     // Step 1: Initialize DI container (database + migrations)
     try {
@@ -99,6 +107,7 @@ async function bootstrap() {
       // Expose the DI container on globalThis for the web UI's server-side code
       (globalThis as Record<string, unknown>).__shepContainer = container;
     } catch (error) {
+      errorReported = true;
       if (error instanceof SqliteNativeBindingError) {
         // Native addon couldn't load — print the fix, not a stack trace.
         messages.error(error.message);
@@ -119,6 +128,7 @@ async function bootstrap() {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       messages.error('Failed to initialize settings', err);
+      errorReported = true;
       throw error;
     }
 
@@ -139,7 +149,14 @@ async function bootstrap() {
     const program = new Command()
       .name('shep')
       .description(description)
-      .version(version, '-v, --version', 'Display version number')
+      .version(version, '-v, --version', 'Display version number');
+
+    // Global verbosity flags. Registered on the root so every subcommand
+    // inherits them; the preAction hook writes SHEP_LOG_LEVEL before any
+    // action runs, and ConsoleLogger re-reads it per line.
+    registerGlobalVerbosityOptions(program);
+
+    program
       // task-10: Default action starts the daemon (or shows already-running URL).
       // The onboarding gate above (lines 82-89) ensures the wizard runs on first launch;
       // after the gate, startDaemon() is the correct next step in both cases.
@@ -182,6 +199,8 @@ async function bootstrap() {
     program.addCommand(createWorkflowCommand());
     program.addCommand(createMcpCommand());
     program.addCommand(createFleetCommand());
+    program.addCommand(createLogsCommand());
+    program.addCommand(createUsageCommand());
 
     // Daemon lifecycle commands (task-9)
     program.addCommand(createStartCommand());
@@ -192,8 +211,13 @@ async function bootstrap() {
 
     // Parse arguments (parseAsync needed for async command actions like init)
     await program.parseAsync();
-  } catch (_error) {
-    // Final catch - already logged specific error above
+  } catch (error) {
+    if (!errorReported) {
+      messages.error(
+        'Failed to start CLI',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
     process.exit(1);
   }
 }

@@ -4,13 +4,32 @@
  * FleetTriageDrawer (spec 111)
  *
  * The exception feed. Lists only what needs a human, ordered P1 → P3, each row
- * carrying the reason and the command that resolves it. Healthy features are
+ * carrying the reason and the way to resolve it. Healthy features are
  * deliberately absent — that is the whole point of the surface.
+ *
+ * "The way to resolve it" is the operative part. The first version of this
+ * drawer was read-only: every row was a static `<div>` and a gate's only
+ * affordance was a non-copyable `<code>` telling the operator to go and run
+ * `shep feat approve <slug>` in a terminal. An operator watching 50 agents does
+ * not want to be handed a command; PR #860 shipped `shep fleet triage` and
+ * batch approve to the CLI, and this surface now exposes the same use cases:
+ *
+ * - every row is a link into its feature,
+ * - a gate row approves inline,
+ * - the footer clears the whole P1 gate backlog behind a confirmation.
+ *
+ * Approvals resume agent runs, so they are consequential: each one has an
+ * in-flight state, a refusal path that toasts the reason, and — for the batch —
+ * an `AlertDialog` naming the count before anything is sent.
  */
 
+import { useCallback, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Drawer,
   DrawerClose,
@@ -20,6 +39,18 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/drawer';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { approveFeature } from '@/app/actions/approve-feature';
+import { batchApproveFeatures } from '@/app/actions/batch-approve-features';
 import {
   FleetTriageCategory,
   FleetTriagePriority,
@@ -41,10 +72,20 @@ const CATEGORY_LABEL: Record<FleetTriageCategory, string> = {
   [FleetTriageCategory.warning]: 'Warning',
 };
 
+/** Placeholder rows shown while the feed is still being read. */
+const SKELETON_ROWS = 3;
+
 export interface FleetTriageDrawerProps {
   items: FleetTriageItem[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * True while the feed is still being read. The drawer then shows placeholder
+   * rows: an empty `items` array during a read means "not known yet", and
+   * rendering the all-clear for it is a false negative on the one surface whose
+   * job is to report exceptions.
+   */
+  loading?: boolean;
   /** Optional refresh hook — renders a Refresh button when supplied. */
   onRefresh?: () => void;
   /** True while a refresh is in flight. */
@@ -52,20 +93,98 @@ export interface FleetTriageDrawerProps {
   className?: string;
 }
 
+function message(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
+/** A gate row is the only kind this surface can approve. */
+function isApprovableGate(item: FleetTriageItem): boolean {
+  return item.category === FleetTriageCategory.gate;
+}
+
 export function FleetTriageDrawer({
   items,
   open,
   onOpenChange,
+  loading = false,
   onRefresh,
   refreshing = false,
   className,
 }: FleetTriageDrawerProps) {
+  /** Feature ids with an approval in flight, so each row disables only itself. */
+  const [approving, setApproving] = useState<ReadonlySet<string>>(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [batchPending, setBatchPending] = useState(false);
+
+  const p1Gates = useMemo(
+    () =>
+      items.filter((item) => isApprovableGate(item) && item.priority === FleetTriagePriority.p1),
+    [items]
+  );
+
+  const handleApprove = useCallback(
+    async (item: FleetTriageItem) => {
+      setApproving((prev) => new Set(prev).add(item.featureId));
+      try {
+        const result = await approveFeature(item.featureId);
+        if (!result.approved) {
+          toast.error(result.error ?? `Failed to approve ${item.featureName}`);
+          return;
+        }
+        toast.success(`${item.featureName} approved — agent resuming`);
+        onRefresh?.();
+      } catch (error: unknown) {
+        toast.error(message(error, `Failed to approve ${item.featureName}`));
+      } finally {
+        setApproving((prev) => {
+          const next = new Set(prev);
+          next.delete(item.featureId);
+          return next;
+        });
+      }
+    },
+    [onRefresh]
+  );
+
+  const handleApproveAll = useCallback(async () => {
+    const featureIds = p1Gates.map((item) => item.featureId);
+    setBatchPending(true);
+    try {
+      const result = await batchApproveFeatures({ featureIds });
+
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
+      if (result.failedCount > 0) {
+        // A partial batch is the dangerous outcome: the count drops, the
+        // operator assumes it is done, and the stragglers go unnoticed.
+        toast.error(
+          `Approved ${result.approvedCount} of ${result.totalAttempted} — ${result.failures
+            .map((failure) => `${failure.featureId}: ${failure.reason}`)
+            .join('; ')}`
+        );
+      } else {
+        toast.success(`Approved ${result.approvedCount} features — agents resuming`);
+      }
+
+      onRefresh?.();
+    } catch (error: unknown) {
+      toast.error(message(error, 'Failed to approve features'));
+    } finally {
+      setBatchPending(false);
+      setConfirmOpen(false);
+    }
+  }, [p1Gates, onRefresh]);
+
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction="right">
       <DrawerContent className={cn('sm:max-w-lg', className)} data-testid="fleet-triage-drawer">
         <DrawerHeader>
           <DrawerTitle>
-            {items.length === 0
+            {loading || items.length === 0
               ? 'Fleet triage'
               : `Fleet triage — ${items.length} item${items.length === 1 ? '' : 's'}`}
           </DrawerTitle>
@@ -75,7 +194,24 @@ export function FleetTriageDrawer({
         </DrawerHeader>
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-2">
-          {items.length === 0 ? (
+          {loading ? (
+            <div role="status" aria-label="Loading fleet triage" aria-busy="true">
+              {Array.from({ length: SKELETON_ROWS }, (_, index) => (
+                <div
+                  key={index}
+                  className="mb-3 rounded-lg border p-3"
+                  data-testid="fleet-triage-skeleton"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                  <Skeleton className="mt-2 h-3 w-24" />
+                  <Skeleton className="mt-3 h-3 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : items.length === 0 ? (
             <p
               className="text-muted-foreground py-8 text-center text-sm"
               data-testid="fleet-triage-empty"
@@ -83,40 +219,75 @@ export function FleetTriageDrawer({
               Nothing needs you right now.
             </p>
           ) : (
-            items.map((item) => (
-              <div
-                key={`${item.featureId}:${item.category}:${item.runId ?? ''}`}
-                className="rounded-lg border p-3"
-                data-testid="fleet-triage-item"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{item.featureName}</p>
-                    <p className="text-muted-foreground truncate text-xs">{item.slug}</p>
+            items.map((item) => {
+              const pending = approving.has(item.featureId);
+              return (
+                <div
+                  key={`${item.featureId}:${item.category}:${item.runId ?? ''}`}
+                  className="rounded-lg border p-3"
+                  data-testid="fleet-triage-item"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    {/*
+                     * The row title is the way into the feature. A real anchor
+                     * rather than a click handler on a div: it is reachable by
+                     * keyboard, announced as a link, and middle-clicks into a
+                     * new tab like every other navigation in the app.
+                     */}
+                    <Link
+                      href={`/feature/${item.featureId}`}
+                      onClick={() => onOpenChange(false)}
+                      className="focus-visible:ring-ring min-w-0 rounded-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden"
+                      data-testid={`fleet-triage-link-${item.featureId}`}
+                    >
+                      <p className="truncate text-sm font-medium hover:underline">
+                        {item.featureName}
+                      </p>
+                      <p className="text-muted-foreground truncate text-xs">{item.slug}</p>
+                    </Link>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Badge variant={PRIORITY_VARIANT[item.priority]} className="text-[10px]">
+                        {item.priority}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        {CATEGORY_LABEL[item.category]}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Badge variant={PRIORITY_VARIANT[item.priority]} className="text-[10px]">
-                      {item.priority}
-                    </Badge>
-                    <Badge variant="outline" className="text-[10px]">
-                      {CATEGORY_LABEL[item.category]}
-                    </Badge>
-                  </div>
+
+                  <p className="text-muted-foreground mt-2 text-xs">{item.reason}</p>
+
+                  {isApprovableGate(item) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-7 px-2 text-xs"
+                      onClick={() => void handleApprove(item)}
+                      disabled={pending}
+                      data-testid={`fleet-triage-approve-${item.featureId}`}
+                    >
+                      {pending ? 'Approving…' : 'Approve'}
+                    </Button>
+                  ) : null}
                 </div>
-
-                <p className="text-muted-foreground mt-2 text-xs">{item.reason}</p>
-
-                {item.category === FleetTriageCategory.gate ? (
-                  <code className="bg-muted mt-2 block w-fit rounded px-1.5 py-0.5 text-[11px]">
-                    shep feat approve {item.slug}
-                  </code>
-                ) : null}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
         <DrawerFooter>
+          {p1Gates.length > 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setConfirmOpen(true)}
+              disabled={batchPending}
+              data-testid="fleet-triage-approve-all"
+            >
+              {batchPending ? 'Approving…' : `Approve all P1 (${p1Gates.length})`}
+            </Button>
+          ) : null}
           {onRefresh ? (
             <Button
               type="button"
@@ -135,6 +306,40 @@ export function FleetTriageDrawer({
             </Button>
           </DrawerClose>
         </DrawerFooter>
+
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent data-testid="fleet-triage-approve-all-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Approve {p1Gates.length} P1 feature{p1Gates.length === 1 ? '' : 's'}?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Each approval resumes its agent run and cannot be undone from here. Features that
+                cannot be approved are reported individually and do not block the rest.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                disabled={batchPending}
+                data-testid="fleet-triage-approve-all-cancel"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  // Keep the dialog up while the batch runs so its in-flight
+                  // state is visible; `handleApproveAll` closes it when done.
+                  event.preventDefault();
+                  void handleApproveAll();
+                }}
+                disabled={batchPending}
+                data-testid="fleet-triage-approve-all-confirm"
+              >
+                {batchPending ? 'Approving…' : 'Approve all'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DrawerContent>
     </Drawer>
   );

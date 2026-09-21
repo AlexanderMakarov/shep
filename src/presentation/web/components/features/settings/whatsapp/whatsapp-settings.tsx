@@ -30,9 +30,14 @@ import {
   WhatsAppConnectionStatus,
   type WhatsAppConfig,
 } from '@shepai/core/domain/generated/output';
+import type { SettingsSecretPresence } from '@shepai/core/application/use-cases/settings/load-settings.use-case';
+import { secretPlaceholder, secretUpdateValue } from '@/lib/secret-placeholder';
 
 export interface WhatsAppSettingsProps {
+  /** Cloud API credential fields are always `undefined` — the server masks them. */
   config?: WhatsAppConfig;
+  /** What is stored for each credential, without the values. */
+  secrets?: SettingsSecretPresence;
   onSave: (config: WhatsAppConfig) => void;
 }
 
@@ -54,7 +59,7 @@ function parseNumbers(raw: string): string[] {
     .filter((n) => n.length > 0);
 }
 
-export function WhatsAppSettings({ config, onSave }: WhatsAppSettingsProps) {
+export function WhatsAppSettings({ config, secrets, onSave }: WhatsAppSettingsProps) {
   const { t } = useTranslation('web');
 
   const [enabled, setEnabled] = useState(config?.enabled ?? false);
@@ -63,9 +68,20 @@ export function WhatsAppSettings({ config, onSave }: WhatsAppSettingsProps) {
   );
   const [allowedNumbers, setAllowedNumbers] = useState((config?.allowedNumbers ?? []).join(', '));
   const [phoneNumberId, setPhoneNumberId] = useState(config?.cloudApiPhoneNumberId ?? '');
-  const [accessToken, setAccessToken] = useState(config?.cloudApiAccessToken ?? '');
-  const [verifyToken, setVerifyToken] = useState(config?.cloudApiVerifyToken ?? '');
-  const [appSecret, setAppSecret] = useState(config?.cloudApiAppSecret ?? '');
+  // Write-only: the stored credentials never reach the browser, so these
+  // start empty and show a masked placeholder. `cleared` tracks a deliberate
+  // blanking so an untouched field is sent as `undefined` (deep-merge skips
+  // it) rather than as '' — `persist()` re-sends all four on ANY change, so
+  // sending '' here would wipe credentials when the user flips the switch.
+  const [accessToken, setAccessToken] = useState('');
+  const [verifyToken, setVerifyToken] = useState('');
+  const [appSecret, setAppSecret] = useState('');
+  const [clearedFields, setClearedFields] = useState<Record<string, boolean>>({});
+
+  const markCleared = (field: string, value: string) =>
+    setClearedFields((previous) =>
+      value.trim().length === 0 ? { ...previous, [field]: true } : previous
+    );
 
   const status = config?.status ?? WhatsAppConnectionStatus.Disconnected;
 
@@ -77,9 +93,9 @@ export function WhatsAppSettings({ config, onSave }: WhatsAppSettingsProps) {
       ...(config?.linkedNumber ? { linkedNumber: config.linkedNumber } : {}),
       ...(config?.status ? { status: config.status } : {}),
       cloudApiPhoneNumberId: phoneNumberId,
-      cloudApiAccessToken: accessToken,
-      cloudApiVerifyToken: verifyToken,
-      cloudApiAppSecret: appSecret,
+      cloudApiAccessToken: secretUpdateValue(accessToken, clearedFields.accessToken ?? false),
+      cloudApiVerifyToken: secretUpdateValue(verifyToken, clearedFields.verifyToken ?? false),
+      cloudApiAppSecret: secretUpdateValue(appSecret, clearedFields.appSecret ?? false),
       ...overrides,
     });
   }
@@ -177,23 +193,36 @@ export function WhatsAppSettings({ config, onSave }: WhatsAppSettingsProps) {
             label={t('settings.whatsapp.cloudAccessToken')}
             value={accessToken}
             type="password"
-            onChange={setAccessToken}
-            onBlur={() => persist({ cloudApiAccessToken: accessToken })}
+            placeholder={secretPlaceholder(secrets?.whatsappCloudApiAccessToken, '')}
+            onChange={(value) => {
+              setAccessToken(value);
+              markCleared('accessToken', value);
+            }}
+            onBlur={() => persist({})}
           />
           <CloudField
             id="whatsapp-verify-token"
             label={t('settings.whatsapp.cloudVerifyToken')}
             value={verifyToken}
-            onChange={setVerifyToken}
-            onBlur={() => persist({ cloudApiVerifyToken: verifyToken })}
+            type="password"
+            placeholder={secretPlaceholder(secrets?.whatsappCloudApiVerifyToken, '')}
+            onChange={(value) => {
+              setVerifyToken(value);
+              markCleared('verifyToken', value);
+            }}
+            onBlur={() => persist({})}
           />
           <CloudField
             id="whatsapp-app-secret"
             label={t('settings.whatsapp.cloudAppSecret')}
             value={appSecret}
             type="password"
-            onChange={setAppSecret}
-            onBlur={() => persist({ cloudApiAppSecret: appSecret })}
+            placeholder={secretPlaceholder(secrets?.whatsappCloudApiAppSecret, '')}
+            onChange={(value) => {
+              setAppSecret(value);
+              markCleared('appSecret', value);
+            }}
+            onBlur={() => persist({})}
           />
         </div>
       ) : null}
@@ -214,6 +243,7 @@ function CloudField({
   onChange,
   onBlur,
   type = 'text',
+  placeholder,
 }: {
   id: string;
   label: string;
@@ -221,6 +251,7 @@ function CloudField({
   onChange: (value: string) => void;
   onBlur: () => void;
   type?: 'text' | 'password';
+  placeholder?: string;
 }) {
   return (
     <div className="space-y-1">
@@ -232,6 +263,7 @@ function CloudField({
         data-testid={id}
         type={type}
         value={value}
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
       />

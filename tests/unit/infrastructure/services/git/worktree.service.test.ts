@@ -65,7 +65,7 @@ describe('WorktreeService', () => {
 
       expect(mockExecFile).toHaveBeenCalledWith(
         'git',
-        ['worktree', 'add', wtPath, '-b', 'my-branch'],
+        ['worktree', 'add', '-b', 'my-branch', '--', wtPath],
         { cwd: '/repo' }
       );
       expect(result.branch).toBe('my-branch');
@@ -147,9 +147,13 @@ describe('WorktreeService', () => {
     it('should remove worktree with correct git command', async () => {
       mockExecFile.mockResolvedValue({ stdout: '', stderr: '' });
       await service.remove('/repo', '/some/wt/path');
-      expect(mockExecFile).toHaveBeenCalledWith('git', ['worktree', 'remove', '/some/wt/path'], {
-        cwd: '/repo',
-      });
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['worktree', 'remove', '--', '/some/wt/path'],
+        {
+          cwd: '/repo',
+        }
+      );
     });
 
     it('should pass --force flag when force=true', async () => {
@@ -157,7 +161,7 @@ describe('WorktreeService', () => {
       await service.remove('/repo', '/some/wt/path', true);
       expect(mockExecFile).toHaveBeenCalledWith(
         'git',
-        ['worktree', 'remove', '--force', '/some/wt/path'],
+        ['worktree', 'remove', '--force', '--', '/some/wt/path'],
         { cwd: '/repo' }
       );
     });
@@ -165,9 +169,13 @@ describe('WorktreeService', () => {
     it('should not pass --force flag when force=false', async () => {
       mockExecFile.mockResolvedValue({ stdout: '', stderr: '' });
       await service.remove('/repo', '/some/wt/path', false);
-      expect(mockExecFile).toHaveBeenCalledWith('git', ['worktree', 'remove', '/some/wt/path'], {
-        cwd: '/repo',
-      });
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['worktree', 'remove', '--', '/some/wt/path'],
+        {
+          cwd: '/repo',
+        }
+      );
     });
 
     it('should not pass --force flag when force is omitted', async () => {
@@ -276,9 +284,13 @@ describe('WorktreeService', () => {
       const result = await service.branchExists('/repo', 'feat/my-branch');
 
       expect(result).toBe(true);
-      expect(mockExecFile).toHaveBeenCalledWith('git', ['branch', '--list', 'feat/my-branch'], {
-        cwd: '/repo',
-      });
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['branch', '--list', '--', 'feat/my-branch'],
+        {
+          cwd: '/repo',
+        }
+      );
     });
 
     it('should return false when branch does not exist', async () => {
@@ -310,7 +322,7 @@ describe('WorktreeService', () => {
       expect(result).toBe(true);
       expect(mockExecFile).toHaveBeenCalledWith(
         'git',
-        ['ls-remote', '--heads', 'origin', 'feat/my-branch'],
+        ['ls-remote', '--heads', 'origin', '--', 'feat/my-branch'],
         { cwd: '/repo' }
       );
     });

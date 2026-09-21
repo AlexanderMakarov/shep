@@ -100,6 +100,11 @@ export class SQLiteRiskExceptionRepository implements IRiskExceptionRepository {
     status: RiskExceptionStatus,
     auditEntry: RiskExceptionAuditEntry
   ): Promise<void> {
+    // IMMEDIATE, not the default deferred: this transaction READS the audit log
+    // and then writes it back. A deferred transaction takes its read snapshot
+    // before it acquires the write lock, so a writer that commits in between
+    // turns the whole append into SQLITE_BUSY_SNAPSHOT — an error busy_timeout
+    // does NOT retry, because retrying would write from a stale snapshot.
     const tx = this.db.transaction(() => {
       const row = this.db
         .prepare('SELECT audit_log FROM risk_exceptions WHERE id = ? AND deleted_at IS NULL')
@@ -116,10 +121,15 @@ export class SQLiteRiskExceptionRepository implements IRiskExceptionRepository {
         )
         .run(status, JSON.stringify(audit), now, id);
     });
-    tx();
+    tx.immediate();
   }
 
   async appendAuditEntry(id: string, auditEntry: RiskExceptionAuditEntry): Promise<void> {
+    // IMMEDIATE, not the default deferred: this transaction READS the audit log
+    // and then writes it back. A deferred transaction takes its read snapshot
+    // before it acquires the write lock, so a writer that commits in between
+    // turns the whole append into SQLITE_BUSY_SNAPSHOT — an error busy_timeout
+    // does NOT retry, because retrying would write from a stale snapshot.
     const tx = this.db.transaction(() => {
       const row = this.db
         .prepare('SELECT audit_log FROM risk_exceptions WHERE id = ? AND deleted_at IS NULL')
@@ -133,7 +143,7 @@ export class SQLiteRiskExceptionRepository implements IRiskExceptionRepository {
         .prepare('UPDATE risk_exceptions SET audit_log = ?, updated_at = ? WHERE id = ?')
         .run(JSON.stringify(audit), Date.now(), id);
     });
-    tx();
+    tx.immediate();
   }
 
   async softDelete(id: string): Promise<void> {

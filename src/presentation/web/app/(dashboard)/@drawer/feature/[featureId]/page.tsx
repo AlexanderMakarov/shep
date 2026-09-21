@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation';
 import { resolve } from '@/lib/server-container';
 import type { IFeatureRepository } from '@shepai/core/application/ports/output/repositories/feature-repository.interface';
 import type { IAgentRunRepository } from '@shepai/core/application/ports/output/agents/agent-run-repository.interface';
@@ -16,46 +17,46 @@ interface FeatureDrawerPageProps {
 export default async function FeatureDrawerPage({ params }: FeatureDrawerPageProps) {
   const { featureId } = await params;
 
-  try {
-    const featureRepo = resolve<IFeatureRepository>('IFeatureRepository');
-    const agentRunRepo = resolve<IAgentRunRepository>('IAgentRunRepository');
+  // No try/catch here on purpose. This body spans resolve → findById →
+  // getSettings → buildFeatureNodeData → computeDrawerView, and a catch-all
+  // around all of it turned EVERY failure into `null`: the URL changed, the
+  // drawer stayed shut, and nothing was reported anywhere. The one expected
+  // outcome — no such feature — is handled explicitly below; anything else
+  // belongs to the segment's error boundary (`@drawer/error.tsx`).
+  const featureRepo = resolve<IFeatureRepository>('IFeatureRepository');
+  const agentRunRepo = resolve<IAgentRunRepository>('IAgentRunRepository');
 
-    // Critical path only: feature + agent run (fast DB lookups).
-    // Expensive operations (git remote URL, GitHub CI/mergeable status,
-    // artifact, repo name, base branch) are deferred to useDrawerSync
-    // which runs client-side after the drawer is already visible.
-    const feature = await featureRepo.findById(featureId);
-    if (!feature) return null;
+  // Critical path only: feature + agent run (fast DB lookups).
+  // Expensive operations (git remote URL, GitHub CI/mergeable status,
+  // artifact, repo name, base branch) are deferred to useDrawerSync
+  // which runs client-side after the drawer is already visible.
+  const feature = await featureRepo.findById(featureId);
+  if (!feature) notFound();
 
-    const run = feature.agentRunId ? await agentRunRepo.findById(feature.agentRunId) : null;
+  const run = feature.agentRunId ? await agentRunRepo.findById(feature.agentRunId) : null;
 
-    const { workflow, interactiveAgent } = getSettings();
-    const nodeData = buildFeatureNodeData(feature, run, {
-      enableEvidence: workflow.enableEvidence,
-      commitEvidence: workflow.commitEvidence,
-      ciWatchEnabled: workflow.ciWatchEnabled,
-    });
+  const { workflow, interactiveAgent } = getSettings();
+  const nodeData = buildFeatureNodeData(feature, run, {
+    enableEvidence: workflow.enableEvidence,
+    commitEvidence: workflow.commitEvidence,
+    ciWatchEnabled: workflow.ciWatchEnabled,
+  });
 
-    const view = computeDrawerView({
-      selectedNode: nodeData,
-      isCreateDrawerOpen: false,
-      pendingRepositoryPath: '',
-      pendingParentFeatureId: undefined,
-      selectedRepoNode: null,
-      features: [],
-      workflowDefaults: undefined,
-    });
+  const view = computeDrawerView({
+    selectedNode: nodeData,
+    isCreateDrawerOpen: false,
+    pendingRepositoryPath: '',
+    pendingParentFeatureId: undefined,
+    selectedRepoNode: null,
+    features: [],
+    workflowDefaults: undefined,
+  });
 
-    if (!view) return null;
+  // A feature that exists but resolves to no drawer view is a legitimate
+  // "nothing to show" — keep the slot empty rather than 404 the page.
+  if (!view) return null;
 
-    return (
-      <FeatureDrawerClient
-        view={view}
-        interactiveAgentEnabled={interactiveAgent?.enabled ?? true}
-      />
-    );
-  } catch {
-    // Feature not found — render nothing (drawer stays closed)
-    return null;
-  }
+  return (
+    <FeatureDrawerClient view={view} interactiveAgentEnabled={interactiveAgent?.enabled ?? true} />
+  );
 }

@@ -19,6 +19,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { findAvailablePort, DEFAULT_PORT } from '@/infrastructure/services/port.service.js';
 import { container } from '@/infrastructure/di/container.js';
 import type { IVersionService } from '@/application/ports/output/services/version-service.interface.js';
+import type { ILogger } from '@/application/ports/output/services/logger.interface.js';
 import type { IWebServerService } from '@/application/ports/output/services/web-server-service.interface.js';
 import type { IAgentRunRepository } from '@/application/ports/output/agents/agent-run-repository.interface.js';
 import type { IPhaseTimingRepository } from '@/application/ports/output/agents/phase-timing-repository.interface.js';
@@ -130,7 +131,8 @@ Examples:
           notificationService,
           undefined,
           db,
-          gitForkService
+          gitForkService,
+          container.resolve<ILogger>('ILogger')
         );
         getPrSyncWatcher().start();
 
@@ -170,7 +172,11 @@ Examples:
           const tunnelService = container.resolve<ITunnelService>('ITunnelService');
           const webhookService =
             container.resolve<IGitHubWebhookServiceType>('IGitHubWebhookService');
-          initializeWebhookManager(tunnelService, webhookService);
+          initializeWebhookManager(
+            tunnelService,
+            webhookService,
+            container.resolve<ILogger>('ILogger')
+          );
           // Start is async and non-blocking — failures are logged, not thrown
           void getWebhookManager().start(port);
         } catch {

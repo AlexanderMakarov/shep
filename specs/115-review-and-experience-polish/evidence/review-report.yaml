@@ -1,0 +1,374 @@
+feature: 115-review-and-experience-polish
+status: completed-with-local-verification
+recoveredSession: 01a0c03e-d507-7391-bab7-d6e9556854bf
+resumedAt: '2026-09-20T20:02:23.419Z'
+scope: >-
+  Complete the interrupted comprehensive review, repairs and Applications experience work, then
+  close remaining merge, dependency and browser coverage gaps.
+provenance: >-
+  Recovered from the local Codex transcript and run ac406ab5205b; follow-up work is recorded in run
+  8dda1adc4ef2. Shared-checkout changes are attributed by session, and only this session's edits are
+  staged.
+coverage:
+  - stage: architecture
+    inspected:
+      - packages/core/src/infrastructure/di/modules/register-services.ts
+      - packages/core/src/infrastructure/services/version.service.ts
+      - tests/unit/infrastructure/di/hollow-dependency-guard.test.ts
+    result: >-
+      VersionService uses explicit instance registration; compiled startup and
+      constructor-dependency guard were repaired in the recovered session.
+  - stage: dependencies
+    inspected:
+      - package.json
+      - packages/core/package.json
+      - packages/electron/package.json
+      - src/presentation/web/package.json
+      - pnpm-lock.yaml
+    result: >-
+      Compatible security updates reduced 124 audit matches to four. Two pinned dependency patches
+      now address the remaining ZIP and OpenAPI traversal paths, with 12 passing adversarial and
+      valid-input regressions. Version-based audit matches remain visible.
+  - stage: logic
+    inspected:
+      - packages/core/src/application/use-cases/applications/list-applications.use-case.ts
+      - src/presentation/web/hooks/use-settings-save.ts
+      - src/presentation/web/app/actions/open-directory.ts
+    result: >-
+      Error status precedes setup completion; failed/overlapping settings saves never report
+      success; launcher spawn errors reach the UI.
+  - stage: database
+    inspected:
+      - packages/core/src/infrastructure/persistence/sqlite/connection.ts
+      - tests/unit/infrastructure/persistence/sqlite/connection-lifecycle.test.ts
+      - tests/integration/infrastructure/repositories
+    result: >-
+      Concurrent first callers share one initialization. Failed configuration closes its connection
+      and allows retry. Repository and migration tests are included in the broad suite.
+  - stage: security
+    inspected:
+      - src/presentation/web/lib/request-guard.ts
+      - src/presentation/web/middleware.ts
+      - packages/core/src/infrastructure/services/filesystem/path-containment.ts
+      - tests/unit/presentation/web/lib/request-guard.test.ts
+      - tests/unit/presentation/web/api/attachments-containment.test.ts
+    result: >-
+      Reviewed existing token, host/origin, CSRF, webhook exemption and filesystem containment
+      changes; regression suites included. No claim of an exhaustive penetration test.
+  - stage: llm
+    inspected:
+      - packages/core/src/infrastructure/services/agents/common/agent-executor-provider.service.ts
+      - packages/core/src/infrastructure/services/agents/supervisor-agent/supervisor-graph.ts
+      - packages/core/src/application/use-cases/agents/approve-agent-run.use-case.ts
+      - tests/unit/application/use-cases/agents/approve-reject-supervisor-actor.test.ts
+    result: >-
+      Confirmed settings are read at executor resolution; graph receives an executor; user-decision
+      precedence tests included. Provider access uses mocks, not paid external calls.
+  - stage: performance
+    inspected:
+      - packages/core/src/infrastructure/services/agents/common/executors/process-stream.ts
+      - src/presentation/web/components/features/applications/applications-page-client.tsx
+    result: >-
+      Fixed reproduced retention after oversized line overflow. Search/filter use the
+      already-fetched list and retain polling/caching. No production throughput benchmark.
+  - stage: observability
+    inspected:
+      - src/presentation/web/app/api/health/route.ts
+      - packages/core/src/infrastructure/services/agents/feature-agent/telemetry-failure-counter.ts
+      - tests/unit/infrastructure/services/diagnostics/daemon-health-probe.service.test.ts
+    result: >-
+      Health handler keeps literal Next route config; recurring telemetry failures are bounded and
+      visible. Existing readiness/diagnostic regression tests included.
+  - stage: uiux
+    inspected:
+      - src/presentation/web/components/features/applications/applications-page-client.tsx
+      - src/presentation/web/components/features/applications/application-card.tsx
+      - src/presentation/web/app/globals.css
+    result: >-
+      Added discoverable creation actions, search plus status filters, clear loading/error/no-match
+      states, semantic card links and theme contrast. Colocated stories and recovered browser
+      evidence cover interaction and rendering.
+  - stage: mobile
+    inspected:
+      - evidence/applications-mobile-light.png
+      - evidence/applications-mobile-dark.png
+      - evidence/applications-narrow.png
+      - evidence/browser-review.json
+    result: >-
+      Recovered browser checks cover 390px and 320px widths, no horizontal overflow, keyboard
+      focus/actions and zero automated accessibility violations.
+  - stage: qa
+    inspected:
+      - tests/unit
+      - tests/integration
+      - tests/e2e/cli
+      - tests/e2e/tui
+      - .coding-agent/runs/ac406ab5205b/verify-browser.cjs
+    result: >-
+      Latest full suites passed 1057 unit files / 12606 tests and 152 integration files / 1749
+      tests, with no expected failures. All 29 standard browser scenarios passed without skips. HTTP
+      handling passed 28 focused tests and five live browser checks.
+  - stage: debug
+    inspected:
+      - tests/integration/infrastructure/services/agents/process-stream-memory.test.ts
+      - tests/unit/presentation/web/hooks/use-settings-save.test.tsx
+      - tests/unit/infrastructure/persistence/sqlite/connection-lifecycle.test.ts
+    result: >-
+      Retained RED/GREEN evidence for concrete regressions; new stream test fails with 32,467,816
+      bytes retained before repair and passes after repair.
+  - stage: documentation
+    inspected:
+      - AGENTS.md
+      - docs/development/spec-driven-workflow.md
+      - docs/development/tdd-guide.md
+      - spec.yaml
+      - research.yaml
+      - plan.yaml
+      - tasks.yaml
+    result: >-
+      Existing spec workflow and TDD cycles retained; progress and verification records updated
+      during resumption. Generated Markdown must come from YAML.
+limitations:
+  - >-
+    Raw audit still returns four version-based matches. The implicated behavior is locally patched
+    and regression-tested; upstream patched versions remain unavailable. See
+    docs/development/dependency-patches.md.
+  - >-
+    Desktop packaging on macOS/Windows, real LLM credentials and external messaging/cloud deployment
+    integrations are not exercised.
+  - TV, scraping and trading-specific stages are not applicable to the selected project surfaces.
+  - >-
+    Automated accessibility checks and source review cannot establish universal correctness or
+    accessibility.
+  - >-
+    The story gate passes with 271 of 338 components covered and 67 recorded exemptions. Components
+    changed for this feature retain their stories.
+advisorySources:
+  - https://github.com/advisories/GHSA-jmr9-qjv8-65gv
+  - https://github.com/advisories/GHSA-7pqw-9j4j-h8q3
+  - https://github.com/advisories/GHSA-2q42-4q24-7rgv
+initialVerification:
+  broadSuite:
+    result: pass
+    files: 1205
+    passed: 14320
+    expectedFailures: 1
+    log: .coding-agent/runs/ac406ab5205b/verification/resumed-tests.log
+  streamRegression:
+    result: pass
+    files: 18
+    tests: 519
+    red: .coding-agent/runs/ac406ab5205b/verification/resumed-stream-red.log
+    green: .coding-agent/runs/ac406ab5205b/verification/resumed-stream-green.log
+  messagingRegression:
+    result: pass
+    files: 2
+    tests: 16
+    red: .coding-agent/runs/ac406ab5205b/verification/resumed-messaging-red.log
+    green: .coding-agent/runs/ac406ab5205b/verification/resumed-messaging-green.log
+  cliTuiE2e:
+    result: pass
+    provenance: recovered session
+    files: 15
+    tests: 87
+    log: .coding-agent/runs/ac406ab5205b/verification/recovered-cli-e2e-final.log
+  applicationsBrowser:
+    result: pass
+    viewports:
+      - desktop-light
+      - desktop-dark
+      - mobile-light
+      - mobile-dark
+      - 320px
+    accessibilityViolations: 0
+    horizontalOverflow: false
+    report: evidence/browser-review.json
+  isolatedSettings:
+    languageTests: 3
+    languageResult: pass
+    messagingTests: 2
+    messagingResult: pass after replacing unreachable external fixture
+    languageLog: .coding-agent/runs/ac406ab5205b/verification/resumed-live-settings.log
+    messagingLog: .coding-agent/runs/ac406ab5205b/verification/resumed-messaging-e2e-green.log
+  releaseBuild:
+    result: pass
+    log: .coding-agent/runs/ac406ab5205b/verification/release-build.log
+  storybookBuild:
+    result: pass after final messaging change
+    log: .coding-agent/runs/ac406ab5205b/verification/final-storybook-build.log
+  qualityGates:
+    result: pass
+    checks:
+      - CLI and web release build
+      - Final production web build after messaging change
+      - Root typecheck
+      - Web typecheck
+      - Production Storybook build
+      - Lint
+      - Prettier formatting
+      - Spec validation
+      - Story coverage
+    log: .coding-agent/runs/ac406ab5205b/verification/final-quality-results.json
+  dependencyAudit:
+    result: 4 high reports, 0 critical/moderate/low; no published patches for remaining reports
+    log: .coding-agent/runs/ac406ab5205b/verification/resumed-audit.json
+fixes:
+  - area: SQLite startup
+    behavior: >-
+      One connection is initialized for concurrent callers; failed integrity/configuration closes
+      the handle and permits retry.
+    tests: tests/unit/infrastructure/persistence/sqlite/connection-lifecycle.test.ts
+  - area: Application readiness
+    behavior: Applications in Error remain failed even when setupComplete is true.
+    tests: tests/unit/application/use-cases/applications/list-applications.use-case.test.ts
+  - area: Settings feedback
+    behavior: >-
+      Failed or overlapping saves never announce Saved; rejected requests report their error and
+      pending state ends. Shared hook now covers both the main settings screen and messaging panel.
+    tests:
+      - tests/unit/presentation/web/hooks/use-settings-save.test.tsx
+      - tests/unit/presentation/web/components/features/settings/messaging-settings-section.test.tsx
+  - area: Applications workspace
+    behavior: >-
+      Search, combined status filters, no-match recovery, visible creation choices, semantic card
+      navigation, folder/import errors and accessible light/dark layouts.
+    tests:
+      - tests/unit/presentation/web/features/applications/applications-page-client.test.tsx
+      - tests/unit/presentation/web/features/applications/application-card-accessibility.test.tsx
+      - evidence/browser-review.json
+  - area: Compiled CLI startup
+    behavior: >-
+      VersionService is registered explicitly instead of letting decorator metadata attempt to
+      inject its optional configuration object; bootstrap reports failures.
+    tests: tests/unit/infrastructure/di/hollow-dependency-guard.test.ts
+  - area: Agent output memory
+    behavior: >-
+      Once an oversized line is rejected, every subsequent partial chunk is discarded until the
+      newline. The next valid line is delivered and the overflow notification occurs once.
+    tests:
+      - tests/integration/infrastructure/services/agents/process-stream-memory.test.ts
+      - tests/unit/infrastructure/services/agents/executors/process-stream.test.ts
+  - area: Messaging browser test
+    behavior: >-
+      A local HTTP gateway fixture exercises real OAuth and route registration requests, replacing
+      the unreachable example.com dependency.
+    tests: tests/e2e/web/messaging-settings.spec.ts
+  - area: Compatibility and quality gates
+    behavior: >-
+      Aligned SDK workspace versions, installed compatible dependency security updates, repaired
+      stale tool-install/translation assertions and story providers, and corrected Next health route
+      configuration.
+    tests: verification logs under .coding-agent/runs/ac406ab5205b/verification
+completedAt: '2026-09-20T20:46:01.553Z'
+branch: feat/115-review-and-experience-polish
+notes:
+  - >-
+    The broad suite was followed by targeted tests for the final messaging fix; counts are reported
+    separately to avoid presenting a repeated subset as additional unique passing tests.
+  - >-
+    Follow-up verification below supersedes the initial broad-suite, browser-scope and dependency
+    outcomes. Earlier logs remain historical evidence.
+initialReviewHead: 16fabe93fc3cecd87903699cf0564438ad996485
+followUp:
+  run: 8dda1adc4ef2
+  checkedBase: bded89d7ed7cf449d28482a59d9abb034d3cb77e
+  runtime:
+    node: v22.22.3
+    pnpm: 10.33.0
+    platform: linux
+  fixes:
+    - area: Remote PR completion
+      behavior: >-
+        Confirm GitHub reports MERGED before deleting the branch or cleaning the worktree. Queue
+        acceptance and status-query failures preserve work. A remote merge with a stale local base
+        still completes correctly.
+      tests:
+        - tests/unit/infrastructure/services/git/git-pr.service.test.ts
+        - tests/integration/infrastructure/services/git/merge-step-real-git/pr-merge.test.ts
+      red: pr-red.log, pr-integration-red.log
+      green: pr-green.log (309 tests)
+    - area: Dependency containment
+      behavior: >-
+        Pinned extract-zip and OpenAPI emitter patches prevent the documented traversal paths. ZIP
+        tests cover existing and dangling symlinks, duplicate entries, external-directory traversal
+        and a valid archive; TypeSpec runs hostile and valid versions in a virtual filesystem.
+      tests:
+        - tests/integration/security/dependency-path-traversal.test.ts
+      red: dependency-red.log, dependency-red-typespec.log, symlink-chain-red.log
+      green: dependency-green.log (12 tests)
+    - area: HTTP request failures
+      behavior: >-
+        Development and packaged servers consume rejected handler promises. Disconnected requests do
+        not write again; connected clients receive a generic 500, and interrupted streams close.
+        Logging uses the shared redacting logger.
+      tests:
+        - tests/unit/infrastructure/services/http-request-listener.test.ts
+        - tests/unit/infrastructure/services/web-server.service.test.ts
+      red: http-red.log, web-server.log (uncaught ECONNRESET)
+      green: >-
+        http-green.log (28 tests), http-browser-green.log (5 scenarios), web-server-final.log (no
+        uncaught request failures)
+    - area: Deterministic browser fixtures
+      behavior: >-
+        Clickability tests seed and clean their own repository and feature instead of skipping an
+        empty instance. Routing interceptors compose correctly and language tests restore English
+        before returning control to other scenarios.
+      tests:
+        - tests/e2e/web/optimistic-node-clickability.spec.ts
+        - tests/e2e/web/i18n-language-switching.spec.ts
+      red: >-
+        browser-red.log (27 passed, 2 skipped), clickability.log, clickability-green.log initial
+        attempts
+      green: browser-green.log (29 passed, 0 skipped)
+  verification:
+    unit:
+      files: 1057
+      tests: 12606
+      result: pass
+      log: unit.log
+    integration:
+      files: 152
+      tests: 1749
+      expectedFailures: 0
+      result: pass
+      log: integration.log
+    browser:
+      tests: 29
+      skipped: 0
+      result: pass
+      log: browser-green.log
+    httpBrowser:
+      tests: 5
+      result: pass
+      log: http-browser-green.log
+    cliTui:
+      result: pass
+      files: 15
+      tests: 87
+      log: cli-tui-e2e.log
+    quality:
+      passed:
+        - root typecheck
+        - web typecheck
+        - lint
+        - format
+        - release build
+        - Storybook build
+        - story gate
+        - frozen lockfile install
+      logDirectory: .coding-agent/runs/8dda1adc4ef2
+  dependencyAudit:
+    versionMatches:
+      high: 4
+      critical: 0
+      moderate: 0
+      low: 0
+    muted: 0
+    behavior: locally patched and covered by regressions
+    log: audit.json
+  publication:
+    pullRequest: https://github.com/shep-ai/shep/pull/876
+    remote: fork
+    history: append-only; upstream was already merged at bded89d7
+    ci: maintainer workflow approval required; local results are the verification signal
+  completedAt: '2026-09-20T20:46:01.553Z'

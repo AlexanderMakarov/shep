@@ -311,6 +311,11 @@ function AgentGraphInner({
 
       <div className="bg-muted/20 h-[480px] w-full overflow-hidden rounded-lg border">
         <ReactFlow
+          // xyflow puts role="application" on its own wrapper, which makes a
+          // screen reader switch interaction mode. Naming the region tells the
+          // user what they just entered — same treatment as
+          // features/aspm/asset-risk-graph.
+          aria-label="Agent workflow graph editor"
           nodes={renderedNodes}
           edges={edges}
           nodeTypes={NODE_TYPES}

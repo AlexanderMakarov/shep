@@ -22,6 +22,7 @@ const mockToastError = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockUpdateFeaturePinnedConfig = vi.fn();
 const mockUseArtifactFetch = vi.fn((..._args: unknown[]) => false);
+const mockRejectOutcome = vi.fn();
 
 let mockPathname = '/feature/feat-1';
 
@@ -157,6 +158,12 @@ vi.mock('@/components/common/feature-drawer-tabs', () => ({
     featureNode: FeatureNodeData;
     onStart?: (featureId: string) => void;
     onRetry?: (featureId: string) => void;
+    onStop?: (featureId: string) => void;
+    onMergeApprove?: () => void;
+    onMergeReject?: (
+      feedback: string,
+      attachments: never[]
+    ) => void | { ok: boolean } | Promise<void | { ok: boolean; error?: string }>;
     continuationActionsDisabled?: boolean;
     pinnedConfig?: {
       agentType: string;
@@ -169,6 +176,28 @@ vi.mock('@/components/common/feature-drawer-tabs', () => ({
     <div data-testid="feature-drawer-tabs">
       <div data-testid="node-agent">{props.featureNode.agentType}</div>
       <div data-testid="node-model">{props.featureNode.modelId}</div>
+      <div data-testid="node-state">{props.featureNode.state}</div>
+      <button type="button" onClick={() => props.onStop?.(props.featureId)}>
+        Stop agent
+      </button>
+      <button
+        type="button"
+        onClick={() => props.onMergeApprove?.()}
+        disabled={props.continuationActionsDisabled}
+      >
+        Approve merge
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void (async () => {
+            const outcome = await props.onMergeReject?.('needs work', []);
+            mockRejectOutcome(outcome);
+          })();
+        }}
+      >
+        Reject merge
+      </button>
       <div data-testid="selection-agent">{props.pinnedConfig?.agentType ?? ''}</div>
       <div data-testid="selection-model">{props.pinnedConfig?.modelId ?? ''}</div>
       <div data-testid="continuation-actions-disabled">
@@ -260,6 +289,149 @@ describe('FeatureDrawerClient', () => {
     mockStartFeature.mockResolvedValue({});
     mockStopFeature.mockResolvedValue({ stopped: true });
     mockUpdateFeaturePinnedConfig.mockResolvedValue({ ok: true });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  P0-4 — approve must not be double-submittable                    */
+  /* ---------------------------------------------------------------- */
+
+  describe('merge approve in-flight guard (P0-4)', () => {
+    const reviewView = () =>
+      createView({ lifecycle: 'review', state: 'action-required', branch: 'feat/login' });
+
+    it('fires approveFeature exactly once for two rapid clicks', async () => {
+      const user = userEvent.setup();
+      const deferred = createDeferred<{ approved: boolean; error?: string }>();
+      mockApproveFeature.mockReturnValueOnce(deferred.promise);
+
+      render(<FeatureDrawerClient view={reviewView()} />);
+
+      const approve = screen.getByRole('button', { name: 'Approve merge' });
+      await user.click(approve);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('continuation-actions-disabled')).toHaveTextContent('true');
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Approve merge' }));
+
+      deferred.resolve({ approved: true });
+
+      await waitFor(() => expect(mockApproveFeature).toHaveBeenCalledTimes(1));
+    });
+
+    it('clears the guard after a FAILED approve so the user can retry', async () => {
+      const user = userEvent.setup();
+      mockApproveFeature.mockResolvedValueOnce({ approved: false, error: 'Gate already closed' });
+
+      render(<FeatureDrawerClient view={reviewView()} />);
+
+      await user.click(screen.getByRole('button', { name: 'Approve merge' }));
+
+      await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Gate already closed'));
+      await waitFor(() => {
+        expect(screen.getByTestId('continuation-actions-disabled')).toHaveTextContent('false');
+      });
+      expect(screen.getByRole('button', { name: 'Approve merge' })).toBeEnabled();
+    });
+
+    it('clears the guard when the approve action throws', async () => {
+      const user = userEvent.setup();
+      mockApproveFeature.mockRejectedValueOnce(new Error('boom'));
+
+      render(<FeatureDrawerClient view={reviewView()} />);
+
+      await user.click(screen.getByRole('button', { name: 'Approve merge' }));
+
+      await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+      await waitFor(() => {
+        expect(screen.getByTestId('continuation-actions-disabled')).toHaveTextContent('false');
+      });
+    });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  P0-4b — a failed reject must report its failure to the bar       */
+  /* ---------------------------------------------------------------- */
+
+  describe('reject outcome (P0-4b)', () => {
+    it('reports ok:false so the action bar can keep the draft', async () => {
+      const user = userEvent.setup();
+      mockRejectFeature.mockResolvedValueOnce({ rejected: false, error: 'Agent run is gone' });
+
+      render(
+        <FeatureDrawerClient view={createView({ lifecycle: 'review', state: 'action-required' })} />
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Reject merge' }));
+
+      await waitFor(() =>
+        expect(mockRejectOutcome).toHaveBeenCalledWith({ ok: false, error: 'Agent run is gone' })
+      );
+      expect(mockToastError).toHaveBeenCalledWith('Agent run is gone');
+    });
+
+    it('reports ok:true on success', async () => {
+      const user = userEvent.setup();
+      mockRejectFeature.mockResolvedValueOnce({ rejected: true, iteration: 2 });
+
+      render(
+        <FeatureDrawerClient view={createView({ lifecycle: 'review', state: 'action-required' })} />
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Reject merge' }));
+
+      await waitFor(() => expect(mockRejectOutcome).toHaveBeenCalledWith({ ok: true }));
+    });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  P1 — the optimistic stop update must not lie                     */
+  /* ---------------------------------------------------------------- */
+
+  describe('stop agent (P1)', () => {
+    it('does not paint an Error state after reporting success', async () => {
+      const user = userEvent.setup();
+      mockStopFeature.mockResolvedValueOnce({ stopped: true });
+
+      render(<FeatureDrawerClient view={createView({ state: 'running' })} />);
+
+      await user.click(screen.getByRole('button', { name: 'Stop agent' }));
+
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Agent stopped'));
+      expect(screen.getByTestId('node-state')).not.toHaveTextContent('error');
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    it('reports the real failure and claims no success when the stop fails', async () => {
+      const user = userEvent.setup();
+      mockStopFeature.mockResolvedValueOnce({
+        stopped: false,
+        error: 'No active agent run found for this feature',
+      });
+
+      render(<FeatureDrawerClient view={createView({ state: 'running' })} />);
+
+      await user.click(screen.getByRole('button', { name: 'Stop agent' }));
+
+      await waitFor(() =>
+        expect(mockToastError).toHaveBeenCalledWith('No active agent run found for this feature')
+      );
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(screen.getByTestId('node-state')).toHaveTextContent('running');
+    });
+
+    it('reports a thrown stop failure instead of crashing', async () => {
+      const user = userEvent.setup();
+      mockStopFeature.mockRejectedValueOnce(new Error('network down'));
+
+      render(<FeatureDrawerClient view={createView({ state: 'running' })} />);
+
+      await user.click(screen.getByRole('button', { name: 'Stop agent' }));
+
+      await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to stop agent'));
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
   });
 
   it('blocks continuation actions while the pinned config save is in flight and patches local node data after success', async () => {

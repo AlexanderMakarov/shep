@@ -7,22 +7,21 @@ Integration tests for `createMergeNode` using real git repositories in isolated 
 | Test                        | push  | openPr | allowMerge | remote | Expected     | Status   |
 | --------------------------- | ----- | ------ | ---------- | ------ | ------------ | -------- |
 | commit-only-with-gate       | false | false  | false      | yes    | interrupt    | GREEN    |
-| local-merge-no-push         | false | false  | true       | yes    | local merge  | it.fails |
-| push-no-pr-merge            | true  | false  | true       | yes    | push + merge | it.fails |
+| local-merge-no-push         | false | false  | true       | yes    | local merge  | GREEN    |
+| push-no-pr-merge            | true  | false  | true       | yes    | push + merge | GREEN    |
 | push-pr-with-gate           | true  | true   | false      | yes    | interrupt    | GREEN    |
-| push-pr-auto-merge          | true  | true   | true       | yes    | PR merge     | it.fails |
-| no-remote-override-merge    | true  | true   | true       | no     | local merge  | it.fails |
-| no-remote-local-merge       | false | false  | true       | no     | local merge  | it.fails |
+| push-pr-auto-merge          | true  | true   | true       | yes    | PR merge     | GREEN    |
+| no-remote-override-merge    | true  | true   | true       | no     | local merge  | GREEN    |
+| no-remote-local-merge       | false | false  | true       | no     | local merge  | GREEN    |
 | undefined-gates-silent-skip | -     | -      | undefined  | yes    | no merge     | GREEN    |
 
-## Known Bugs (it.fails tests)
+## Merge confirmation
 
-Tests marked `it.fails` document known bugs and will **break CI when fixed** (signaling the fix landed):
-
-1. **Mock executor doesn't merge** — The mock `IAgentExecutor` returns fake output but doesn't run `git merge`. `verifyMerge()` correctly throws. Affects: local-merge-no-push, push-no-pr-merge, no-remote-\*, no-remote-local-merge.
-2. **verifyMerge skipped on PR path** — `merge.node.ts` guards `verifyMerge()` with `if (!prUrl)`, skipping verification when a PR was created. Affects: push-pr-auto-merge.
-
-When fixing these bugs, change `it.fails` → `it` and verify the test passes.
+Local merges are verified against local Git refs before cleanup. PR merges are
+confirmed against GitHub's remote PR state because the local base can be stale.
+A successful `gh pr merge` command may only enqueue the PR; the service rejects
+unconfirmed completion and preserves the branch and worktree. The PR tests cover
+both queued and completed remote merges, including a deliberately stale local base.
 
 ## File Map
 
@@ -33,9 +32,9 @@ When fixing these bugs, change `it.fails` → `it` and verify the test passes.
 | `fixtures.ts`         | `FAKE_PR_URL`, `makeMockExecutor`                   |
 | `smoke.test.ts`       | Infrastructure smoke tests (harness, exec, specDir) |
 | `gate-tests.test.ts`  | Interrupt tests (allowMerge=false)                  |
-| `local-merge.test.ts` | Local merge bugs (3 tests, all it.fails)            |
-| `push-merge.test.ts`  | Push + merge bug (1 test, it.fails)                 |
-| `pr-merge.test.ts`    | PR merge bug (1 test, it.fails)                     |
+| `local-merge.test.ts` | Local merge and verification regressions            |
+| `push-merge.test.ts`  | Push and local merge regression                 |
+| `pr-merge.test.ts`    | Queued and confirmed remote PR merges                     |
 | `skip-merge.test.ts`  | No-merge path (approvalGates=undefined)             |
 
 ## Adding a Test

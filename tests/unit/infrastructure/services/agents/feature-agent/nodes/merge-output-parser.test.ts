@@ -126,5 +126,77 @@ describe('merge-output-parser', () => {
       const result = parseCiWatchResult(output);
       expect(result.status).toBe('success');
     });
+
+    // ── Fail-closed: a FAILED verdict must never parse as success ──────────
+    it('should NOT report success when a FAILED line summarises PASSED runs', () => {
+      // The ci-watch prompt asks for a summary of which runs failed, so a
+      // FAILED line that quotes the word PASSED is the specified output shape.
+      const output = 'CI_STATUS: FAILED — 3 of 4 runs reported CI_STATUS: PASSED, but lint failed';
+      const result = parseCiWatchResult(output);
+      expect(result.status).toBe('failure');
+      expect(result.summary).toBe('3 of 4 runs reported CI_STATUS: PASSED, but lint failed');
+    });
+
+    it('should NOT report success when PASSED is quoted mid-line in prose', () => {
+      const output =
+        'The instructions said to report CI_STATUS: PASSED when green.\nCI_STATUS: FAILED — build broke';
+      const result = parseCiWatchResult(output);
+      expect(result.status).toBe('failure');
+      expect(result.summary).toBe('build broke');
+    });
+
+    it('should not treat a mid-line PASSED mention as a status marker', () => {
+      const output = 'Reminder: report CI_STATUS: PASSED only when every check is green.';
+      const result = parseCiWatchResult(output);
+      expect(result.status).toBe('failure');
+      expect(result.summary).toBe('CI status could not be determined from agent output');
+    });
+
+    // ── Summary separators the model actually emits ────────────────────────
+    it('should capture the summary after an ASCII hyphen', () => {
+      const output = 'CI_STATUS: FAILED - Unit Tests failed with 3 errors';
+      const result = parseCiWatchResult(output);
+      expect(result.status).toBe('failure');
+      expect(result.summary).toBe('Unit Tests failed with 3 errors');
+    });
+
+    it('should capture the summary after an en dash', () => {
+      const output = 'CI_STATUS: FAILED – lint failed';
+      expect(parseCiWatchResult(output).summary).toBe('lint failed');
+    });
+
+    it('should capture the summary after a colon', () => {
+      const output = 'CI_STATUS: FAILED: typecheck failed';
+      expect(parseCiWatchResult(output).summary).toBe('typecheck failed');
+    });
+
+    it('should capture the summary with no separator at all', () => {
+      const output = 'CI_STATUS: FAILED build step exited 1';
+      expect(parseCiWatchResult(output).summary).toBe('build step exited 1');
+    });
+
+    // ── Indeterminate: CI could not be read ───────────────────────────────
+    it('should report indeterminate for CI_STATUS: INDETERMINATE', () => {
+      const output = 'CI_STATUS: INDETERMINATE — rate limited (403)';
+      const result = parseCiWatchResult(output);
+      expect(result.status).toBe('indeterminate');
+      expect(result.summary).toBe('rate limited (403)');
+    });
+
+    it('should report indeterminate with a default summary when none is given', () => {
+      const result = parseCiWatchResult('CI_STATUS: INDETERMINATE');
+      expect(result.status).toBe('indeterminate');
+      expect(result.summary).toBe('CI status could not be read');
+    });
+
+    it('should prefer a later INDETERMINATE over an earlier PASSED', () => {
+      const output = 'CI_STATUS: PASSED\nActually the API errored.\nCI_STATUS: INDETERMINATE';
+      expect(parseCiWatchResult(output).status).toBe('indeterminate');
+    });
+
+    it('should tolerate markdown emphasis and list markers on the status line', () => {
+      expect(parseCiWatchResult('- **CI_STATUS: PASSED**').status).toBe('success');
+      expect(parseCiWatchResult('  - CI_STATUS: FAILED — nope').status).toBe('failure');
+    });
   });
 });

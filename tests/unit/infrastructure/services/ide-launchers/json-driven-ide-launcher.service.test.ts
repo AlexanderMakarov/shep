@@ -248,7 +248,9 @@ describe('JsonDrivenIdeLauncherService', () => {
         editorName: 'Claude Code',
         worktreePath: '/home/user/project',
       });
-      expect(mockSpawn).toHaveBeenCalledWith('cd /home/user/project && exec claude', [], {
+      // The directory is quoted: `{dir}` lands inside a shell command string,
+      // so an unquoted substitution is the C6 injection.
+      expect(mockSpawn).toHaveBeenCalledWith("cd '/home/user/project' && exec claude", [], {
         shell: true,
         stdio: 'inherit',
         detached: false,
@@ -274,6 +276,78 @@ describe('JsonDrivenIdeLauncherService', () => {
         detached: true,
         stdio: 'ignore',
         shell: false,
+      });
+    });
+
+    /**
+     * C6 — `openCmd.replace('{dir}', directoryPath)` fed a raw path into a
+     * `shell: true` spawn. A worktree directory derived from a branch such as
+     * `feat/x$(touch proof)` executed the substitution before the `cd` it was
+     * attached to, so a worktree that does not even exist still ran code.
+     */
+    describe('shell-template directory safety', () => {
+      it('single-quotes the directory on posix so metacharacters cannot break out', async () => {
+        mockPlatform.mockReturnValue('linux');
+        const svc = new JsonDrivenIdeLauncherService();
+        mockSpawn.mockReturnValue({ unref: vi.fn() });
+
+        await svc.launch('claude-code', '/home/my user/project');
+
+        expect(mockSpawn).toHaveBeenCalledWith(
+          "cd '/home/my user/project' && exec claude",
+          [],
+          expect.objectContaining({ shell: true })
+        );
+      });
+
+      it('double-quotes the directory on win32', async () => {
+        mockPlatform.mockReturnValue('win32');
+        const svc = new JsonDrivenIdeLauncherService();
+        mockSpawn.mockReturnValue({ unref: vi.fn() });
+
+        await svc.launch('claude-code', 'C:/Users/My User/project');
+
+        expect(mockSpawn).toHaveBeenCalledWith(
+          'cd "C:/Users/My User/project" && exec claude',
+          [],
+          expect.objectContaining({ shell: true })
+        );
+      });
+
+      it.each([
+        ['command substitution', '/wt/feat-x$(touch proof)'],
+        ['backticks', '/wt/feat-x`touch proof`'],
+        ['a command separator', '/wt/feat-x;touch proof'],
+        ['a background operator', '/wt/feat-x&touch proof'],
+        ['a pipe', '/wt/feat-x|touch proof'],
+        ['a single quote', "/wt/feat-x'y"],
+        ['a newline', '/wt/feat-x\ntouch proof'],
+      ])('refuses to launch a shell template with %s in the path', async (_label, dir) => {
+        mockPlatform.mockReturnValue('linux');
+        const svc = new JsonDrivenIdeLauncherService();
+        mockSpawn.mockReturnValue({ unref: vi.fn() });
+
+        const result = await svc.launch('claude-code', dir);
+
+        expect(result).toMatchObject({ ok: false, code: 'launch_failed' });
+        expect(mockSpawn).not.toHaveBeenCalled();
+      });
+
+      it('still launches argv-mode editors for paths a shell template would refuse', async () => {
+        // vscode has no spawnOptions.shell, so the path never reaches a shell
+        // and there is nothing to refuse.
+        mockPlatform.mockReturnValue('linux');
+        const svc = new JsonDrivenIdeLauncherService();
+        mockSpawn.mockReturnValue({ unref: vi.fn() });
+
+        const result = await svc.launch('vscode', '/wt/feat-x$(touch proof)');
+
+        expect(result).toMatchObject({ ok: true });
+        expect(mockSpawn).toHaveBeenCalledWith(
+          'code',
+          ['/wt/feat-x$(touch proof)'],
+          expect.objectContaining({ shell: false })
+        );
       });
     });
 

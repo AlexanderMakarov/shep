@@ -25,6 +25,7 @@ const EXPECTED_BINARIES: Record<AgentType, string | null> = {
   [AgentType.ClaudeCode]: 'claude',
   [AgentType.CodexCli]: 'codex',
   [AgentType.Cursor]: 'cursor-agent',
+  [AgentType.KimiCode]: 'kimi',
   [AgentType.CopilotCli]: null,
   [AgentType.GeminiCli]: null,
   [AgentType.Aider]: null,

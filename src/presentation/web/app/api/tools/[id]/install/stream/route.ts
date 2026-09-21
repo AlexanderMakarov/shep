@@ -1,10 +1,25 @@
+/**
+ * POST /api/tools/[id]/install/stream
+ *
+ * Runs a tool installation and streams its output back as SSE.
+ *
+ * This is POST, not GET, on purpose. Installation runs the catalogue's shell
+ * command for the tool — several are `curl … | bash` — so it is a
+ * state-changing operation. As a GET it needed no CSRF token, no preflight
+ * and no readable response, which made
+ * `<img src="http://localhost:4050/api/tools/<id>/install/stream">` on any
+ * page the operator visited a remote code execution primitive. POST puts it
+ * behind the middleware's Origin check; the `autoInstall` gate in
+ * `InstallToolUseCase` is the second lock.
+ */
+
 import { resolve } from '@/lib/server-container';
 import type { InstallToolUseCase } from '@shepai/core/application/use-cases/tools/install-tool.use-case';
 
 // Force dynamic — SSE streams must never be statically optimized or cached
 export const dynamic = 'force-dynamic';
 
-export async function GET(
+export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {

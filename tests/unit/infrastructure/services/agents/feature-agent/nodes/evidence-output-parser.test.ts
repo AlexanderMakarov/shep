@@ -9,6 +9,7 @@ vi.mock('node:fs/promises', () => ({
   stat: (...args: unknown[]) => mockStat(...args),
 }));
 
+import { FencedJsonFailure } from '@/infrastructure/services/agents/feature-agent/nodes/fenced-json.js';
 import {
   parseEvidenceRecords,
   validateUiEvidenceHasAppProof,
@@ -48,7 +49,7 @@ describe('evidence-output-parser', () => {
 
 Evidence collection complete.`;
 
-      const result = parseEvidenceRecords(output);
+      const { records: result } = parseEvidenceRecords(output);
       expect(result).toEqual([
         {
           type: EvidenceType.Screenshot,
@@ -68,7 +69,7 @@ Evidence collection complete.`;
 
     it('should return empty array when no JSON block found', () => {
       const output = 'I tried to capture evidence but no screenshots were taken.';
-      expect(parseEvidenceRecords(output)).toEqual([]);
+      expect(parseEvidenceRecords(output).records).toEqual([]);
     });
 
     it('should return empty array on malformed JSON', () => {
@@ -78,7 +79,7 @@ Evidence collection complete.`;
 [{ broken json {{{}
 \`\`\``;
 
-      expect(parseEvidenceRecords(output)).toEqual([]);
+      expect(parseEvidenceRecords(output).records).toEqual([]);
     });
 
     it('should filter records missing required fields', () => {
@@ -113,7 +114,7 @@ Evidence collection complete.`;
 ]
 \`\`\``;
 
-      const result = parseEvidenceRecords(output);
+      const { records: result } = parseEvidenceRecords(output);
       expect(result).toHaveLength(1);
       expect(result[0].description).toBe('Valid screenshot');
     });
@@ -142,7 +143,7 @@ Evidence collection complete.`;
 ]
 \`\`\``;
 
-      const result = parseEvidenceRecords(output);
+      const { records: result } = parseEvidenceRecords(output);
       expect(result).toHaveLength(1);
       expect(result[0].description).toBe('Safe path');
     });
@@ -175,11 +176,36 @@ Evidence collection complete.`;
 ]
 \`\`\``;
 
-      const result = parseEvidenceRecords(output);
+      const { records: result } = parseEvidenceRecords(output);
       expect(result).toHaveLength(2);
       expect(result[0].description).toBe('Valid one');
       expect(result[1].description).toBe('Valid two');
       expect(result[1].taskRef).toBe('task-3');
+    });
+
+    // ── "agent found nothing" vs "we could not read the agent" ───────────
+    it('reports no failure when the agent returned an explicitly empty array', () => {
+      const result = parseEvidenceRecords('```json\n[]\n```');
+      expect(result.records).toEqual([]);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it('reports NoBlock when the output has no JSON at all', () => {
+      expect(parseEvidenceRecords('nothing captured').failure).toBe(FencedJsonFailure.NoBlock);
+    });
+
+    it('reads an uppercase ```JSON fence', () => {
+      const output = `\`\`\`JSON
+[{"type":"Screenshot","capturedAt":"2026-03-09T12:00:00Z","description":"d","relativePath":"a.png"}]
+\`\`\``;
+      expect(parseEvidenceRecords(output).records).toHaveLength(1);
+    });
+
+    it('reads a bare ``` fence', () => {
+      const output = `\`\`\`
+[{"type":"Screenshot","capturedAt":"2026-03-09T12:00:00Z","description":"d","relativePath":"a.png"}]
+\`\`\``;
+      expect(parseEvidenceRecords(output).records).toHaveLength(1);
     });
 
     it('should handle empty JSON array', () => {
@@ -189,11 +215,11 @@ Evidence collection complete.`;
 []
 \`\`\``;
 
-      expect(parseEvidenceRecords(output)).toEqual([]);
+      expect(parseEvidenceRecords(output).records).toEqual([]);
     });
 
     it('should return empty array for empty string', () => {
-      expect(parseEvidenceRecords('')).toEqual([]);
+      expect(parseEvidenceRecords('').records).toEqual([]);
     });
 
     it('should return empty array when JSON is not an array', () => {
@@ -206,7 +232,7 @@ Evidence collection complete.`;
 }
 \`\`\``;
 
-      expect(parseEvidenceRecords(output)).toEqual([]);
+      expect(parseEvidenceRecords(output).records).toEqual([]);
     });
 
     it('should handle all valid EvidenceType values', () => {
@@ -239,7 +265,7 @@ Evidence collection complete.`;
 ]
 \`\`\``;
 
-      const result = parseEvidenceRecords(output);
+      const { records: result } = parseEvidenceRecords(output);
       expect(result).toHaveLength(4);
       expect(result[0].type).toBe(EvidenceType.Screenshot);
       expect(result[1].type).toBe(EvidenceType.Video);
@@ -686,6 +712,39 @@ Evidence collection complete.`;
   // =====================================================================
   // validateEvidenceCompleteness
   // =====================================================================
+  describe('validateEvidenceCompleteness — unknown task list', () => {
+    it('fails the gate when the task list could not be read (null)', () => {
+      // A missing/unparseable tasks.yaml means there are no requirements to
+      // check evidence against. Looping over nothing and reporting valid
+      // accepts zero evidence as a pass — the gate must fail closed instead.
+      const result = validateEvidenceCompleteness([], null);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].type).toBe('taskList');
+      expect(result.errors[0].message).toMatch(/tasks\.yaml/);
+    });
+
+    it('fails the gate on an unreadable task list even when evidence exists', () => {
+      const evidence: Evidence[] = [
+        {
+          type: EvidenceType.TestOutput,
+          capturedAt: '2026-03-09T12:00:00Z',
+          description: 'tests',
+          relativePath: '.shep/evidence/t.txt',
+        },
+      ];
+      expect(validateEvidenceCompleteness(evidence, null).valid).toBe(false);
+    });
+
+    it('passes for a genuinely empty task list ([])', () => {
+      const result = validateEvidenceCompleteness([], []);
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+  });
+
   describe('validateEvidenceCompleteness', () => {
     function makeEvidence(overrides: Partial<Evidence> = {}): Evidence {
       return {

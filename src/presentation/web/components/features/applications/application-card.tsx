@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useState } from 'react';
 import {
   AlertTriangle,
@@ -243,13 +244,13 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
           // page. Light mode is unchanged. Corners are deliberately sharp
           // (`rounded-sm`) per the dashboard tile family — the placeholder
           // and new-application tiles both match.
-          'group relative flex cursor-pointer flex-col overflow-hidden rounded-sm',
+          'group relative flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-xl',
           'bg-card dark:bg-neutral-900',
           'border-border/60 border shadow-sm dark:border-white/10',
-          'hover:border-border transition-all duration-200 hover:shadow-lg dark:hover:border-white/20 dark:hover:shadow-black/40',
+          'hover:border-primary/30 focus-within:border-primary/40 transition-[border-color,box-shadow] duration-200 hover:shadow-md dark:hover:border-white/20 dark:hover:shadow-black/40',
           // min-h keeps all cards in a row visually aligned; flex-1 on
           // the context zone pushes the footer to the bottom.
-          'min-h-[280px]',
+          'min-h-[320px]',
           className
         )}
       >
@@ -258,7 +259,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
              1. Live iframe preview (local dev server OR cloud deploy URL)
              2. Booting spinner while a local deploy is coming up
              3. Abstract dark SVG wireframe (ambient placeholder) */}
-        <div className="relative overflow-hidden" style={{ height: 160 }}>
+        <div className="relative overflow-hidden" style={{ height: 148 }}>
           {hasLivePreview ? (
             <div className="absolute inset-0 bg-white dark:bg-neutral-900">
               <iframe
@@ -268,10 +269,12 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
                 style={{ width: '250%', height: '250%', transform: 'scale(0.4)' }}
                 sandbox="allow-same-origin allow-scripts"
                 loading="lazy"
+                tabIndex={-1}
+                aria-hidden="true"
               />
               {/* hover overlay — stop/open for LOCAL running; open-only for cloud */}
               <div
-                className="absolute inset-0 flex items-center justify-center gap-2 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100"
+                className="absolute inset-0 flex items-center justify-center gap-2 bg-black/60 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                 onClick={(e) => e.stopPropagation()}
               >
                 {isLocalRunning ? (
@@ -361,7 +364,8 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/30 text-white/80 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 hover:bg-black/50"
+                  aria-label={`Actions for ${application.name}`}
+                  className="focus-visible:ring-ring flex size-9 cursor-pointer items-center justify-center rounded-lg bg-black/40 text-white backdrop-blur-sm transition-colors outline-none hover:bg-black/60 focus-visible:ring-2"
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
                 </button>
@@ -383,13 +387,19 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
         {/* Name + description always rendered in the body so they stay
             consistent regardless of what the header is showing (live
             iframe, booting spinner, or ambient SVG placeholder). */}
-        <div className="flex flex-1 flex-col gap-1.5 px-3.5 pt-3 pb-0">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 px-5 pt-4 pb-2">
           <div>
-            <h3 className="text-foreground line-clamp-1 text-[14px] leading-tight font-semibold">
-              {application.name}
+            <h3 className="text-foreground line-clamp-1 text-base leading-snug font-semibold">
+              <Link
+                href={`/application/${application.id}`}
+                onClick={(event) => event.stopPropagation()}
+                className="focus-visible:ring-ring rounded-sm outline-none hover:underline focus-visible:ring-2"
+              >
+                {application.name}
+              </Link>
             </h3>
             {application.description ? (
-              <p className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px] leading-relaxed">
+              <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed">
                 {application.description}
               </p>
             ) : null}
@@ -407,7 +417,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
           ) : isCloudFailed ? (
             <div className="flex items-center gap-1.5 py-0.5">
               <AlertTriangle className="text-destructive/70 h-3 w-3 shrink-0" />
-              <span className="text-destructive/80 text-[11px]">Deployment failed</span>
+              <span className="text-destructive text-[11px]">Deployment failed</span>
             </div>
           ) : isBuilding ? (
             <div className="flex items-center gap-1.5 py-0.5">
@@ -436,14 +446,14 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
           ) : isCloudLive ? null : (
             <div className="flex items-center gap-1.5 py-0.5">
               <Globe className="text-muted-foreground/40 h-3 w-3 shrink-0" />
-              <span className="text-muted-foreground/60 text-[11px]">Not deployed yet</span>
+              <span className="text-muted-foreground text-[11px]">Not deployed yet</span>
             </div>
           )}
         </div>
 
         {/* ── Footer ─────────────────────────────────────────── */}
         <div
-          className="flex items-center gap-2 px-3.5 pt-2 pb-3"
+          className="border-border/50 mx-5 flex items-center gap-2 border-t pt-3 pb-4"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Left cluster: repo dir + cloud URL — both compact, inline */}
@@ -454,10 +464,17 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
               title={application.repositoryPath}
               onClick={async (e) => {
                 e.stopPropagation();
-                const { openDirectory } = await import('@/app/actions/open-directory');
-                await openDirectory(application.repositoryPath);
+                try {
+                  const { openDirectory } = await import('@/app/actions/open-directory');
+                  const result = await openDirectory(application.repositoryPath);
+                  if (result.error) throw new Error(result.error);
+                } catch (error) {
+                  toast.error('Could not open folder', {
+                    description: error instanceof Error ? error.message : 'Please try again.',
+                  });
+                }
               }}
-              className="text-muted-foreground/70 hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[10px] transition-colors"
+              className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[10px] transition-colors"
             >
               <FolderGit2 className="h-3 w-3 shrink-0" />
               <span className="max-w-[80px] truncate">{repoName}</span>
@@ -470,7 +487,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
                 target="_blank"
                 rel="noopener noreferrer"
                 title={cloudUrl}
-                className="text-muted-foreground/70 hover:text-foreground inline-flex min-w-0 items-center gap-1 text-[10px] transition-colors"
+                className="text-muted-foreground hover:text-foreground inline-flex min-w-0 items-center gap-1 text-[10px] transition-colors"
               >
                 {CloudBrandIcon ? (
                   <CloudBrandIcon className="h-3 w-3 shrink-0" style={{ color: cloudBrandHex }} />
@@ -493,7 +510,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
               href={cloudUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-foreground text-background inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold transition-opacity hover:opacity-80"
+              className="bg-foreground text-background inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-opacity hover:opacity-80"
             >
               <ExternalLink className="h-3 w-3" />
               Open live
@@ -502,7 +519,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
             <button
               type="button"
               onClick={navigate}
-              className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full bg-amber-500 px-3 text-[11px] font-semibold text-white transition-opacity hover:opacity-80"
+              className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-amber-700 px-3 text-xs font-semibold text-white transition-opacity hover:opacity-80 dark:bg-amber-400 dark:text-neutral-950"
             >
               <Play className="h-3 w-3 fill-current" />
               Continue
@@ -511,7 +528,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
             <button
               type="button"
               onClick={navigate}
-              className="bg-destructive inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold text-white transition-opacity hover:opacity-80"
+              className="bg-destructive inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-white transition-opacity hover:opacity-80"
             >
               <ArrowRight className="h-3 w-3" />
               View error
@@ -520,7 +537,7 @@ export function ApplicationCard({ application, className }: ApplicationCardProps
             <button
               type="button"
               onClick={navigate}
-              className="bg-foreground text-background inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[11px] font-semibold transition-opacity hover:opacity-80"
+              className="bg-foreground text-background inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-opacity hover:opacity-80"
             >
               <ArrowRight className="h-3 w-3" />
               Open

@@ -134,7 +134,7 @@ describe('StartFeatureUseCase', () => {
   let worktreeService: ReturnType<typeof createMockWorktreeService>;
   let syncFeatureBranch: ReturnType<typeof createMockSyncFeatureBranch>;
   let capacity: {
-    hasCapacity: ReturnType<typeof vi.fn>;
+    claimSlot: ReturnType<typeof vi.fn>;
     getQueuePosition: ReturnType<typeof vi.fn>;
   };
 
@@ -156,7 +156,9 @@ describe('StartFeatureUseCase', () => {
       syncFeatureBranch as any
     );
     capacity = {
-      hasCapacity: vi.fn().mockResolvedValue(true),
+      // The claim both answers "is there a slot?" and performs the transition,
+      // so winning it is the "slot was free" case.
+      claimSlot: vi.fn().mockResolvedValue(true),
       getQueuePosition: vi.fn().mockResolvedValue(1),
     };
     useCase = new StartFeatureUseCase(
@@ -222,8 +224,9 @@ describe('StartFeatureUseCase', () => {
     const result = await useCase.execute('feat-001');
 
     expect(result.feature.lifecycle).toBe(SdlcLifecycle.Requirements);
-    expect(featureRepo.update).toHaveBeenCalledWith(
-      expect.objectContaining({ lifecycle: SdlcLifecycle.Requirements })
+    // The transition is written by the capacity claim, not a follow-up update.
+    expect(capacity.claimSlot).toHaveBeenCalledWith(
+      expect.objectContaining({ targetLifecycle: SdlcLifecycle.Requirements })
     );
     expect(processService.spawn).toHaveBeenCalledOnce();
   });
@@ -627,7 +630,7 @@ describe('StartFeatureUseCase', () => {
     });
 
     it('queues instead of spawning when no slot is free', async () => {
-      capacity.hasCapacity.mockResolvedValue(false);
+      capacity.claimSlot.mockResolvedValue(false);
       capacity.getQueuePosition.mockResolvedValue(2);
 
       const result = await useCase.execute('feat-001');
@@ -639,7 +642,7 @@ describe('StartFeatureUseCase', () => {
     });
 
     it('persists the queue marker so the drain can find it later', async () => {
-      capacity.hasCapacity.mockResolvedValue(false);
+      capacity.claimSlot.mockResolvedValue(false);
 
       const result = await useCase.execute('feat-001');
 
@@ -653,7 +656,7 @@ describe('StartFeatureUseCase', () => {
     it('does not sync the branch when the feature is only queued', async () => {
       // The sync must happen at admission time, not queue time, or the feature
       // starts from a base that is stale by however long it waited.
-      capacity.hasCapacity.mockResolvedValue(false);
+      capacity.claimSlot.mockResolvedValue(false);
 
       await useCase.execute('feat-001');
 
@@ -661,7 +664,7 @@ describe('StartFeatureUseCase', () => {
     });
 
     it('reports not queued and spawns when a slot is free', async () => {
-      capacity.hasCapacity.mockResolvedValue(true);
+      capacity.claimSlot.mockResolvedValue(true);
 
       const result = await useCase.execute('feat-001');
 
@@ -673,7 +676,7 @@ describe('StartFeatureUseCase', () => {
     it('does not evaluate capacity for a feature blocked by its parent', async () => {
       // A blocked feature cannot run anyway; queuing it would put it ahead of a
       // feature that could actually use the slot.
-      capacity.hasCapacity.mockResolvedValue(false);
+      capacity.claimSlot.mockResolvedValue(false);
       featureRepo.findById
         .mockReset()
         .mockResolvedValueOnce(createTestFeature({ parentId: 'parent-1' }))
@@ -686,25 +689,78 @@ describe('StartFeatureUseCase', () => {
       expect(result.blocked).toBe(true);
       expect(result.queued).toBe(false);
       expect(result.feature.queuedAt).toBeUndefined();
-      expect(capacity.hasCapacity).not.toHaveBeenCalled();
+      expect(capacity.claimSlot).not.toHaveBeenCalled();
     });
 
     it('starts anyway when the caller explicitly bypasses the limit', async () => {
-      capacity.hasCapacity.mockResolvedValue(false);
-
       const result = await useCase.execute('feat-001', { bypassCapacityLimit: true });
 
+      expect(capacity.claimSlot).toHaveBeenCalledWith(
+        expect.objectContaining({ bypassLimit: true })
+      );
       expect(result.queued).toBe(false);
       expect(processService.spawn).toHaveBeenCalledOnce();
     });
 
     it('clears a previous queue marker when the feature is finally admitted', async () => {
       featureRepo.findById.mockResolvedValue(createTestFeature({ queuedAt: new Date() }));
-      capacity.hasCapacity.mockResolvedValue(true);
+      capacity.claimSlot.mockResolvedValue(true);
 
       const result = await useCase.execute('feat-001');
 
       expect(result.feature.queuedAt).toBeUndefined();
+    });
+
+    it('takes the slot and the transition in one claim, not a separate update', async () => {
+      await useCase.execute('feat-001');
+
+      expect(capacity.claimSlot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          featureId: 'feat-001',
+          targetLifecycle: SdlcLifecycle.Requirements,
+          requireLifecycle: SdlcLifecycle.Pending,
+        })
+      );
+      expect(featureRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Double-start protection
+  // -------------------------------------------------------------------------
+
+  describe('concurrent starts', () => {
+    beforeEach(() => {
+      runRepo.findById.mockResolvedValue(createTestRun());
+    });
+
+    it('does not spawn a second worker when another process already started it', async () => {
+      // The claim lost, and the row is no longer Pending: the winner owns the
+      // worktree, the agent run and the log file.
+      capacity.claimSlot.mockResolvedValue(false);
+      featureRepo.findById
+        .mockResolvedValueOnce(createTestFeature())
+        .mockResolvedValue(createTestFeature({ lifecycle: SdlcLifecycle.Requirements }));
+
+      const result = await useCase.execute('feat-001');
+
+      expect(result.queued).toBe(false);
+      expect(result.feature.lifecycle).toBe(SdlcLifecycle.Requirements);
+      expect(processService.spawn).not.toHaveBeenCalled();
+      expect(featureRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('spawns exactly once when two starts race for the last slot', async () => {
+      featureRepo.findById.mockResolvedValue(createTestFeature());
+      capacity.claimSlot.mockResolvedValueOnce(true).mockResolvedValue(false);
+
+      const [winner, loser] = await Promise.all([
+        useCase.execute('feat-001'),
+        useCase.execute('feat-001'),
+      ]);
+
+      expect(processService.spawn).toHaveBeenCalledOnce();
+      expect([winner.queued, loser.queued]).toContain(true);
     });
   });
 });

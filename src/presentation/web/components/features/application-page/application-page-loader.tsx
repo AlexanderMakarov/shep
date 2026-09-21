@@ -2,8 +2,10 @@
 
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
 import { notFound } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/common/empty-state';
 import type { Application } from '@shepai/core/domain/generated/output';
 import type { ChatState } from '@shepai/core/application/ports/output/services/interactive-session-service.interface';
 import { DeploymentStatusProvider } from '@/hooks/deployment-status-provider';
@@ -21,7 +23,7 @@ interface AppData {
 export function ApplicationPageLoader({ applicationId }: { applicationId: string }) {
   const queryClient = useQueryClient();
 
-  const { data, isLoading, error } = useQuery<AppData>({
+  const { data, isLoading, error, refetch } = useQuery<AppData>({
     queryKey: ['application', applicationId],
     queryFn: async () => {
       const res = await fetch(`/api/applications/${applicationId}`);
@@ -55,6 +57,36 @@ export function ApplicationPageLoader({ applicationId }: { applicationId: string
 
   if (error?.message === 'not-found') {
     notFound();
+  }
+
+  // Any OTHER failure must render before the loading branch. `retry: 2` is
+  // already exhausted by the time `error` is set, and `data` stays
+  // undefined — so falling through to the spinner below means spinning
+  // forever with no way back except a manual page reload.
+  if (error) {
+    return (
+      <div
+        className="bg-background flex h-dvh items-center justify-center"
+        data-testid="application-load-error"
+      >
+        <EmptyState
+          icon={<TriangleAlert className="h-8 w-8 text-red-500" />}
+          title="Couldn't load this application"
+          description={error.message}
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void refetch()}
+              data-testid="application-load-retry"
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+              Retry
+            </Button>
+          }
+        />
+      </div>
+    );
   }
 
   if (isLoading || !data) {

@@ -37,6 +37,14 @@ function createVersionService(version = '1.20.0'): IVersionService {
       name: '@shepai/cli',
       description: 'Autonomous AI Native SDLC Platform',
     }),
+    getBuildIdentity: () => ({
+      cliVersion: version,
+      nodeVersion: 'v22.5.1',
+      platform: 'linux',
+      osRelease: '6.8.0-generic',
+      arch: 'x64',
+      gitSha: 'abc1234',
+    }),
   };
 }
 

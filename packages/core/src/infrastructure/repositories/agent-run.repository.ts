@@ -10,6 +10,7 @@ import { injectable } from 'tsyringe';
 import type {
   IAgentRunRepository,
   AgentRunPinnedConfigUpdate,
+  AgentRunStatusUpdateOptions,
 } from '../../application/ports/output/agents/agent-run-repository.interface.js';
 import type { AgentRun, AgentRunStatus } from '../../domain/generated/output.js';
 import {
@@ -121,8 +122,9 @@ export class SQLiteAgentRunRepository implements IAgentRunRepository {
   async updateStatus(
     id: string,
     status: AgentRunStatus,
-    updates?: Partial<AgentRun>
-  ): Promise<void> {
+    updates?: Partial<AgentRun>,
+    options?: AgentRunStatusUpdateOptions
+  ): Promise<boolean> {
     const setClauses: string[] = ['status = @status', 'updated_at = @updated_at'];
     const params: Record<string, unknown> = {
       id,
@@ -170,9 +172,26 @@ export class SQLiteAgentRunRepository implements IAgentRunRepository {
       params.approval_gates = JSON.stringify(updates.approvalGates);
     }
 
-    const stmt = this.db.prepare(`UPDATE agent_runs SET ${setClauses.join(', ')} WHERE id = @id`);
+    // The guard belongs in the WHERE clause, not in an `if` above it: a check
+    // performed before the statement is a check another process can invalidate
+    // before the statement runs.
+    const conditions = ['id = @id'];
+    const allowedFrom = options?.allowedFrom;
+    if (allowedFrom !== undefined && allowedFrom.length > 0) {
+      // Placeholders are generated from the array length; the statuses
+      // themselves are always bound parameters.
+      const placeholders = allowedFrom.map((_, i) => `@allowed_${i}`).join(', ');
+      conditions.push(`status IN (${placeholders})`);
+      allowedFrom.forEach((allowed, i) => {
+        params[`allowed_${i}`] = allowed;
+      });
+    }
 
-    stmt.run(params);
+    const stmt = this.db.prepare(
+      `UPDATE agent_runs SET ${setClauses.join(', ')} WHERE ${conditions.join(' AND ')}`
+    );
+
+    return stmt.run(params).changes === 1;
   }
 
   async updatePinnedConfig(id: string, updates: AgentRunPinnedConfigUpdate): Promise<void> {

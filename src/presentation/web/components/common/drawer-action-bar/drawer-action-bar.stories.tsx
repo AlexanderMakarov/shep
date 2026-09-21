@@ -28,7 +28,11 @@ type Story = StoryObj<typeof DrawerActionBar>;
 /** Default — approve-only button (no reject input). */
 export const Default: Story = {};
 
-/** Two-button bar: Reject + Approve with slide-expand animation on hover. */
+/**
+ * Two-button bar: Reject and Approve are separate controls with fixed labels.
+ * Neither one's meaning changes with hover position or held modifier keys, and
+ * Reject stays disabled until there is feedback to send.
+ */
 export const WithReject: Story = {
   args: {
     onReject: fn().mockName('onReject'),
@@ -36,7 +40,7 @@ export const WithReject: Story = {
   },
 };
 
-/** Processing state — all controls disabled. */
+/** Processing state — all controls disabled, approve marked `aria-busy`. */
 export const Processing: Story = {
   args: {
     onReject: fn().mockName('onReject'),
@@ -68,5 +72,37 @@ export const LongApproveLabel: Story = {
   args: {
     onReject: fn().mockName('onReject'),
     approveLabel: 'Approve Requirements',
+  },
+};
+
+/**
+ * Irreversible approve — clicking Approve opens a confirmation that NAMES the
+ * branch and PR being merged, so the user confirms against the right target.
+ */
+export const WithApproveConfirmation: Story = {
+  args: {
+    onReject: fn().mockName('onReject'),
+    approveLabel: 'Approve Merge',
+    revisionPlaceholder: 'Ask AI to revise before merging...',
+    approveConfirm: {
+      title: 'Approve merge?',
+      description: 'This merges feat/login into main via PR #42. This cannot be undone.',
+      confirmLabel: 'Approve Merge',
+    },
+  },
+};
+
+/** Warning variant — used when the pull request reports merge conflicts. */
+export const WarningVariant: Story = {
+  args: {
+    onReject: fn().mockName('onReject'),
+    approveLabel: 'Approve Merge',
+    approveVariant: 'warning',
+    approveConfirm: {
+      title: 'Approve merge?',
+      description:
+        'This merges feat/login into main via PR #42. GitHub reports merge conflicts on this pull request. This cannot be undone.',
+      confirmLabel: 'Approve Merge',
+    },
   },
 };

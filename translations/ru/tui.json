@@ -50,6 +50,14 @@
         "continue": {
           "name": "Continue",
           "disabled": "(Скоро)"
+        },
+        "kimiCode": {
+          "name": "Kimi Code",
+          "description": "Терминальный агент Kimi Code CLI от Moonshot AI (модели Kimi K)"
+        },
+        "llmProxy": {
+          "name": "LLM Proxy",
+          "description": "Локальный OpenAI-совместимый прокси (обычно на порту 4000)"
         }
       }
     },

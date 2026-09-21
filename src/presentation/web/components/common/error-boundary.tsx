@@ -6,7 +6,20 @@ import { Button } from '@/components/ui/button';
 
 interface Props {
   children?: ReactNode;
+  /**
+   * What to render after a crash. An EXPLICIT `null` means "render
+   * nothing" and is honoured as given — that is how the global overlays in
+   * the app shell (dialogs, popups) ask to keep occupying zero layout
+   * space after they fail. Omitting the prop entirely selects the default
+   * card below.
+   */
   fallback?: ReactNode;
+  /**
+   * Called once per caught error, after the boundary has swallowed it.
+   * A boundary that renders nothing is invisible by design, so the owner
+   * needs this hook to tell the user which surface just died.
+   */
+  onError?: (error: Error, errorInfo: ErrorInfo) => void;
 }
 
 interface State {
@@ -27,6 +40,7 @@ export class ErrorBoundary extends Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // eslint-disable-next-line no-console
     console.error('Uncaught error:', error, errorInfo);
+    this.props.onError?.(error, errorInfo);
   }
 
   private handleReload = () => {
@@ -35,7 +49,11 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
-      if (this.props.fallback) {
+      // `!== undefined`, NOT a truthiness check: `fallback={null}` is an
+      // explicit "render nothing" and must not fall through to the default
+      // card, which would drop a 200px error panel into the layout on
+      // behalf of a component that renders nothing when healthy.
+      if (this.props.fallback !== undefined) {
         return this.props.fallback;
       }
 

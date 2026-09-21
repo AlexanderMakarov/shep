@@ -155,6 +155,48 @@ describe('StreamingExecutorProxy', () => {
       expect(result.result).toBe('The final result text');
     });
 
+    it('should carry a session id reported by the result event', async () => {
+      const inner = createMockExecutor([
+        {
+          type: 'result',
+          content: 'The answer is 42.',
+          timestamp: new Date(),
+          sessionId: 'sess-9',
+        },
+      ]);
+      const proxy = new StreamingExecutorProxy(inner, channel);
+
+      const consumer = (async () => {
+        for await (const _event of channel) {
+          /* drain */
+        }
+      })();
+
+      const result = await proxy.execute('prompt');
+      await consumer;
+
+      // Without this the session is unresumable through the proxy, and the
+      // temptation is to smuggle the id through `content` — which is the answer.
+      expect(result.result).toBe('The answer is 42.');
+      expect(result.sessionId).toBe('sess-9');
+    });
+
+    it('should omit sessionId when the agent reported none', async () => {
+      const inner = createMockExecutor([makeEvent('result', 'done')]);
+      const proxy = new StreamingExecutorProxy(inner, channel);
+
+      const consumer = (async () => {
+        for await (const _event of channel) {
+          /* drain */
+        }
+      })();
+
+      const result = await proxy.execute('prompt');
+      await consumer;
+
+      expect(result).not.toHaveProperty('sessionId');
+    });
+
     it('should push error event and re-throw on stream failure', async () => {
       const failingExecutor: IAgentExecutor = {
         agentType: AgentType.ClaudeCode,

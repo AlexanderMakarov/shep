@@ -1,18 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { getAgentTypeIcon, DefaultAgentIcon, type AgentTypeValue } from './agent-type-icons';
+import { listAgentDescriptors } from '@shepai/core/domain/shared/agent-catalog';
+import { getAgentTypeIcon, DefaultAgentIcon } from './agent-type-icons';
 
-const allAgentTypes: { type: AgentTypeValue; label: string }[] = [
-  { type: 'claude-code', label: 'Claude Code' },
-  { type: 'codex-cli', label: 'Codex CLI' },
-  { type: 'copilot-cli', label: 'Copilot CLI' },
-  { type: 'cursor', label: 'Cursor' },
-  { type: 'gemini-cli', label: 'Gemini CLI' },
-  { type: 'aider', label: 'Aider' },
-  { type: 'continue', label: 'Continue' },
-  { type: 'openrouter', label: 'OpenRouter' },
-  { type: 'together-ai', label: 'Together AI' },
-  { type: 'dev', label: 'Dev (Mock)' },
-];
+const allAgentTypes = listAgentDescriptors();
 
 function AgentIconGallery({ size }: { size: number }) {
   return (

@@ -119,7 +119,11 @@
       "nodeVersionLabel": "Node-Version",
       "dbPathLabel": "DB-Pfad",
       "logFileLabel": "Log-Datei",
-      "daemonConfigLabel": "Dienstkonfiguration"
+      "daemonConfigLabel": "Dienstkonfiguration",
+      "buildLabel": "Build",
+      "gitShaLabel": "Git-SHA",
+      "healthLabel": "Bereitschaft",
+      "osLabel": "BS"
     },
     "ui": {
       "description": "Shep-Web-UI starten",
@@ -815,6 +819,15 @@
           "empty": "Für {{path}} war kein Ausführungsplan gespeichert",
           "failed": "Ausführungsplan konnte nicht verworfen werden"
         }
+      },
+      "approve": {
+        "description": "Entwicklungsbefehle des Repositorys prüfen und genehmigen",
+        "fingerprintOption": "Nur diesen geprüften Befehlsfingerabdruck genehmigen",
+        "invalid": "Keine gültige .shep/dev.json in {{path}}",
+        "review": "Prüfen Sie diese Befehle und wiederholen Sie den Befehl mit --fingerprint {{fingerprint}}. Die Genehmigung führt sie nicht aus.",
+        "changed": "Der Fingerabdruck stimmt nicht mit der aktuellen Konfiguration überein. Prüfen Sie sie vor der Genehmigung erneut.",
+        "approved": "Entwicklungsbefehle genehmigt. Starten Sie den Entwicklungsserver, wenn Sie bereit sind.",
+        "failed": "Entwicklungsbefehle konnten nicht genehmigt werden"
       }
     },
     "agent": {

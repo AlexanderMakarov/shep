@@ -20,6 +20,15 @@ describe('CiStatusBadge', () => {
     expect(spinner).toBeInTheDocument();
   });
 
+  it('renders an amber "Unknown" badge for CiStatus.Indeterminate', () => {
+    // Indeterminate must never be shown as a pass — CI was not read.
+    const { container } = render(<CiStatusBadge status={CiStatus.Indeterminate} />);
+
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+    expect(container.querySelector('[class*="bg-green"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[class*="bg-amber"]')).toBeInTheDocument();
+  });
+
   it('renders red badge with "Failing" text for CiStatus.Failure', () => {
     const { container } = render(<CiStatusBadge status={CiStatus.Failure} />);
 

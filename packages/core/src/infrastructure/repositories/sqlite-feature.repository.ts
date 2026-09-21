@@ -11,8 +11,11 @@ import { injectable } from 'tsyringe';
 import type {
   IFeatureRepository,
   FeatureListFilters,
+  FeatureStartClaim,
 } from '../../application/ports/output/repositories/feature-repository.interface.js';
 import type { Feature, SdlcLifecycle } from '../../domain/generated/output.js';
+import { UNLIMITED_PARALLEL_FEATURES } from '../../domain/shared/parallel-feature-limit.js';
+import { normalizeRepositoryPath } from '../../domain/shared/repository-path.js';
 import {
   toDatabase,
   fromDatabase,
@@ -101,10 +104,14 @@ export class SQLiteFeatureRepository implements IFeatureRepository {
   }
 
   async findBySlug(slug: string, repositoryPath: string): Promise<Feature | null> {
+    // The column is compared directly rather than through REPLACE(): paths are
+    // normalised on write (and back-filled by migration 144), and wrapping an
+    // indexed column in a function makes its index unusable — here it left the
+    // repository_path half of idx_features_slug doing nothing.
     const stmt = this.db.prepare(
-      "SELECT * FROM features WHERE slug = ? AND REPLACE(repository_path, '\\', '/') = ? AND deleted_at IS NULL"
+      'SELECT * FROM features WHERE slug = ? AND repository_path = ? AND deleted_at IS NULL'
     );
-    const row = stmt.get(slug, repositoryPath.replace(/\\/g, '/')) as FeatureRow | undefined;
+    const row = stmt.get(slug, normalizeRepositoryPath(repositoryPath)) as FeatureRow | undefined;
 
     if (!row) {
       return null;
@@ -114,10 +121,13 @@ export class SQLiteFeatureRepository implements IFeatureRepository {
   }
 
   async findByBranch(branch: string, repositoryPath: string): Promise<Feature | null> {
+    // Served by idx_features_branch_repo (migration 144). Before that index —
+    // and while repository_path was wrapped in REPLACE() — this query had no
+    // usable index at all and visited every live feature.
     const stmt = this.db.prepare(
-      "SELECT * FROM features WHERE branch = ? AND REPLACE(repository_path, '\\', '/') = ? AND deleted_at IS NULL"
+      'SELECT * FROM features WHERE branch = ? AND repository_path = ? AND deleted_at IS NULL'
     );
-    const row = stmt.get(branch, repositoryPath.replace(/\\/g, '/')) as FeatureRow | undefined;
+    const row = stmt.get(branch, normalizeRepositoryPath(repositoryPath)) as FeatureRow | undefined;
 
     if (!row) {
       return null;
@@ -140,8 +150,8 @@ export class SQLiteFeatureRepository implements IFeatureRepository {
     }
 
     if (filters?.repositoryPath) {
-      conditions.push("REPLACE(repository_path, '\\', '/') = ?");
-      params.push(filters.repositoryPath.replace(/\\/g, '/'));
+      conditions.push('repository_path = ?');
+      params.push(normalizeRepositoryPath(filters.repositoryPath));
     }
 
     if (filters?.lifecycle) {
@@ -249,6 +259,61 @@ export class SQLiteFeatureRepository implements IFeatureRepository {
     `);
 
     stmt.run(row);
+  }
+
+  async claimForStart(claim: FeatureStartClaim): Promise<boolean> {
+    // Every guard is a WHERE condition rather than an `if` around the update,
+    // so the check and the write are the same statement and no other process
+    // can slip between them.
+    const conditions = ['id = @id', 'deleted_at IS NULL'];
+    const params: Record<string, unknown> = {
+      id: claim.featureId,
+      lifecycle: claim.targetLifecycle,
+      updated_at: claim.updatedAt.getTime(),
+    };
+
+    if (claim.requireQueued === true) {
+      conditions.push('queued_at IS NOT NULL');
+    }
+
+    if (claim.requireLifecycle !== undefined) {
+      conditions.push('lifecycle = @expected_lifecycle');
+      params.expected_lifecycle = claim.requireLifecycle;
+    }
+
+    const capacity = claim.capacity;
+    // No cap, an unlimited cap, or nothing that can occupy a slot: the claim
+    // carries no capacity condition at all. (An empty lifecycle list would
+    // also emit `IN ()`, which is a syntax error — and would mean nothing is
+    // running, so the cap could not be reached anyway.)
+    if (
+      capacity !== undefined &&
+      capacity.limit !== UNLIMITED_PARALLEL_FEATURES &&
+      capacity.runningLifecycles.length > 0
+    ) {
+      // Placeholders come from the array length; the lifecycles themselves
+      // are always bound parameters.
+      const placeholders = capacity.runningLifecycles.map((_, i) => `@running_${i}`).join(', ');
+      conditions.push(
+        `(SELECT COUNT(*) FROM features AS running
+           WHERE running.lifecycle IN (${placeholders})
+             AND running.deleted_at IS NULL) < @limit`
+      );
+      params.limit = capacity.limit;
+      capacity.runningLifecycles.forEach((lifecycle, i) => {
+        params[`running_${i}`] = lifecycle;
+      });
+    }
+
+    const stmt = this.db.prepare(`
+      UPDATE features SET
+        queued_at = NULL,
+        lifecycle = @lifecycle,
+        updated_at = @updated_at
+      WHERE ${conditions.join(' AND ')}
+    `);
+
+    return stmt.run(params).changes === 1;
   }
 
   async delete(id: string): Promise<void> {

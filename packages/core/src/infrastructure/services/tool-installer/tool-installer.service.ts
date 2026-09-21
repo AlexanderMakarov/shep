@@ -33,6 +33,23 @@ import {
 import { TOOL_METADATA, getTerminalEntries, type ToolMetadata } from './tool-metadata.js';
 import { checkBinaryExists } from './binary-exists.js';
 
+/** Tools omit `autoInstall` when automated installation is fine. */
+const AUTO_INSTALL_DEFAULT = true;
+
+/**
+ * Look a tool up by name, treating only OWN keys as tools.
+ *
+ * `TOOL_METADATA` is a plain object, so a bare index lookup resolves
+ * inherited names: `TOOL_METADATA['constructor']` is the Object constructor,
+ * which is truthy and has no `commands`. That reached
+ * `metadata.commands[platform]` as a TypeError on one path, and carried a
+ * non-tool through the autoInstall gate towards
+ * `spawn(command, [], { shell: true })` on another.
+ */
+function lookupToolMetadata(toolName: string): ToolMetadata | undefined {
+  return Object.hasOwn(TOOL_METADATA, toolName) ? TOOL_METADATA[toolName] : undefined;
+}
+
 /**
  * Resolve binary name for the current platform.
  * Supports both simple string binaries and per-platform maps.
@@ -98,7 +115,7 @@ export class ToolInstallerServiceImpl implements IToolInstallerService {
    * Returns null if tool is unknown or not supported on current platform.
    */
   getInstallCommand(toolName: string): ToolInstallCommand | null {
-    const metadata = TOOL_METADATA[toolName];
+    const metadata = lookupToolMetadata(toolName);
     if (!metadata) {
       return null;
     }
@@ -126,6 +143,24 @@ export class ToolInstallerServiceImpl implements IToolInstallerService {
     toolName: string,
     onOutput?: (data: string) => void
   ): Promise<ToolInstallationStatus> {
+    // autoInstall gate. InstallToolUseCase checks this too; the duplicate is
+    // deliberate because this method is what actually reaches
+    // `spawn(command, [], { shell: true })` with commands like
+    // `curl -fsSL … | bash`, and it is reachable from the DI container by
+    // token. A guard on the only line that can execute a shell is worth
+    // repeating.
+    const metadata = lookupToolMetadata(toolName);
+    if (!metadata) {
+      return createErrorStatus(toolName, `Unknown tool: ${toolName}`);
+    }
+    if ((metadata.autoInstall ?? AUTO_INSTALL_DEFAULT) === false) {
+      return createErrorStatus(
+        toolName,
+        `${metadata.name} does not support automated installation. ` +
+          `Install it manually: ${metadata.documentationUrl}`
+      );
+    }
+
     const installCommand = this.getInstallCommand(toolName);
     if (!installCommand) {
       return createErrorStatus(toolName, `No installation command available for ${toolName}`);
@@ -250,7 +285,7 @@ export class ToolInstallerServiceImpl implements IToolInstallerService {
   }
 
   getTerminalOpenConfig(terminalId: string): TerminalOpenConfig | null {
-    const meta = TOOL_METADATA[terminalId];
+    const meta = lookupToolMetadata(terminalId);
     if (!meta?.openDirectory) return null;
 
     const openDirectory =

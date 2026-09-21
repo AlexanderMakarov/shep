@@ -32,6 +32,7 @@ import { createDevPlanCommand } from './plan.command.js';
 import { createDevStartCommand } from './start.command.js';
 import { createDevStatusCommand } from './status.command.js';
 import { createDevStopCommand } from './stop.command.js';
+import { createDevApproveCommand } from './approve.command.js';
 
 export function createDevCommand(): Command {
   const t = getCliI18n().t;
@@ -42,5 +43,6 @@ export function createDevCommand(): Command {
     .addCommand(createDevStopCommand())
     .addCommand(createDevStatusCommand())
     .addCommand(createDevLogsCommand())
-    .addCommand(createDevPlanCommand());
+    .addCommand(createDevPlanCommand())
+    .addCommand(createDevApproveCommand());
 }

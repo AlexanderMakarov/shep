@@ -19,7 +19,7 @@ export function WorkflowList({ workflows, onToggle, onTrigger }: WorkflowListPro
       >
         <CalendarClock className="mb-2 h-6 w-6 opacity-20" />
         <p className="text-xs">No workflows found.</p>
-        <p className="text-muted-foreground/60 mt-1 text-[10px]">
+        <p className="text-muted-foreground mt-1 text-xs">
           Create one with <code className="bg-muted rounded px-1">shep workflow create</code>
         </p>
       </div>

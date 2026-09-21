@@ -20,13 +20,13 @@ Specs live in `specs/NNN-feature-name/`. **Edit YAML only — Markdown is auto-g
 | -------------------- | ------------------------------- |
 | `pnpm build`         | Build CLI only (fast, for dev)  |
 | `pnpm build:release` | Build CLI + web (CI/packaging)  |
-| `pnpm test`          | Run all tests                   |
+| `pnpm test`          | Run all tests (unit + integration + e2e) |
 | `pnpm test:unit`     | Unit tests only                 |
 | `pnpm test:int`      | Integration tests only          |
 | `pnpm test:e2e`      | Playwright e2e tests            |
 | `pnpm lint:fix`      | Fix lint issues                 |
 | `pnpm validate`      | Lint + format + typecheck + tsp |
-| `pnpm dev:cli`       | Run CLI locally (ts-node)       |
+| `pnpm dev:cli`       | Run CLI locally (tsx)           |
 | `pnpm dev:web`       | Start Next.js dev server        |
 
 ## Architecture
@@ -55,7 +55,97 @@ See [clean-architecture](./docs/architecture/clean-architecture.md).
 [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`
 
 | Types | feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert |
-| Scopes | specs, cli, tui, web, api, domain, agents, deployment, tsp, deps, config, dx, release, ci |
+| Scopes | specs, shep-kit, cli, tui, web, api, domain, agents, deployment, tsp, deps, config, dx, release, ci |
+
+The scope is **optional** — commitlint reports an unknown scope as a warning (severity 1) and
+`.github/workflows/pr-check.yml` sets `requireScope: false`. Subject **case is not enforced**
+(`'subject-case': [0]`); keep it under 72 characters with no trailing period. `docs` and `build`
+are *types*, never scopes. Release impact (`release.config.mjs`): `feat` → minor;
+`fix`, `perf`, `revert` and **`refactor`** → patch; `docs`, `style`, `test`, `build`, `ci`,
+`chore` → no release.
+
+## TypeSpec Domain Models
+
+Domain types are **authored in TypeSpec**, never hand-written in TypeScript.
+
+- Source: `tsp/` (`tsp/common/enums/`, `tsp/domain/entities/`, `tsp/agents/`, …)
+- Generated: `packages/core/src/domain/generated/output.ts` (+ `index.ts`) — **never edit these**
+- Regenerate: `pnpm generate` (= `tsp compile tsp/ --emit @typespec-tools/emitter-typescript`
+  followed by `prettier --write` over the generated directory)
+- Compile-check only: `pnpm tsp:compile`; format: `pnpm tsp:format`; watch: `pnpm tsp:watch`
+
+The generated file is **committed**. CI's Type Check job re-runs `pnpm generate` and fails if the
+result differs from what is committed, and the `pre-commit` hook runs `pnpm generate` and stages
+`packages/core/src/domain/generated/` for you.
+
+Any domain concept used for branching — status, phase, mode, agent type — MUST be a TypeSpec enum
+rather than a raw string. Adding a member to a total-`Record` consumer (such as
+`AGENT_CATALOG` in `domain/shared/agent-catalog.ts`) turns the omission into a compile error,
+which is the intended way to discover everything a new member must touch.
+
+Full guide: [docs/development/typespec-guide.md](./docs/development/typespec-guide.md).
+
+## Dependency Injection
+
+Shep uses **tsyringe**. `reflect-metadata` must be imported before anything else — it is the
+first import in `src/presentation/cli/index.ts`.
+
+- Container: `packages/core/src/infrastructure/di/container.ts`, exposing
+  `initializeContainer()` (opens the database, runs migrations, registers everything) and
+  the `container` singleton.
+- Registration modules: `packages/core/src/infrastructure/di/modules/register-*.ts`
+  (repositories, services, use cases, agents, tools, security, plugins, ASPM, …).
+- Ports are registered under **string tokens** matching the interface name, and resolved the
+  same way:
+
+```ts
+const featureRepo = container.resolve<IFeatureRepository>('IFeatureRepository');
+const showFeature = container.resolve(ShowFeatureUseCase); // concrete classes resolve by type
+```
+
+Rules:
+
+- Use cases receive their ports via `@inject('IPortName')` constructor parameters — never by
+  importing an infrastructure module.
+- Presentation code (CLI/TUI/Web) may resolve from the container, but only to reach a **use
+  case**; business logic never lives in a command or component.
+- Module-level singletons and global accessors (`getSettings()`, `getShepHomeDir()`) belong to
+  infrastructure bootstrapping. Do not call them from use cases — inject instead, so tests can
+  substitute a double without patching modules.
+
+See [docs/architecture/repository-pattern.md](./docs/architecture/repository-pattern.md).
+
+## Data Storage
+
+Everything Shep knows lives locally. There is no Shep server.
+
+| Path | What |
+| ---- | ---- |
+| `~/.shep/data` | SQLite database (features, agent runs, settings, activity log, …) |
+| `~/.shep/daemon.json` | Running daemon's pid/port record |
+| `~/.shep/daemon.log` | Daemon log |
+| `~/.shep/logs/` | Feature-agent process logs |
+| `~/.shep/repos/<repo-hash>/wt/<branch>` | Per-feature git worktrees |
+
+`SHEP_HOME` overrides `~/.shep` (used for test isolation); `DEBUG_SQL` makes better-sqlite3 log
+every statement; `DEBUG` (any truthy value — it is a plain truthy check, not a namespace filter)
+turns on verbose CLI/deployment logging. The web daemon's port comes from `shep start --port` /
+`shep ui --port`, not an env var — `SHEP_WEB_PORT` is *written* by the server and read only by
+the middleware's Host-header check. `SHEP_BIND_HOST`, `SHEP_ALLOW_PUBLIC_BIND`,
+`SHEP_ALLOWED_HOSTS` and `SHEP_WEB_REQUIRE_TOKEN` gate non-localhost access.
+
+- Engine: `better-sqlite3`, opened as a process-wide singleton in
+  `packages/core/src/infrastructure/persistence/sqlite/connection.ts`.
+- Migrations: `packages/core/src/infrastructure/persistence/sqlite/migrations/`, run by **umzug**
+  via `runSQLiteMigrations()` on container init. Each migration owns one change and is
+  idempotent (`CREATE TABLE IF NOT EXISTS` / guarded `ALTER`).
+- Repositories implementing the `application/ports/output/repositories/` interfaces live in
+  `packages/core/src/infrastructure/repositories/`; row⇄entity conversion lives in
+  `persistence/sqlite/mappers/`.
+
+Per-repository files Shep reads from a target repo: `<repo>/.shep/dev.json` (dev-server run
+config) and `<repo>/.shep/ownership.yaml` (ASPM ownership import). There is no
+`.shep/config.json`.
 
 ## Key Docs
 
@@ -70,7 +160,8 @@ See [clean-architecture](./docs/architecture/clean-architecture.md).
 | Testing guide                  | [docs/development/tdd-guide.md](./docs/development/tdd-guide.md)                       |
 | Implementation patterns        | [docs/development/implementation-guide.md](./docs/development/implementation-guide.md) |
 | CI/CD + Docker                 | [docs/development/cicd.md](./docs/development/cicd.md)                                 |
-| Adding agents                  | [docs/development/adding-agents.md](./docs/development/adding-agents.md)               |
+| Adding an agent provider       | [docs/development/adding-agent-types.md](./docs/development/adding-agent-types.md)     |
+| Adding a LangGraph agent node  | [docs/development/adding-agent-nodes.md](./docs/development/adding-agent-nodes.md)     |
 | Dev server run plans           | [docs/development/dev-server-run-plan.md](./docs/development/dev-server-run-plan.md)   |
 | CLI architecture               | [docs/cli/architecture.md](./docs/cli/architecture.md)                                 |
 | TUI architecture               | [docs/tui/architecture.md](./docs/tui/architecture.md)                                 |

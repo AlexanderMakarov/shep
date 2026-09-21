@@ -1,66 +1,28 @@
+/**
+ * POST /api/attachments/upload
+ *
+ * Multipart upload into the pending-attachment store.
+ *
+ * `sessionId` names a directory (`pending-<sessionId>`), so it is validated
+ * as a single safe path segment before the storage service sees it. The
+ * extension check is `!ALLOWED.has(ext)`, not `ext && !ALLOWED.has(ext)` —
+ * the latter let an extensionless filename through unconditionally.
+ */
+
 import { NextResponse } from 'next/server';
 import { resolve } from '@/lib/server-container';
+import {
+  ALLOWED_ATTACHMENT_EXTENSIONS,
+  ATTACHMENT_MAX_FILE_SIZE,
+  DEFAULT_ATTACHMENT_MIME_TYPE,
+} from '@shepai/core/infrastructure/services/attachments/attachment-source-policy';
+import { isValidAttachmentSessionId } from '@shepai/core/infrastructure/services/attachments/attachment-identifier';
 import type { AttachmentStorageService } from '@shepai/core/infrastructure/services/attachment-storage.service';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-
-const ALLOWED_EXTENSIONS = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.svg',
-  '.bmp',
-  '.ico',
-  '.pdf',
-  '.doc',
-  '.docx',
-  '.xls',
-  '.xlsx',
-  '.ppt',
-  '.pptx',
-  '.txt',
-  '.md',
-  '.csv',
-  '.json',
-  '.yaml',
-  '.yml',
-  '.xml',
-  '.ts',
-  '.tsx',
-  '.js',
-  '.jsx',
-  '.py',
-  '.rb',
-  '.go',
-  '.rs',
-  '.java',
-  '.c',
-  '.cpp',
-  '.h',
-  '.hpp',
-  '.cs',
-  '.swift',
-  '.kt',
-  '.html',
-  '.css',
-  '.scss',
-  '.less',
-  '.sh',
-  '.bash',
-  '.zsh',
-  '.fish',
-  '.toml',
-  '.ini',
-  '.cfg',
-  '.conf',
-  '.env',
-  '.zip',
-  '.tar',
-  '.gz',
-  '.log',
-]);
+const HTTP_BAD_REQUEST = 400;
+const HTTP_PAYLOAD_TOO_LARGE = 413;
+const HTTP_INTERNAL_ERROR = 500;
+const BYTES_PER_MB = 1024 * 1024;
 
 function getExtension(filename: string): string {
   const dot = filename.lastIndexOf('.');
@@ -76,24 +38,31 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!file || !sessionId) {
       return NextResponse.json(
         { error: 'Missing required fields: file, sessionId' },
-        { status: 400 }
+        { status: HTTP_BAD_REQUEST }
       );
+    }
+
+    if (!isValidAttachmentSessionId(sessionId)) {
+      return NextResponse.json({ error: 'Invalid sessionId' }, { status: HTTP_BAD_REQUEST });
     }
 
     // Validate file size
-    if (file.size > MAX_FILE_SIZE) {
+    if (file.size > ATTACHMENT_MAX_FILE_SIZE) {
       return NextResponse.json(
         {
-          error: `File "${file.name}" exceeds 10 MB limit (${(file.size / 1024 / 1024).toFixed(1)} MB)`,
+          error: `File "${file.name}" exceeds ${ATTACHMENT_MAX_FILE_SIZE / BYTES_PER_MB} MB limit (${(file.size / BYTES_PER_MB).toFixed(1)} MB)`,
         },
-        { status: 413 }
+        { status: HTTP_PAYLOAD_TOO_LARGE }
       );
     }
 
-    // Validate extension
+    // Validate extension — an absent extension is NOT a pass.
     const ext = getExtension(file.name);
-    if (ext && !ALLOWED_EXTENSIONS.has(ext)) {
-      return NextResponse.json({ error: `File type "${ext}" is not allowed` }, { status: 400 });
+    if (!ALLOWED_ATTACHMENT_EXTENSIONS.has(ext)) {
+      return NextResponse.json(
+        { error: `File type "${ext || file.name}" is not allowed` },
+        { status: HTTP_BAD_REQUEST }
+      );
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -101,7 +70,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const attachment = service.store(
       buffer,
       file.name,
-      file.type ?? 'application/octet-stream',
+      file.type || DEFAULT_ATTACHMENT_MIME_TYPE,
       sessionId
     );
 
@@ -115,6 +84,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Upload failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: HTTP_INTERNAL_ERROR });
   }
 }

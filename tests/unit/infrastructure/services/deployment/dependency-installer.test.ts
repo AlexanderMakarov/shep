@@ -58,11 +58,12 @@ describe('DependencyInstaller', () => {
 
   describe('non-interactive arg matrix per package manager', () => {
     it.each([
-      ['npm', ['install', '--no-audit', '--no-fund']],
-      ['pnpm', ['install']],
+      ['npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts']],
+      ['pnpm', ['install', '--ignore-scripts']],
+      // Yarn Berry rejects `--ignore-scripts` as an unknown option, so the
+      // lifecycle scripts are disabled by environment instead (asserted below).
       ['yarn', ['install', '--non-interactive']],
-      ['bun', ['install']],
-      ['some-unknown-pm', ['install']],
+      ['bun', ['install', '--ignore-scripts']],
     ])('uses %s-appropriate non-interactive args', (pm, expectedArgs) => {
       const installer = new DependencyInstaller(deps);
       void installer.install('/repo', pm, noop);
@@ -244,5 +245,71 @@ describe('DependencyInstaller', () => {
     const result = await resultPromise;
     expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
     expect(result.success).toBe(false);
+  });
+
+  /**
+   * C5 — `packageManager` arrives from a repository's committed
+   * `.shep/dev.json`, which is untrusted input, and reached
+   * `spawn(packageManager, args, { shell: true })` after only a `trim()`.
+   * With `shell: true` Node joins file and args into ONE shell line, so
+   * `"true; touch INJECTED; #"` executes — verified with a real subprocess.
+   * `buildInstallArgs` had a `default:` branch, so there was no allowlist to
+   * stop it. The sibling `node-project-build.service.ts` gets this right by
+   * deriving the manager from a lockfile allowlist.
+   */
+  describe('package manager allowlist', () => {
+    it.each([
+      ['a command separator', 'true; touch INJECTED; #'],
+      ['a subshell', 'npm$(touch INJECTED)'],
+      ['backticks', 'npm`touch INJECTED`'],
+      ['a pipe', 'npm | touch INJECTED'],
+      ['an unknown manager', 'some-unknown-pm'],
+      ['an empty name', ''],
+    ])('never spawns %s', async (_label, packageManager) => {
+      const installer = new DependencyInstaller(deps);
+
+      const result = await installer.install('/repo', packageManager, noop);
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(result.success).toBe(false);
+    });
+
+    it('explains the refusal in the log tail', async () => {
+      const lines: string[] = [];
+      const installer = new DependencyInstaller(deps);
+
+      const result = await installer.install('/repo', 'true; touch INJECTED; #', (line) =>
+        lines.push(line)
+      );
+
+      expect(lines.join('\n')).toMatch(/not a supported package manager/i);
+      expect(result.tail.join('\n')).toMatch(/npm, pnpm, yarn, bun/);
+    });
+
+    it.each(['npm', 'pnpm', 'yarn', 'bun'])('still spawns %s', (packageManager) => {
+      const installer = new DependencyInstaller(deps);
+      void installer.install('/repo', packageManager, noop);
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        packageManager,
+        expect.arrayContaining(['install']),
+        expect.objectContaining({ cwd: '/repo' })
+      );
+
+      mockChild.emit('close', 0, null);
+    });
+  });
+
+  describe('lifecycle scripts', () => {
+    it('disables yarn lifecycle scripts by environment (both Classic and Berry)', () => {
+      const installer = new DependencyInstaller(deps);
+      void installer.install('/repo', 'yarn', noop);
+
+      const env = spawnMock.mock.calls[0][2].env as NodeJS.ProcessEnv;
+      expect(env.YARN_ENABLE_SCRIPTS).toBe('false');
+      expect(env.YARN_IGNORE_SCRIPTS).toBe('true');
+
+      mockChild.emit('close', 0, null);
+    });
   });
 });

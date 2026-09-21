@@ -15,23 +15,32 @@
   --color-background: #ffffff;
   --color-foreground: #0a0a0a;
 
-  --color-primary: #3b82f6;
+  /* #155dfc on #ffffff = 5.25:1 — carries white 14px text at AA, and reads as
+   * AA text itself (the `link` button variant). #3b82f6 was only 3.68:1. */
+  --color-primary: #155dfc;
   --color-primary-foreground: #ffffff;
 
   --color-secondary: #f1f5f9;
   --color-secondary-foreground: #0f172a;
 
   --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
+  --color-muted-foreground: #5b6b80;
 
   --color-accent: #f1f5f9;
   --color-accent-foreground: #0f172a;
 
-  --color-destructive: #ef4444;
+  /* #e7000b on #ffffff = 4.77:1 (was #ef4444, 3.76:1). */
+  --color-destructive: #e7000b;
   --color-destructive-foreground: #ffffff;
 
   --color-border: #e2e8f0;
+  /* --color-input is a SURFACE token: it paints the Switch track
+   * (`data-[state=unchecked]:bg-input`) and the `dark:bg-input/30` field
+   * fills, so it must stay light. Control BOUNDARIES use the token below,
+   * which is the only one held to the 3:1 non-text contrast bar. */
   --color-input: #e2e8f0;
+  /* #64748b on #ffffff = 4.76:1 (the old #e2e8f0 boundary was 1.23:1). */
+  --color-input-border: #64748b;
   --color-ring: #3b82f6;
 
   --color-card: #ffffff;
@@ -88,7 +97,7 @@
   --color-foreground: #fafafa;
 
   --color-primary: #3b82f6;
-  --color-primary-foreground: #ffffff;
+  --color-primary-foreground: #0a0a0a;
 
   --color-secondary: #262626;
   --color-secondary-foreground: #fafafa;
@@ -99,11 +108,13 @@
   --color-accent: #262626;
   --color-accent-foreground: #fafafa;
 
-  --color-destructive: #dc2626;
-  --color-destructive-foreground: #ffffff;
+  --color-destructive: #f87171;
+  --color-destructive-foreground: #0a0a0a;
 
   --color-border: #333333;
   --color-input: #3a3a3a;
+  /* #6b7280 on #0a0a0a = 4.10:1 (the #3a3a3a boundary was 1.74:1). */
+  --color-input-border: #6b7280;
   --color-ring: #3b82f6;
 
   --color-card: #0a0a0a;
@@ -336,6 +347,24 @@
   ::view-transition-new(*) {
     animation: none;
   }
+
+  /* Mirror of the `body.no-animations` rules below, so an OS-level
+   * reduce-motion preference is honoured from the FIRST PAINT — before
+   * useAnimationsEnabled has hydrated and had a chance to add the class.
+   *
+   * `.animations-forced` is the escape hatch: the hook adds it when the user
+   * has explicitly stored "animations on", which must beat the OS default.
+   * Without it this block would silently veto that stored choice. */
+  body:not(.animations-forced),
+  body:not(.animations-forced) *,
+  body:not(.animations-forced) *::before,
+  body:not(.animations-forced) *::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Sidebar Theme Variables */
@@ -514,4 +543,18 @@ body.no-animations {
   ::view-transition-new(*) {
     animation: none !important;
   }
+}
+
+/* ─── Toast / bulk-action-toolbar collision ────────────────────────────────
+ * The Toaster is mounted bottom-centre and the bulk-action toolbar is pinned
+ * `fixed bottom-6 left-1/2`, so a toast used to land directly on top of it.
+ * The Toaster resolves its bottom offset through this custom property, so
+ * while the toolbar is on screen the whole toast stack lifts clear of it.
+ * The toolbar's own top edge sits at ~76px (24px inset + ~52px tall).       */
+:root {
+  --shep-toast-offset-bottom: 24px;
+}
+
+body:has([data-bulk-action-toolbar]) {
+  --shep-toast-offset-bottom: 96px;
 }

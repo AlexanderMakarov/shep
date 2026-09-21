@@ -13,7 +13,10 @@
  * this concrete class or the tsyringe container.
  *
  * Adding a new provider requires only registering a new token in the
- * container.
+ * container. A provider with no registered token degrades to an unsupported
+ * stub rather than throwing: only five of the fourteen agent types have a real
+ * session-listing implementation, and "this agent cannot list sessions" is a
+ * state the use case already handles, whereas an unresolved-token error is not.
  */
 
 import { injectable } from 'tsyringe';
@@ -21,6 +24,7 @@ import { container } from 'tsyringe';
 import type { AgentType } from '../../../domain/generated/output.js';
 import type { IAgentSessionRepository } from '../../../application/ports/output/agents/agent-session-repository.interface.js';
 import type { IAgentSessionRepositoryRegistry } from '../../../application/ports/output/agents/agent-session-repository-registry.interface.js';
+import { StubSessionRepository } from './sessions/stub-session.repository.js';
 
 @injectable()
 export class AgentSessionRepositoryRegistry implements IAgentSessionRepositoryRegistry {
@@ -31,6 +35,10 @@ export class AgentSessionRepositoryRegistry implements IAgentSessionRepositoryRe
    * @returns The IAgentSessionRepository implementation for the agent type
    */
   getRepository(agentType: AgentType): IAgentSessionRepository {
-    return container.resolve<IAgentSessionRepository>(`IAgentSessionRepository:${agentType}`);
+    try {
+      return container.resolve<IAgentSessionRepository>(`IAgentSessionRepository:${agentType}`);
+    } catch {
+      return new StubSessionRepository(agentType);
+    }
   }
 }

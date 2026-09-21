@@ -25,14 +25,18 @@ export function ViewSwitcher({ activeView, onViewChange, className }: ViewSwitch
   return (
     <div
       data-testid="view-switcher"
-      className={cn('inline-flex items-center rounded-md border p-0.5', className)}
+      className={cn(
+        'inline-flex max-w-full flex-wrap items-center rounded-md border p-0.5',
+        className
+      )}
     >
       {VIEW_OPTIONS.map(({ mode, label, icon: Icon }) => (
         <Button
           key={mode}
           variant={activeView === mode ? 'secondary' : 'ghost'}
           size="sm"
-          className={cn('h-6 gap-1 px-2 text-[10px]', activeView === mode && 'font-medium')}
+          className={cn('min-h-8 gap-1 px-2 text-xs', activeView === mode && 'font-medium')}
+          aria-pressed={activeView === mode}
           onClick={() => onViewChange(mode)}
           data-testid={`view-switch-${mode}`}
         >

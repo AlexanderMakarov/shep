@@ -52,7 +52,9 @@ That's it. Shep launches a beautiful web dashboard at `http://localhost:4050` an
 
 ## Onboarding
 
-On first launch, Shep walks you through a guided setup wizard — choose your AI agent (Claude Code, Cursor CLI, Gemini CLI, or Demo), pick a model, authenticate, and add your first repository. The same flow is available via the CLI when running `shep` or `shep feat new` for the first time.
+On first launch, Shep walks you through a guided setup wizard — choose your AI agent, pick a model, authenticate, and add your first repository. Twelve agents are selectable today: Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline, OpenRouter, Together AI, Ollama, LLM Proxy, and the Demo mock. (Aider and Continue appear in the list marked "Coming Soon" and cannot be selected.)
+
+`shep` runs this wizard **in the browser**: it starts the daemon and opens the web UI, where onboarding lives. The terminal wizard is reached by running `shep settings`, or automatically the first time you run `shep feat new` in an interactive terminal.
 
 ![Onboarding — Choose Your Agent](screenshots/features-guide/18-onboarding-choose-agent.png)
 
@@ -109,7 +111,7 @@ Click the **+** button on any repository node to open the feature creation drawe
 | Option              | Description                                                                  |
 | ------------------- | ---------------------------------------------------------------------------- |
 | **Description**     | Natural language description of what you want built                          |
-| **Agent & Model**   | Choose which AI agent and model to use (Claude Code, Cursor CLI, Gemini CLI) |
+| **Agent & Model**   | Choose which AI agent and model to use — any of the twelve supported agents  |
 | **Fast Mode**       | Skip detailed planning — go straight from description to implementation      |
 | **Approve toggles** | **PRD** — Review requirements before implementation                          |
 |                     | **Plan** — Review the implementation plan before coding                      |
@@ -157,6 +159,11 @@ Started → Analyze → Requirements → Research → Planning → Implementatio
 | **Implementation** | Autonomous code generation, tests, and documentation           | —             |
 | **Review**         | PR created, CI/CD runs, code ready for review                  | Merge Review  |
 | **Maintain**       | Feature deployed, branch merged                                | —             |
+
+Beyond this happy path the `SdlcLifecycle` enum also carries **Blocked**,
+**Pending** (created but not started), **Exploring** (exploration mode),
+**AwaitingUpstream** (fork PR waiting on the upstream repo), **Deleting** and
+**Archived**.
 
 ### Activity Timeline
 
@@ -317,8 +324,8 @@ A comprehensive settings panel with seven sections for complete control over She
 
 Configure which AI coding agent powers your features and how it authenticates.
 
-- **Agent & Model** — Choose from Claude Code, Cursor CLI, or Gemini CLI with model selection
-- **Authentication** — Session-based or token-based auth
+- **Agent & Model** — Choose from the twelve supported agents (Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline, OpenRouter, Together AI, Ollama, LLM Proxy, Demo) with model selection
+- **Authentication** — Session-based or token-based auth. The SDK agents (OpenRouter, Together AI) require a token; the CLI agents can reuse their own session
 
 #### Environment
 
@@ -350,11 +357,23 @@ Three channels with granular event control:
 
 #### Feature Flags
 
-Toggle experimental features:
+Toggle experimental features. Several of them gate whole command groups:
 
-- **Skills** — Agent capability system
-- **Deployments** — Environment deployment workflows
-- **Debug** — Verbose logging and debug panels
+| Flag                  | Gates                                          |
+| --------------------- | ---------------------------------------------- |
+| `envDeploy`           | Environment deployment workflows               |
+| `debug`               | Verbose logging and debug panels               |
+| `reactFileManager`    | The in-app file manager                        |
+| `projects`            | `shep project` / `item` / `cycle` / `intake`   |
+| `codeReview`          | `shep review`                                  |
+| `collaboration`       | Supervisor agent, agent questions and messages |
+| `bedrockIntegration`  | `shep bedrock`                                 |
+| `whatsappDispatch`    | `shep whatsapp`                                |
+| `aspm`                | `shep aspm`                                    |
+| `clusters`            | `shep cluster`                                 |
+| `supplyChainSecurity` | `shep security enforce`                        |
+| `scheduledWorkflows`  | `shep workflow`                                |
+| `githubImport`        | GitHub repository import                       |
 
 #### Database
 
@@ -362,6 +381,34 @@ View local SQLite database info:
 
 - **Location** — Path to `~/.shep/` data directory
 - **Size** — Current database file size
+
+### Where configuration actually lives
+
+There is no config file. All settings are rows in the SQLite database at
+`~/.shep/data`, written through `shep settings …` or the web UI's Settings page.
+
+A repository may additionally carry two optional files of its own:
+
+| File                        | Purpose                                     |
+| --------------------------- | ------------------------------------------- |
+| `<repo>/.shep/dev.json`     | Pinned dev-server run configuration          |
+| `<repo>/.shep/ownership.yaml` | ASPM ownership import                      |
+
+### Environment Variables
+
+| Variable    | Effect                                                            |
+| ----------- | ----------------------------------------------------------------- |
+| `SHEP_HOME` | Override the `~/.shep` data directory                             |
+| `DEBUG`     | Print error stack traces and debug output. Plain truthy check — use `DEBUG=1`, not a namespace filter |
+| `DEBUG_SQL` | Verbose SQLite statement logging                                  |
+
+The web server's port is **not** an environment variable — it comes from
+`shep start --port` / `shep ui --port`, defaulting to `4050`. (`SHEP_WEB_PORT`
+exists, but the server writes it for its own Host-header check; setting it
+yourself does not move the port.)
+
+Non-localhost access is gated by `SHEP_BIND_HOST`, `SHEP_ALLOW_PUBLIC_BIND`,
+`SHEP_ALLOWED_HOSTS` and `SHEP_WEB_REQUIRE_TOKEN`.
 
 ---
 
@@ -376,9 +423,11 @@ Shep detects, installs, and launches your development tools. The Tools page show
 | Category            | Tools                                              |
 | ------------------- | -------------------------------------------------- |
 | **IDEs**            | VS Code, Cursor, Windsurf, Zed, Google Antigravity |
-| **CLI Agents**      | Claude Code, Cursor CLI, Gemini CLI                |
+| **CLI Agents**      | Claude Code, Kimi Code CLI, Codex CLI, GitHub Copilot CLI, Cursor CLI, Gemini CLI |
 | **Version Control** | Git (required), GitHub CLI (required)              |
-| **Terminals**       | Alacritty, Kitty, tmux, Warp, iTerm2               |
+| **Terminals**       | Alacritty, Kitty, tmux, Warp, iTerm2, System Terminal |
+| **Clusters**        | Docker, k3d, kubectl                               |
+| **Memory**          | Project Bedrock                                    |
 
 ### Tool Detail Drawer
 
@@ -425,16 +474,22 @@ Dark mode is persisted across sessions and applies to all pages: dashboard, feat
 
 ## CLI Reference
 
+A selection of the most-used commands. The full surface — 36 top-level commands
+and groups — is documented in [cli/commands.md](./cli/commands.md).
+
 ### Core Commands
 
 ```bash
-shep                              # Start daemon + onboarding
+shep                              # Start the web UI daemon and open it in the browser
 shep start [--port <number>]      # Start web UI daemon (default: 4050)
 shep stop                         # Stop the running daemon
 shep restart                      # Restart the daemon
 shep status                       # Show daemon status and metrics
 shep ui [--port] [--no-open]      # Start web UI in foreground
 ```
+
+Bare `shep` starts the daemon and nothing else — onboarding happens in the web
+UI it opens, not in the terminal.
 
 ### Feature Management
 
@@ -446,20 +501,28 @@ shep feat new <description>       # Create a new feature
   --allow-prd                     #   Auto-approve PRD phase
   --allow-plan                    #   Auto-approve planning phase
   --allow-merge                   #   Auto-approve merge phase
-  --allow-all                     #   Auto-approve all gates
+  --allow-all                     #   Auto-approve all three gates (not --push/--pr)
   --parent <id>                   #   Set parent feature (dependency)
+  --pending                       #   Create without spawning the agent
   --fast                          #   Fast mode (skip detailed planning)
-  --model <name>                  #   Specify AI model
-  --attach <path>                 #   Attach reference files
+  --explore                       #   Exploration mode (excludes --fast)
+  --model <name>                  #   Pin an AI model (default: settings.models.default)
+  --attach <path>                 #   Attach reference files (repeatable)
 
 shep feat ls [--repo]             # List features
 shep feat show <id>               # Show feature details
+shep feat start <id>              # Start a pending feature
 shep feat del <id>                # Delete a feature
-shep feat resume <id>             # Resume paused feature
-shep feat review <id>             # Review feature
-shep feat approve <id>            # Approve current phase
-shep feat reject <id>             # Reject with feedback
+shep feat resume <id>             # Resume a stopped or failed feature
+shep feat review [id]             # Interactive review of a waiting feature
+shep feat approve [id]            # Approve current phase
+shep feat reject [id] --reason <text>   # Reject (--reason is required)
 shep feat logs <id>               # View feature logs
+shep feat adopt <branch>          # Adopt an existing branch as a feature
+shep feat archive <id>            # Hide a feature from the canvas
+shep feat unarchive <id>          # Restore an archived feature
+shep feat feedback <id> <text>    # Iterate on an exploration prototype
+shep feat promote <id>            # Promote an exploration to Regular/Fast
 ```
 
 ### Agent Management
@@ -479,7 +542,10 @@ shep agent reject <id>            # Reject agent action
 ```bash
 shep repo ls                      # List repositories
 shep repo show <id>               # Show repository details
-shep session ls                   # List sessions
+shep repo add --url <url>         # Clone and register a GitHub repository
+shep repo import <dir>            # Bulk-import local folders as repositories
+shep repo init-remote [name]      # Create a GitHub repo from the local one
+shep session ls                   # List agent provider CLI sessions
 shep session show <id>            # Show session details
 ```
 
@@ -488,11 +554,15 @@ shep session show <id>            # Show session details
 ```bash
 shep settings                     # Launch setup wizard
 shep settings show                # Display current config
-shep settings init                # Initialize settings
+shep settings init                # Reset settings to defaults (confirms; -f skips)
 shep settings agent               # Configure AI agent
 shep settings ide                 # Configure IDE
 shep settings workflow            # Configure workflow
-shep settings model               # Configure model
+shep settings model               # Configure default model
+shep settings adaptive-models     # Configure per-task model tier routing
+shep settings language            # Configure display language
+shep settings worktree            # Override how worktrees are created
+shep settings messaging           # Configure messaging integrations
 ```
 
 ### Tools & Utilities
@@ -500,11 +570,17 @@ shep settings model               # Configure model
 ```bash
 shep tools list                   # List tools with install status
 shep install <tool> [--how]       # Install a dev tool
-shep ide-open [--ide] [--dir]     # Open IDE in directory
+shep ide <feat-id> [--zed]        # Open a feature worktree in your IDE
 shep version                      # Show version info
 shep upgrade                      # Upgrade to latest version
-shep run <agent> [-p prompt]      # Run agent directly
+shep doctor                       # Diagnose the local environment
+shep run <agent-name> [-p prompt] # Run agent directly
 ```
+
+The command is `shep ide`, and it takes a **feature id**, not a directory. Its
+editor flags are derived at runtime from the tool catalog (`--vscode`,
+`--cursor`, `--zed`, `--windsurf`, `--antigravity`, …); with none given it uses
+your configured default editor. There is no `--ide` or `--dir` flag.
 
 ---
 
@@ -533,7 +609,7 @@ Domain (Core business logic, no external deps)
 | **Web UI**              | Next.js 16 + React 19                                     |
 | **Styling**             | Tailwind CSS 4 + shadcn/ui                                |
 | **Graph Visualization** | React Flow v12 (DAG layout via dagre)                     |
-| **Database**            | SQLite (better-sqlite3, local per-repo)                   |
+| **Database**            | SQLite (better-sqlite3), one local database at `~/.shep/data` |
 | **Agent Orchestration** | LangGraph (@langchain/langgraph)                          |
 | **Domain Models**       | TypeSpec → generated TypeScript                           |
 | **DI Container**        | tsyringe                                                  |
@@ -556,7 +632,10 @@ Domain (Core business logic, no external deps)
 | Category             | Tools                                              | Status                |
 | -------------------- | -------------------------------------------------- | --------------------- |
 | **IDEs**             | VS Code, Cursor, Windsurf, Zed, Google Antigravity | Detect + Launch       |
-| **AI Coding Agents** | Claude Code, Cursor CLI, Gemini CLI                | Full integration      |
+| **AI Coding Agents (CLI)** | Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline | Full integration |
+| **AI Coding Agents (SDK)** | OpenRouter, Together AI, Ollama, LLM Proxy   | Full integration      |
+| **Demo**             | `dev` mock executor                                | No binary, no network |
+| **Coming Soon**      | Aider, Continue                                    | Declared, not executable |
 | **Version Control**  | Git, GitHub CLI                                    | Required              |
 | **Terminals**        | Alacritty, Kitty, tmux, Warp, iTerm2               | Detect + Launch       |
 | **CI/CD**            | GitHub Actions                                     | Auto-detect + monitor |

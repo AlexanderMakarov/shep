@@ -9,7 +9,7 @@
  * non-existent paths).
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
 
 // Platform-safe home directory — on Windows path.resolve('/home/testuser') becomes 'D:\home\testuser'
@@ -336,5 +336,80 @@ describe('GET /api/directory/list', () => {
       expect(response.status).toBe(500);
       expect(body.error).toBe('Unexpected IO error');
     });
+  });
+});
+
+/**
+ * M4: the only check used to be `path.isAbsolute`, which enables rather than
+ * restricts — `?path=/&showHidden=true` walked anything the daemon could
+ * read. That is the reconnaissance primitive that made the arbitrary file
+ * read and the traversal writes aimable.
+ */
+describe('GET /api/directory/list — browsable root confinement', () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  let routeModule: typeof import('@/app/api/directory/list/route');
+  const savedRootsEnv = process.env.SHEP_DIRECTORY_ROOTS;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    delete process.env.SHEP_DIRECTORY_ROOTS;
+    vi.resetModules();
+    routeModule = await import(
+      '../../../../../src/presentation/web/app/api/directory/list/route.js'
+    );
+  });
+
+  afterEach(() => {
+    if (savedRootsEnv === undefined) delete process.env.SHEP_DIRECTORY_ROOTS;
+    else process.env.SHEP_DIRECTORY_ROOTS = savedRootsEnv;
+  });
+
+  it('refuses to enumerate the filesystem root', async () => {
+    const response = await routeModule.GET(
+      makeRequest({ path: path.parse(HOME_DIR).root, showHidden: 'true' })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockReaddir).not.toHaveBeenCalled();
+  });
+
+  it('refuses a path outside the browsable roots', async () => {
+    const response = await routeModule.GET(
+      makeRequest({ path: path.resolve('/home/someone-else') })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockReaddir).not.toHaveBeenCalled();
+  });
+
+  it('refuses a sibling directory that merely shares the root prefix', async () => {
+    const response = await routeModule.GET(makeRequest({ path: `${HOME_DIR}-evil` }));
+
+    expect(response.status).toBe(403);
+    expect(mockReaddir).not.toHaveBeenCalled();
+  });
+
+  it('still allows the home directory itself', async () => {
+    mockReaddir.mockResolvedValueOnce([]);
+    mockStat.mockResolvedValueOnce(makeStat());
+
+    const response = await routeModule.GET(makeRequest({ path: HOME_DIR }));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('allows an operator-configured extra root', async () => {
+    process.env.SHEP_DIRECTORY_ROOTS = path.resolve('/workspaces');
+    vi.resetModules();
+    const reloaded = await import(
+      '../../../../../src/presentation/web/app/api/directory/list/route.js'
+    );
+
+    mockReaddir.mockResolvedValueOnce([]);
+    mockStat.mockResolvedValueOnce(makeStat());
+
+    const response = await reloaded.GET(makeRequest({ path: path.resolve('/workspaces/repo') }));
+
+    expect(response.status).toBe(200);
   });
 });

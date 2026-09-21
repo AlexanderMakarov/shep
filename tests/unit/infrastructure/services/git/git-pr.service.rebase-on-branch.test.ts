@@ -58,7 +58,7 @@ describe('GitPrService — rebaseOnBranch', () => {
 
     await service.rebaseOnBranch('/repo', 'feat/child', 'feat/parent');
 
-    expect(mockExec).toHaveBeenCalledWith('git', ['fetch', 'origin', 'feat/parent'], {
+    expect(mockExec).toHaveBeenCalledWith('git', ['fetch', 'origin', '--', 'feat/parent'], {
       cwd: '/repo',
     });
   });
@@ -94,7 +94,7 @@ describe('GitPrService — rebaseOnBranch', () => {
 
     await service.rebaseOnBranch('/repo', 'feat/child', 'feat/parent');
 
-    expect(mockExec).toHaveBeenCalledWith('git', ['rebase', 'origin/feat/parent'], {
+    expect(mockExec).toHaveBeenCalledWith('git', ['rebase', '--', 'origin/feat/parent'], {
       cwd: '/repo',
     });
   });

@@ -18,8 +18,9 @@ The Settings Service provides global application configuration accessible throug
 │  │  async function bootstrap() {                              │ │
 │  │    1. initializeContainer() → DI setup + migrations        │ │
 │  │    2. container.resolve(InitializeSettingsUseCase)         │ │
-│  │    3. initializeSettings(settings) → Singleton             │ │
-│  │    4. program.parse() → Command execution                  │ │
+│  │       initializeSettings(settings) → Singleton             │ │
+│  │    3. initI18n(settings.user.preferredLanguage)            │ │
+│  │    4. program.parseAsync() → Command execution             │ │
 │  │  }                                                          │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                              ↓                                   │
@@ -76,12 +77,13 @@ The Settings Service provides global application configuration accessible throug
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │ settings.service.ts                                       │  │
-│  │   let settingsInstance: Settings | null = null;           │  │
+│  │   globalThis['__shepSettings'] (+ process fallback)       │  │
 │  │                                                           │  │
 │  │   initializeSettings(settings): void                      │  │
 │  │   getSettings(): Settings                                 │  │
 │  │   hasSettings(): boolean                                  │  │
-│  │   resetSettings(): void (testing only)                    │  │
+│  │   updateSettings(settings): void                          │  │
+│  │   resetSettings(): void                                   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │  Usage:                                                          │
@@ -119,12 +121,25 @@ export type Settings = BaseEntity & {
   workflow: WorkflowConfig;
   featureFlags?: FeatureFlags;
   onboardingComplete: boolean;
+  interactiveAgent?: InteractiveAgentConfig;
+  fabLayout?: FabLayoutConfig;
+  supervisor?: SupervisorConfig;
+  defaultHomePage?: DefaultHomePage;
+  whatsapp?: WhatsAppConfig;
+  security?: SecurityConfig;
+  messaging?: MessagingConfig;
+  worktree?: WorktreeConfig;
 };
 
 export type ModelConfiguration = {
   default: string; // Default model identifier for all agents
+  adaptive?: AdaptiveModelConfig; // Per-task model tier routing (spec 110)
 };
 ```
+
+The full field list lives in
+[../api/domain-models.md](../api/domain-models.md); the TypeSpec source is
+`tsp/domain/entities/settings.tsp`.
 
 **Trade-offs:**
 
@@ -147,24 +162,43 @@ export type ModelConfiguration = {
 
 **Implementation:**
 
+The instance is stored under a `__shepSettings` key on `globalThis` (with
+`process` as a fallback) rather than in a module-level variable. That is
+deliberate: a module-level `let` is lost whenever Turbopack re-evaluates the
+module inside a Next.js API route, which would make `getSettings()` throw in the
+web UI.
+
 ```typescript
 // packages/core/src/infrastructure/services/settings.service.ts
-let settingsInstance: Settings | null = null;
+const SHEP_SETTINGS_KEY = '__shepSettings';
 
 export function initializeSettings(settings: Settings): void {
-  if (settingsInstance !== null) {
-    throw new Error('Settings already initialized.');
+  if (readSettings() !== null) {
+    throw new Error('Settings already initialized. Cannot re-initialize.');
   }
-  settingsInstance = settings;
+  writeSettings(settings);
 }
 
 export function getSettings(): Settings {
-  if (settingsInstance === null) {
-    throw new Error('Settings not initialized.');
+  const instance = readSettings();
+  if (instance === null) {
+    throw new Error('Settings not initialized. Call initializeSettings() during CLI bootstrap.');
   }
-  return settingsInstance;
+  return instance;
+}
+
+/** Refresh the singleton after a successful database write. */
+export function updateSettings(settings: Settings): void {
+  if (readSettings() === null) {
+    throw new Error('Settings not initialized. Cannot update before initialization.');
+  }
+  writeSettings(settings);
 }
 ```
+
+`hasSettings()` reports initialization without throwing. `resetSettings()` clears
+the instance — it is documented as test-only, but `shep settings init` also uses
+it (paired with `initializeSettings()`) to replace the singleton outright.
 
 **Trade-offs:**
 
@@ -395,7 +429,7 @@ async function bootstrap() {
 
     // Step 3: Set up Commander CLI and parse arguments
     const program = new Command().name('shep').version(version);
-    program.parse();
+    await program.parseAsync();
   } catch (error) {
     messages.error('Failed to initialize CLI', error);
     process.exit(1);
@@ -436,7 +470,7 @@ bootstrap();
        ↓
 7. initializeSettings(defaults) → Singleton instance
    ↓
-8. program.parse() → Execute 'version' command
+8. program.parseAsync() → Execute 'version' command
    ↓
 9. Command can call getSettings() → Access singleton
 ```
@@ -450,7 +484,7 @@ bootstrap();
    ↓
 3. getSQLiteConnection() → ~/.shep/data (already exists)
    ↓
-4. runSQLiteMigrations() → Check user_version (no changes)
+4. runSQLiteMigrations() → umzug: nothing pending
    ↓
 5. container.resolve(InitializeSettingsUseCase)
    ↓
@@ -460,7 +494,7 @@ bootstrap();
        ↓
 7. initializeSettings(settings) → Singleton instance
    ↓
-8. program.parse() → Execute command
+8. program.parseAsync() → Execute command
    ↓
 9. Command calls getSettings() → Access singleton
 ```
@@ -468,29 +502,36 @@ bootstrap();
 ### Update Flow
 
 ```
-1. User runs: shep settings update --model claude-opus-4-5
-   |
+1. User runs: shep settings model
+   ↓
 2. Command handler:
-   +-- settings = getSettings() (load from singleton)
-   +-- settings.models.default = 'claude-opus-4-5'
-   +-- container.resolve(UpdateSettingsUseCase)
+   ├─ settings = getSettings() (load from singleton)
+   ├─ settings.models.default = <chosen model>
+   └─ container.resolve(UpdateSettingsUseCase)
        ↓
 3. useCase.execute(settings)
    ├─ repository.update(settings) → SQL UPDATE
    └─ Return updated settings
        ↓
-4. Singleton instance is already updated (by reference)
+4. updateSettings(updated) → singleton refreshed
    ↓
 5. CLI continues with new settings for remaining commands
 ```
 
+There is no `shep settings update` command. The per-section subcommands
+(`model`, `agent`, `ide`, `workflow`, `adaptive-models`, `language`,
+`messaging`, `worktree`) are the write path, and `shep settings` with no
+subcommand launches the full wizard.
+
 ### Agent Configuration Flow
 
 ```
-1. User runs: shep settings agent --agent cursor
+1. User runs: shep settings agent --agent cursor --auth session
    ↓
 2. ConfigureAgentUseCase:
-   ├─ AgentValidatorService.isAvailable('cursor') → checks `agent --version`
+   ├─ AgentValidatorService.isAvailable('cursor')
+   │    → reads AGENT_CATALOG[cursor] → binary 'cursor-agent'
+   │    → runs `cursor-agent --version`
    ├─ Load current settings
    ├─ Update settings.agent.type = 'cursor'
    └─ repository.update(settings) → SQL UPDATE
@@ -505,6 +546,11 @@ bootstrap();
        → CursorExecutorService
 ```
 
+The binary, version args, supported flag and tool id all come from
+`packages/core/src/domain/shared/agent-catalog.ts` — the single source of truth
+for per-agent facts. `--auth <method>` is required whenever `--agent` is given
+and is not `dev`.
+
 > **ARCHITECTURAL RULE:** The `settings.agent.type` field is the single source of truth for which agent executor runs. All code paths that need an `IAgentExecutor` MUST go through `IAgentExecutorProvider.getExecutor()` — never call the factory directly or hardcode the agent type. See [AGENTS.md — Settings-Driven Agent Resolution](../../AGENTS.md#settings-driven-agent-resolution-mandatory).
 
 ## File Structure
@@ -518,12 +564,17 @@ packages/core/src/
 ├── application/
 │   ├── ports/
 │   │   └── output/
-│       └── settings.repository.interface.ts  # ISettingsRepository port
+│   │       └── repositories/
+│   │           └── settings.repository.interface.ts  # ISettingsRepository port
 │   └── use-cases/
 │       └── settings/
-│           ├── initialize-settings.use-case.ts   # Load or create defaults
-│           ├── load-settings.use-case.ts         # Load existing
-│           └── update-settings.use-case.ts       # Update existing
+│           ├── initialize-settings.use-case.ts       # Load or create defaults
+│           ├── load-settings.use-case.ts             # Load existing
+│           ├── update-settings.use-case.ts           # Update existing
+│           ├── check-onboarding-status.use-case.ts   # Has onboarding completed?
+│           ├── complete-onboarding.use-case.ts       # Mark onboarding complete (TUI)
+│           ├── complete-web-onboarding.use-case.ts   # Mark onboarding complete (web UI)
+│           └── get-adaptive-model-plan.use-case.ts   # Resolved model tier triple
 │
 └── infrastructure/
     ├── di/
@@ -531,7 +582,9 @@ packages/core/src/
     ├── persistence/
     │   └── sqlite/
     │       ├── connection.ts      # Database connection (~/.shep/data)
-    │       ├── migrations.ts      # Schema migrations (user_version)
+    │       ├── migrations.ts      # umzug migration runner
+    │       ├── legacy-migrations.ts  # V1–V36, registered programmatically
+    │       ├── migrations/        # Migrations 36+, one .ts file each
     │       └── mappers/
     │           └── settings.mapper.ts  # TS ↔ SQL conversion
     ├── repositories/
@@ -652,8 +705,14 @@ describe('CLI: settings initialization', () => {
 ### Sensitive Data
 
 - **User email:** Stored in plaintext (not sensitive in local DB)
-- **No passwords:** Settings never contain credentials
-- **API keys:** Stored separately (not in Settings model)
+- **Agent tokens:** `settings.agent.token` **is** part of the Settings model and
+  is persisted in plaintext in the `agent_token` column. The same applies to the
+  WhatsApp and messaging tokens (`whatsapp_cloud_api_access_token`,
+  `messaging_telegram_bot_token`, and so on). They are protected by file
+  permissions, not encryption.
+- **File permissions are the boundary:** `~/.shep/` is created `0700`, so the
+  database is unreadable by other users on the machine.
+- Encrypting these fields at rest is listed under Future Enhancements below.
 
 ## Future Enhancements
 

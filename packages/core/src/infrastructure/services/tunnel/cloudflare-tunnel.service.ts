@@ -10,12 +10,23 @@
  * cloudflared separately.
  *
  * Security: A lightweight proxy HTTP server is started on a random port
- * that only forwards requests matching the allowed path prefix
- * (/api/webhooks) to the main app. The tunnel connects to this proxy,
- * not the main app server. All other paths return 404.
+ * that only forwards requests whose NORMALIZED path is one of
+ * ALLOWED_WEBHOOK_ROUTES. The tunnel connects to this proxy, not the main
+ * app server. Everything else returns 404.
+ *
+ * The normalization is load-bearing, not decoration. A `startsWith` prefix
+ * test was bypassable two ways at once: `/api/webhooks/../terminal` passes
+ * the prefix test, Node's http.request forwards the dot-segments verbatim,
+ * and Next.js resolves them during route matching — so the public
+ * *.trycloudflare.com URL was an unauthenticated front door to every route
+ * in the app. `/api/webhooks-admin/x` passed the same test by sharing a
+ * prefix without sharing a path segment. So: decode percent-encoding first,
+ * normalize the dot-segments ourselves, match an EXACT route, and forward
+ * the normalized path rather than whatever arrived on the request line.
  */
 
 import { createServer, request as httpRequest } from 'node:http';
+import { posix } from 'node:path';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type {
   ITunnelService,
@@ -24,7 +35,22 @@ import type {
 
 const TAG = '[CloudflareTunnel]';
 const STARTUP_TIMEOUT_MS = 30_000;
-const ALLOWED_PATH_PREFIX = '/api/webhooks';
+
+/**
+ * The exact routes reachable through the public tunnel.
+ *
+ * Only the GitHub receiver belongs here: it is the single URL shep registers
+ * with GitHub (`webhook-manager.service.ts` builds `<publicUrl>/api/webhooks/github`)
+ * and the only one an outside party ever needs to POST to. The remaining
+ * `/api/webhooks/*` routes — status, deliveries, repos/enable, repos/disable,
+ * repos/status — are called by the local web UI over localhost; publishing
+ * them would hand anyone who learns the tunnel URL the delivery history,
+ * every registered repository path, and a webhook registration endpoint.
+ */
+const ALLOWED_WEBHOOK_ROUTES: readonly string[] = ['/api/webhooks/github'];
+
+/** Origin used only to parse a request target into path + query. */
+const REQUEST_TARGET_BASE = 'http://tunnel.invalid';
 
 export interface CloudflareTunnelDeps {
   createTunnel: (origin: string) => TunnelLike | Promise<TunnelLike>;
@@ -93,7 +119,8 @@ export class CloudflareTunnelService implements ITunnelService {
           clearTimeout(timeout);
           // eslint-disable-next-line no-console
           console.log(
-            `${TAG} Tunnel ready: ${url} (proxying ${ALLOWED_PATH_PREFIX}/* to port ${localPort})`
+            `${TAG} Tunnel ready: ${url} ` +
+              `(proxying ${ALLOWED_WEBHOOK_ROUTES.join(', ')} to port ${localPort})`
           );
           resolve(url);
         } else if (url !== this.publicUrl) {
@@ -152,26 +179,27 @@ export class CloudflareTunnelService implements ITunnelService {
 
   /**
    * Start a lightweight HTTP proxy on a random port that only forwards
-   * requests with paths starting with ALLOWED_PATH_PREFIX to the main app.
+   * requests whose normalized path is in ALLOWED_WEBHOOK_ROUTES.
    * Everything else gets a 404.
    */
   private startProxyServer(targetPort: number): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-        const url = req.url ?? '';
+        const forwardPath = resolveAllowedPath(req.url ?? '');
 
-        if (!url.startsWith(ALLOWED_PATH_PREFIX)) {
+        if (forwardPath === null) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Not found' }));
           return;
         }
 
-        // Proxy the request to the main app
+        // Proxy the request to the main app, forwarding the path we matched
+        // on — never the raw request target.
         const proxyReq = httpRequest(
           {
             hostname: 'localhost',
             port: targetPort,
-            path: url,
+            path: forwardPath,
             method: req.method,
             headers: req.headers,
           },
@@ -251,4 +279,42 @@ export class CloudflareTunnelService implements ITunnelService {
       }
     }
   }
+}
+
+/**
+ * Resolve a raw request target to the canonical path we are willing to
+ * forward, or `null` when it is not an allowlisted route.
+ *
+ * Order matters: percent-decode BEFORE normalizing, because `%2e%2e` and
+ * `..%2f` are the encoded spellings of the same traversal and a normalize
+ * that runs first would leave them untouched. Backslashes are folded to
+ * forward slashes first as well — they are an ordinary character to
+ * `posix.normalize` but a separator to some routers.
+ *
+ * A path that decodes to something still containing `%` (double encoding)
+ * simply fails the exact match, which is the correct answer.
+ */
+export function resolveAllowedPath(requestTarget: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(requestTarget, REQUEST_TARGET_BASE);
+  } catch {
+    return null;
+  }
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(parsed.pathname);
+  } catch {
+    // Malformed percent-encoding — not a route we can reason about.
+    return null;
+  }
+
+  const normalized = posix.normalize(decoded.replace(/\\/g, '/'));
+  const withoutTrailingSlash =
+    normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+
+  if (!ALLOWED_WEBHOOK_ROUTES.includes(withoutTrailingSlash)) return null;
+
+  return `${withoutTrailingSlash}${parsed.search}`;
 }

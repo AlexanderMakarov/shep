@@ -1,0 +1,194 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtemp, mkdir, readFile, writeFile, symlink, lstat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { createTestHost, createTestLibrary, resolveVirtualPath } from '@typespec/compiler/testing';
+import { removeDirWithRetry } from '../../helpers/remove-dir.helper.js';
+
+const require = createRequire(import.meta.url);
+const electronRequire = createRequire(require.resolve('../../../packages/electron/package.json'));
+const extractRequire = createRequire(electronRequire.resolve('electron'));
+const extract = extractRequire('extract-zip') as (
+  path: string,
+  options: { dir: string }
+) => Promise<void>;
+const zipRequire = createRequire(extractRequire.resolve('extract-zip'));
+const crc32 = createRequire(zipRequire.resolve('yauzl'))('buffer-crc32') as {
+  unsigned(data: Buffer): number;
+};
+
+// Stored ZIP entries preserve duplicates and Unix symlink attributes, which
+// common archive builders normalize away. All writes stay in throwaway dirs.
+function zip(entries: { name: string; body: string; mode?: number }[]): Buffer {
+  const files: Buffer[] = [];
+  const directory: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const body = Buffer.from(entry.body);
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt32LE(crc32.unsigned(body), 14);
+    header.writeUInt32LE(body.length, 18);
+    header.writeUInt32LE(body.length, 22);
+    header.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50);
+    central.writeUInt16LE(0x0314, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc32.unsigned(body), 16);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(body.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(((entry.mode ?? 0o100644) << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+    files.push(header, name, body);
+    directory.push(central, name);
+    offset += header.length + name.length + body.length;
+  }
+  const central = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...files, central, end]);
+}
+
+describe('dependency archive containment', () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0)) removeDirWithRetry(root);
+  });
+
+  async function fixture() {
+    const root = await mkdtemp(join(tmpdir(), 'shep-dependency-'));
+    roots.push(root);
+    const dir = join(root, 'output');
+    const archive = join(root, 'input.zip');
+    const victim = join(root, 'outside.txt');
+    await mkdir(dir);
+    await writeFile(victim, 'original');
+    return { root, dir, archive, victim };
+  }
+
+  it.each(['../outside.txt', '/tmp/shep-outside', '..\\outside.txt'])(
+    'rejects an escaping symlink target %s',
+    async (target) => {
+      const { dir, archive, victim } = await fixture();
+      await writeFile(archive, zip([{ name: 'link', body: target, mode: 0o120777 }]));
+      await expect(extract(archive, { dir })).rejects.toThrow();
+      await expect(readFile(victim, 'utf8')).resolves.toBe('original');
+      await expect(lstat(join(dir, 'link'))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+  );
+
+  it('does not overwrite an existing symlink destination', async () => {
+    const { dir, archive, victim } = await fixture();
+    await symlink(victim, join(dir, 'link'));
+    await writeFile(archive, zip([{ name: 'link', body: 'overwritten' }]));
+    await expect(extract(archive, { dir })).rejects.toThrow();
+    await expect(readFile(victim, 'utf8')).resolves.toBe('original');
+  });
+
+  it('rejects a symlink followed by a file at the same path', async () => {
+    const { dir, archive, victim } = await fixture();
+    await writeFile(
+      archive,
+      zip([
+        { name: 'link', body: '../outside.txt', mode: 0o120777 },
+        { name: 'link', body: 'overwritten' },
+      ])
+    );
+    await expect(extract(archive, { dir })).rejects.toThrow();
+    await expect(readFile(victim, 'utf8')).resolves.toBe('original');
+  });
+
+  it('rejects a target that escapes through a dangling existing symlink', async () => {
+    const { root, dir, archive } = await fixture();
+    await symlink(join(root, 'not-created.txt'), join(dir, 'existing'));
+    await writeFile(archive, zip([{ name: 'link', body: 'existing', mode: 0o120777 }]));
+    await expect(extract(archive, { dir })).rejects.toThrow();
+    await expect(lstat(join(dir, 'link'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not create directories through an existing external directory symlink', async () => {
+    const { root, dir, archive } = await fixture();
+    await mkdir(join(root, 'outside'));
+    await symlink(join(root, 'outside'), join(dir, 'linked'), 'dir');
+    await writeFile(archive, zip([{ name: 'linked/new/file.txt', body: 'unsafe' }]));
+    await expect(extract(archive, { dir })).rejects.toThrow();
+    await expect(lstat(join(root, 'outside/new'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('extracts ordinary files and internal relative symlinks', async () => {
+    const { dir, archive } = await fixture();
+    await writeFile(
+      archive,
+      zip([
+        { name: 'nested/file.txt', body: 'safe' },
+        { name: 'link', body: 'nested/file.txt', mode: 0o120777 },
+      ])
+    );
+    await extract(archive, { dir });
+    await expect(readFile(join(dir, 'link'), 'utf8')).resolves.toBe('safe');
+  });
+});
+
+describe('dependency TypeSpec output containment', () => {
+  const outputDir = resolveVirtualPath('safe-output');
+  async function compileVersion(version: string) {
+    const openapiRequire = createRequire(require.resolve('@typespec/openapi3'));
+    const names = [
+      '@typespec/http',
+      '@typespec/openapi',
+      '@typespec/versioning',
+      '@typespec/openapi3',
+    ];
+    const host = await createTestHost({
+      libraries: names.map((name) =>
+        createTestLibrary({
+          name,
+          packageRoot: join(dirname(openapiRequire.resolve(name)), '../..'),
+        })
+      ),
+    });
+    host.addTypeSpecFile(
+      'main.tsp',
+      `
+      import "@typespec/http";
+      import "@typespec/versioning";
+      using TypeSpec.Http;
+      using TypeSpec.Versioning;
+      @service @versioned(Versions) namespace Example;
+      enum Versions { v1: ${JSON.stringify(version)} }
+      @get op hello(): string;
+    `
+    );
+    await host.compile('main.tsp', {
+      noEmit: false,
+      emit: ['@typespec/openapi3'],
+      outputDir,
+    });
+    return host.fs;
+  }
+
+  it.each(['../../../../escaped', '..\\..\\escaped', '..'])(
+    'refuses to interpolate an unsafe version %s into an output path',
+    async (version) => {
+      await expect(compileVersion(version)).rejects.toThrow(/version.*path/i);
+    }
+  );
+
+  it('still emits a normal versioned OpenAPI document', async () => {
+    const files = await compileVersion('2026-09-20-preview');
+    const outputs = [...files.keys()].filter(
+      (file) => file.startsWith(`${outputDir}/`) && file.endsWith('.yaml')
+    );
+    expect(outputs).toHaveLength(1);
+    expect(files.get(outputs[0])).toContain('openapi: 3.0.0');
+  });
+});

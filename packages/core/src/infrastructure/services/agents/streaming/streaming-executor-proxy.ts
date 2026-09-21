@@ -43,6 +43,7 @@ export class StreamingExecutorProxy implements IAgentExecutor {
 
   async execute(prompt: string, options?: AgentExecutionOptions): Promise<AgentExecutionResult> {
     let result = '';
+    let sessionId: string | undefined;
 
     try {
       for await (const event of this.inner.executeStream(prompt, withStreamProgress(options))) {
@@ -50,6 +51,10 @@ export class StreamingExecutorProxy implements IAgentExecutor {
 
         if (event.type === 'result') {
           result = event.content;
+          // The id identifies the conversation, so it travels beside the answer
+          // rather than inside it — otherwise a caller resuming a session would
+          // have to guess which of the two `content` holds.
+          if (event.sessionId) sessionId = event.sessionId;
         }
       }
     } catch (error) {
@@ -63,7 +68,7 @@ export class StreamingExecutorProxy implements IAgentExecutor {
     }
 
     this.channel.close();
-    return { result };
+    return sessionId ? { result, sessionId } : { result };
   }
 
   async *executeStream(

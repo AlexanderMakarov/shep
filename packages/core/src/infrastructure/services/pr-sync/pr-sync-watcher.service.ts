@@ -30,6 +30,8 @@ import type {
 import type { INotificationService } from '../../../application/ports/output/services/notification-service.interface.js';
 import type { IGitForkService } from '../../../application/ports/output/services/git-fork-service.interface.js';
 import type Database from 'better-sqlite3';
+import type { ILogger } from '../../../application/ports/output/services/logger.interface.js';
+import { ConsoleLogger } from '../logging/console-logger.js';
 
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const LOCK_TTL_MS = 60_000;
@@ -56,6 +58,7 @@ export class PrSyncWatcherService {
   private readonly gitPrService: IGitPrService;
   private readonly notificationService: INotificationService;
   private readonly gitForkService: IGitForkService | null;
+  private readonly logger: ILogger;
   private readonly pollIntervalMs: number;
   private readonly trackedFeatures = new Map<string, PrWatcherState>();
   private readonly skippedRepos = new Set<string>();
@@ -72,13 +75,22 @@ export class PrSyncWatcherService {
     notificationService: INotificationService,
     pollIntervalMs: number = DEFAULT_POLL_INTERVAL_MS,
     db: Database.Database | null = null,
-    gitForkService: IGitForkService | null = null
+    gitForkService: IGitForkService | null = null,
+    /**
+     * Where this watcher's output goes. It ran inside the daemon and wrote
+     * straight to `console.*` with a per-line `no-console` suppression on
+     * each of 17 calls, so its output could not be levelled, filtered or
+     * redacted. Defaults to a ConsoleLogger so existing callers are
+     * unaffected; DI passes the container's ILogger.
+     */
+    logger: ILogger = new ConsoleLogger()
   ) {
     this.featureRepo = featureRepo;
     this.agentRunRepo = agentRunRepo;
     this.gitPrService = gitPrService;
     this.notificationService = notificationService;
     this.gitForkService = gitForkService;
+    this.logger = logger;
     this.pollIntervalMs = pollIntervalMs;
     this.db = db;
     this.processId = `${process.pid}-${Date.now()}`;
@@ -91,8 +103,7 @@ export class PrSyncWatcherService {
   start(): void {
     if (this.intervalId !== null) return;
 
-    // eslint-disable-next-line no-console
-    console.log(`${TAG} Starting (poll every ${this.pollIntervalMs}ms)`);
+    this.logger.info(`${TAG} Starting (poll every ${this.pollIntervalMs}ms)`);
 
     // Run first poll immediately
     void this.poll();
@@ -106,8 +117,7 @@ export class PrSyncWatcherService {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      // eslint-disable-next-line no-console
-      console.log(`${TAG} Stopped`);
+      this.logger.info(`${TAG} Stopped`);
     }
   }
 
@@ -186,8 +196,7 @@ export class PrSyncWatcherService {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Poll failed: ${msg}`);
+      this.logger.warn(`${TAG} Poll failed: ${msg}`);
     }
   }
 
@@ -196,8 +205,7 @@ export class PrSyncWatcherService {
     if (until === undefined) return false;
     if (Date.now() >= until) {
       this.rateLimitedUntil.delete(repoPath);
-      // eslint-disable-next-line no-console
-      console.log(`${TAG} Rate limit backoff expired for ${repoPath}`);
+      this.logger.info(`${TAG} Rate limit backoff expired for ${repoPath}`);
       return false;
     }
     return true;
@@ -208,8 +216,7 @@ export class PrSyncWatcherService {
     if (msg.includes('API rate limit exceeded') || msg.includes('rate limit')) {
       const backoffUntil = Date.now() + RATE_LIMIT_BACKOFF_MS;
       this.rateLimitedUntil.set(repoPath, backoffUntil);
-      // eslint-disable-next-line no-console
-      console.warn(
+      this.logger.warn(
         `${TAG} Rate limited for ${repoPath}, backing off until ${new Date(backoffUntil).toISOString()}`
       );
     }
@@ -222,8 +229,7 @@ export class PrSyncWatcherService {
     // Skip repos without a git remote — gh pr list will always fail
     try {
       if (!(await this.gitPrService.hasRemote(repoPath))) {
-        // eslint-disable-next-line no-console
-        console.log(`${TAG} Skipping ${repoPath} (no git remote)`);
+        this.logger.info(`${TAG} Skipping ${repoPath} (no git remote)`);
         this.skippedRepos.add(repoPath);
         return;
       }
@@ -237,8 +243,7 @@ export class PrSyncWatcherService {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof Error) this.handleRateLimitError(repoPath, error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} listPrStatuses failed for ${repoPath}: ${msg}`);
+      this.logger.warn(`${TAG} listPrStatuses failed for ${repoPath}: ${msg}`);
       return;
     }
 
@@ -275,8 +280,7 @@ export class PrSyncWatcherService {
       const matchedPr = statusByBranch.get(feature.branch);
       if (matchedPr?.state !== PrStatus.Open) return;
 
-      // eslint-disable-next-line no-console
-      console.log(
+      this.logger.info(
         `${TAG} Discovered PR #${matchedPr.number} for "${feature.name}" via branch "${feature.branch}"`
       );
 
@@ -327,8 +331,7 @@ export class PrSyncWatcherService {
     if (prStatusInfo && prStatusInfo.state !== tracked.prStatus) {
       const newPrStatus = prStatusInfo.state;
 
-      // eslint-disable-next-line no-console
-      console.log(
+      this.logger.info(
         `${TAG} PR #${pr.number} status changed: ${tracked.prStatus} -> ${newPrStatus} for "${feature.name}"`
       );
 
@@ -339,8 +342,7 @@ export class PrSyncWatcherService {
         // transitioned this feature to Maintain and performed cleanup.
         const freshFeature = await this.featureRepo.findById(feature.id);
         if (freshFeature?.lifecycle === SdlcLifecycle.Maintain) {
-          // eslint-disable-next-line no-console
-          console.log(
+          this.logger.info(
             `${TAG} Feature "${feature.name}" already in Maintain — skipping duplicate transition`
           );
           tracked.prStatus = newPrStatus;
@@ -379,8 +381,7 @@ export class PrSyncWatcherService {
     if (prStatusInfo?.mergeable !== undefined) {
       const newMergeable = prStatusInfo.mergeable;
       if (newMergeable !== tracked.mergeable) {
-        // eslint-disable-next-line no-console
-        console.log(
+        this.logger.info(
           `${TAG} Mergeable status changed: ${tracked.mergeable ?? 'unknown'} -> ${newMergeable} for "${feature.name}"`
         );
 
@@ -411,8 +412,7 @@ export class PrSyncWatcherService {
       const newCiStatus = CI_STATUS_MAP[ciResult.status] ?? CiStatus.Pending;
 
       if (newCiStatus !== tracked.ciStatus) {
-        // eslint-disable-next-line no-console
-        console.log(
+        this.logger.info(
           `${TAG} CI status changed: ${tracked.ciStatus ?? 'none'} -> ${newCiStatus} for "${feature.name}"`
         );
 
@@ -444,8 +444,7 @@ export class PrSyncWatcherService {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof Error) this.handleRateLimitError(feature.repositoryPath, error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} getCiStatus failed for "${feature.name}": ${msg}`);
+      this.logger.warn(`${TAG} getCiStatus failed for "${feature.name}": ${msg}`);
     }
 
     if (needsUpdate) {
@@ -481,8 +480,9 @@ export class PrSyncWatcherService {
 
     const upstreamRepo = this.extractUpstreamRepo(feature.pr.upstreamPrUrl);
     if (!upstreamRepo) {
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Could not extract upstream repo from URL: ${feature.pr.upstreamPrUrl}`);
+      this.logger.warn(
+        `${TAG} Could not extract upstream repo from URL: ${feature.pr.upstreamPrUrl}`
+      );
       return;
     }
 
@@ -494,8 +494,7 @@ export class PrSyncWatcherService {
       );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(
+      this.logger.warn(
         `${TAG} getUpstreamPrStatus failed for "${feature.name}" (${upstreamRepo}#${feature.pr.upstreamPrNumber}): ${msg}`
       );
       return;
@@ -521,8 +520,7 @@ export class PrSyncWatcherService {
       return;
     }
 
-    // eslint-disable-next-line no-console
-    console.log(
+    this.logger.info(
       `${TAG} Upstream PR #${feature.pr.upstreamPrNumber} status changed: ${previousStatus} -> ${upstreamStatus} for "${feature.name}"`
     );
 
@@ -567,8 +565,7 @@ export class PrSyncWatcherService {
       await this.agentRunRepo.updateStatus(feature.agentRunId, AgentRunStatus.completed);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // eslint-disable-next-line no-console
-      console.warn(`${TAG} Failed to complete agent run ${feature.agentRunId}: ${msg}`);
+      this.logger.warn(`${TAG} Failed to complete agent run ${feature.agentRunId}: ${msg}`);
     }
   }
 
@@ -611,7 +608,8 @@ export function initializePrSyncWatcher(
   notificationService: INotificationService,
   pollIntervalMs?: number,
   db?: Database.Database | null,
-  gitForkService?: IGitForkService | null
+  gitForkService?: IGitForkService | null,
+  logger?: ILogger
 ): void {
   if (watcherInstance !== null) {
     throw new Error('PR sync watcher already initialized. Cannot re-initialize.');
@@ -624,7 +622,8 @@ export function initializePrSyncWatcher(
     notificationService,
     pollIntervalMs,
     db ?? null,
-    gitForkService ?? null
+    gitForkService ?? null,
+    logger ?? new ConsoleLogger()
   );
 }
 

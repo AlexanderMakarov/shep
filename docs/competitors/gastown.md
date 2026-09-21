@@ -66,7 +66,7 @@ Shep makes Stage 8 accessible to developers at Stages 4-6 by providing the orche
 | ----------------- | ------------------------------ | ----------------------------------------- |
 | **Philosophy**    | Maximum parallelism, raw power | Structured lifecycle, controlled autonomy |
 | **Agent count**   | 20-30 parallel                 | 1 per feature (parallel via worktrees)    |
-| **Agent support** | Claude Code only               | Claude Code, Cursor CLI, Gemini CLI       |
+| **Agent support** | Claude Code only               | Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline + API providers |
 | **Workflow**      | Ad-hoc task assignment         | Spec-driven lifecycle                     |
 | **Human control** | Minimal (YOLO-oriented)        | Configurable (3 gates or hands-free)      |
 | **Dashboard**     | Not highlighted                | Interactive React Flow graph              |

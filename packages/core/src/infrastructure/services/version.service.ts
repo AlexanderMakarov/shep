@@ -5,14 +5,19 @@
  * Follows Clean Architecture: Infrastructure layer implements data access.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { arch, platform, release } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { injectable } from 'tsyringe';
-
 import { DEFAULT_VERSION_INFO } from '../../domain/value-objects/version-info.js';
 import type { VersionInfo } from '../../domain/value-objects/version-info.js';
+import {
+  GIT_SHA_ENV_VARS,
+  SHORT_GIT_SHA_LENGTH,
+  type BuildIdentity,
+} from '../../domain/value-objects/build-identity.js';
 
 // Re-export for backward compatibility
 export type { VersionInfo } from '../../domain/value-objects/version-info.js';
@@ -53,15 +58,53 @@ function findPackageJson(startDir: string): string | null {
   return null;
 }
 
+/** Max time (ms) the git SHA lookup may block for. */
+const GIT_SHA_TIMEOUT_MS = 1000;
+
+/** Arguments that ask git for the short SHA of HEAD. */
+const GIT_SHORT_SHA_ARGS = ['rev-parse', '--short', 'HEAD'] as const;
+
+/** Environment shape this service reads — a plain object in tests. */
+export type VersionEnvironment = Record<string, string | undefined>;
+
+export interface VersionServiceOptions {
+  /** Environment consulted for a baked-in commit SHA. Defaults to `process.env`. */
+  env?: VersionEnvironment;
+  /**
+   * Reads the short SHA from git. Injected so tests never shell out and so
+   * a packaged install with no git on PATH degrades to `null` instead of
+   * throwing. May throw; the caller treats a throw as "unavailable".
+   */
+  readGitSha?: () => string;
+}
+
+/**
+ * Read the short SHA of HEAD from the git checkout this file lives in.
+ *
+ * Bounded by a timeout and with stderr discarded: a non-repository install
+ * must cost a failed exec, not a hung `shep doctor`.
+ */
+function readGitShaFromCheckout(): string {
+  return execFileSync('git', [...GIT_SHORT_SHA_ARGS], {
+    cwd: dirname(fileURLToPath(import.meta.url)),
+    encoding: 'utf-8',
+    timeout: GIT_SHA_TIMEOUT_MS,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+}
+
 /**
  * Service for reading version information from package.json
  */
-@injectable()
 export class VersionService {
   private readonly versionInfo: VersionInfo;
+  private readonly env: VersionEnvironment;
+  private readonly readGitSha: () => string;
 
-  constructor() {
+  constructor(options: VersionServiceOptions = {}) {
     this.versionInfo = this.loadVersionInfo();
+    this.env = options.env ?? (process.env as VersionEnvironment);
+    this.readGitSha = options.readGitSha ?? readGitShaFromCheckout;
   }
 
   private loadVersionInfo(): VersionInfo {
@@ -107,6 +150,49 @@ export class VersionService {
   getVersion(): VersionInfo {
     return this.versionInfo;
   }
+
+  /**
+   * Get the full build identity: CLI version, Node version, OS and commit.
+   *
+   * This is what `shep doctor` prints at the top so a bug report carries
+   * the build it reproduced on. Never throws — every field degrades to a
+   * value that reads correctly in the output.
+   */
+  getBuildIdentity(): BuildIdentity {
+    return {
+      cliVersion: this.versionInfo.version,
+      nodeVersion: process.version,
+      platform: platform(),
+      osRelease: release(),
+      arch: arch(),
+      gitSha: this.resolveGitSha(),
+    };
+  }
+
+  /**
+   * Environment first (a packaged build or CI has no git checkout to ask),
+   * then git itself. A full 40-character SHA is shortened so the line stays
+   * readable.
+   */
+  private resolveGitSha(): string | null {
+    for (const name of GIT_SHA_ENV_VARS) {
+      const shortened = shortenSha(this.env[name]);
+      if (shortened !== null) return shortened;
+    }
+    try {
+      return shortenSha(this.readGitSha());
+    } catch {
+      // No git on PATH, not a repository, or the lookup timed out.
+      return null;
+    }
+  }
+}
+
+/** Trim and shorten a SHA; `null` when there is nothing usable. */
+function shortenSha(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? '';
+  if (trimmed.length === 0) return null;
+  return trimmed.slice(0, SHORT_GIT_SHA_LENGTH);
 }
 
 /**

@@ -35,12 +35,13 @@ states you covered (Default / Loading / Empty / Error).
 <!-- Tick everything that applies; remove items that genuinely don't. -->
 
 - [ ] `pnpm lint` passes
+- [ ] `pnpm format:check` passes (CI runs it; `pnpm format` fixes it)
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test:unit` and `pnpm test:int` pass
 - [ ] `pnpm build` succeeds
 - [ ] (UI only) `pnpm build:storybook` succeeds and every new component has a colocated `.stories.tsx` covering Default / Loading / Empty / Error
 - [ ] (Domain changes) `pnpm tsp:compile` ran and `packages/core/src/domain/generated/output.ts` is committed
-- [ ] (New use case) Tests landed RED-first per the [TDD guide](./docs/development/tdd-guide.md)
-- [ ] No `application/` or `presentation/` file imports anything from `infrastructure/`
+- [ ] (New use case) Tests landed RED-first per the [TDD guide](../docs/development/tdd-guide.md)
+- [ ] No `domain/` or `application/` file imports anything from `infrastructure/` (presentation may, but only to resolve the DI container — business logic still goes through a use case)
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) — releasing types (`feat`, `fix`) used for user-visible changes
-- [ ] Updated [LESSONS.md](./LESSONS.md) if I learned something a future contributor should know
+- [ ] Updated [LESSONS.md](../LESSONS.md) if I learned something a future contributor should know

@@ -33,3 +33,14 @@ export const RichContent: Story = {
     ),
   },
 };
+
+export const Compact: Story = {
+  args: Default.args,
+  decorators: [
+    (Story) => (
+      <div className="h-[650px] w-[390px]">
+        <Story />
+      </div>
+    ),
+  ],
+};

@@ -46,7 +46,7 @@ Task understanding → Planning → Implementation → Testing → Debugging →
 | **Planning**      | Internal (opaque)                | Visible, reviewable plan artifacts  |
 | **Parallel work** | Single agent per task            | Multiple features via worktrees     |
 | **Data location** | Cloud (Cognition servers)        | 100% local (`~/.shep/`)             |
-| **Agent choice**  | Proprietary model                | Claude Code, Cursor CLI, Gemini CLI |
+| **Agent choice**  | Proprietary model                | Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline + API providers |
 | **Open source**   | No                               | Yes (MIT)                           |
 | **Pricing**       | ~$500/mo                         | Free                                |
 

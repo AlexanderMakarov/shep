@@ -108,23 +108,44 @@ export class AdmitQueuedFeaturesUseCase {
   }
 
   /**
-   * Clear the queue marker, transition the feature, and start its agent.
+   * Claim the queue slot, transition the feature, and start its agent.
    *
-   * The marker is cleared BEFORE the spawn so a spawn failure cannot leave the
-   * feature both queued and running; a feature that fails to spawn surfaces as
-   * a failed agent run, which the user can see and retry, rather than silently
-   * re-entering the queue on the next sweep.
+   * The claim is what makes this safe to run in several processes at once. The
+   * daemon sweep, a dashboard load and a worker finishing a feature all trigger
+   * a drain, and all three can see the same queued feature; an unconditional
+   * update followed by a spawn would give that ONE feature TWO detached
+   * workers in ONE git worktree, sharing an agent run and a log file, doing
+   * concurrent git operations on one branch — and would quietly exceed the cap.
+   *
+   * The claim also clears the queue marker BEFORE the spawn, so a spawn failure
+   * cannot leave the feature both queued and running: a feature that fails to
+   * spawn surfaces as a failed agent run the user can see and retry, rather
+   * than silently re-entering the queue on the next sweep.
    */
   private async admit(feature: Feature): Promise<boolean> {
+    const targetLifecycle = this.targetLifecycle(feature);
+    const now = new Date();
+
+    const claimed = await this.capacity.claimSlot({
+      featureId: feature.id,
+      targetLifecycle,
+      // Losing this condition is the whole defect: whoever clears `queuedAt`
+      // first owns the spawn, and everyone else gets `false` and moves on.
+      requireQueued: true,
+      now,
+    });
+    if (!claimed) {
+      return false;
+    }
+
     const parent = feature.parentId ? await this.featureRepo.findById(feature.parentId) : null;
 
     const admitted: Feature = {
       ...feature,
-      lifecycle: this.targetLifecycle(feature),
-      updatedAt: new Date(),
+      lifecycle: targetLifecycle,
+      updatedAt: now,
     };
     delete admitted.queuedAt;
-    await this.featureRepo.update(admitted);
 
     const result = await this.spawnFeatureAgent.execute({
       feature: admitted,

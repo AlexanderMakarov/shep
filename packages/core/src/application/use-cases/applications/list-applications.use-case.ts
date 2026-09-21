@@ -7,7 +7,7 @@
 
 import { injectable, inject } from 'tsyringe';
 import type { Application } from '../../../domain/generated/output.js';
-import { WorkflowStepStatus } from '../../../domain/generated/output.js';
+import { ApplicationStatus, WorkflowStepStatus } from '../../../domain/generated/output.js';
 import type { IApplicationRepository } from '../../ports/output/repositories/application-repository.interface.js';
 import type { IWorkflowStepRepository } from '../../ports/output/repositories/workflow-step-repository.interface.js';
 import { featureIdForApplication } from '../../../domain/shared/feature-id.js';
@@ -45,6 +45,10 @@ export class ListApplicationsUseCase {
     const results: ApplicationWithStatus[] = [];
 
     for (const app of apps) {
+      if (app.status === ApplicationStatus.Error) {
+        results.push({ ...app, effectiveStatus: 'failed' });
+        continue;
+      }
       if (app.setupComplete) {
         results.push({ ...app, effectiveStatus: 'ready' });
         continue;
@@ -62,7 +66,7 @@ function deriveEffectiveStatus(
   app: Application,
   steps: { status: WorkflowStepStatus }[]
 ): ApplicationEffectiveStatus {
-  if (app.status === 'Error') return 'failed';
+  if (app.status === ApplicationStatus.Error) return 'failed';
   if (steps.length === 0) return 'ready';
 
   if (steps.some((s) => s.status === WorkflowStepStatus.failed)) return 'failed';

@@ -46,13 +46,13 @@ export function WebhookDeliveryTable({ deliveries }: WebhookDeliveryTableProps) 
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-sm font-medium">
             Delivery History ({filtered.length})
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-8 w-[120px]">
+              <SelectTrigger aria-label="Delivery status" className="h-9 w-[120px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -63,7 +63,7 @@ export function WebhookDeliveryTable({ deliveries }: WebhookDeliveryTableProps) 
               </SelectContent>
             </Select>
             <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
-              <SelectTrigger className="h-8 w-[150px]">
+              <SelectTrigger aria-label="Event type" className="h-9 w-[150px]">
                 <SelectValue placeholder="Event Type" />
               </SelectTrigger>
               <SelectContent>

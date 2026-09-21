@@ -1,4 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react';
+import { useMemo } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { DeploymentStatusProvider } from '@/hooks/deployment-status-provider';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { ApplicationCard } from './application-card';
 import { ApplicationStatus } from '@shepai/core/domain/generated/output';
 import type { ApplicationWithStatus } from '@shepai/core/application/use-cases/applications/list-applications.use-case';
@@ -26,11 +30,23 @@ const meta: Meta<typeof ApplicationCard> = {
     backgrounds: { default: 'canvas' },
   },
   decorators: [
-    (Story) => (
-      <div style={{ maxWidth: 360 }}>
-        <Story />
-      </div>
-    ),
+    (Story) => {
+      const client = useMemo(
+        () => new QueryClient({ defaultOptions: { queries: { enabled: false, retry: false } } }),
+        []
+      );
+      return (
+        <QueryClientProvider client={client}>
+          <DeploymentStatusProvider initialDeployments={[]}>
+            <TooltipProvider>
+              <div style={{ maxWidth: 360 }}>
+                <Story />
+              </div>
+            </TooltipProvider>
+          </DeploymentStatusProvider>
+        </QueryClientProvider>
+      );
+    },
   ],
   tags: ['autodocs'],
 };
@@ -44,13 +60,23 @@ export const Idle: Story = {
 
 export const Active: Story = {
   args: {
-    application: { ...baseApp, status: ApplicationStatus.Active, name: 'Running App' },
+    application: {
+      ...baseApp,
+      status: ApplicationStatus.Active,
+      effectiveStatus: 'building',
+      name: 'Running App',
+    },
   },
 };
 
 export const ErrorState: Story = {
   args: {
-    application: { ...baseApp, status: ApplicationStatus.Error, name: 'Broken App' },
+    application: {
+      ...baseApp,
+      status: ApplicationStatus.Error,
+      effectiveStatus: 'failed',
+      name: 'Broken App',
+    },
   },
 };
 

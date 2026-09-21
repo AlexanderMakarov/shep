@@ -4,13 +4,13 @@ Guides for using Shep AI CLI effectively.
 
 ## Contents
 
-| Guide                                        | Description                    |
-| -------------------------------------------- | ------------------------------ |
-| [getting-started.md](./getting-started.md)   | Installation and first run     |
-| [configuration.md](./configuration.md)       | Authentication and settings    |
-| [cli-commands.md](./cli-commands.md)         | Complete CLI command reference |
-| [web-ui.md](./web-ui.md)                     | Web interface usage            |
-| [langgraph-agents.md](./langgraph-agents.md) | LangGraph agent system guide   |
+| Guide                                                                | Description                             |
+| -------------------------------------------------------------------- | --------------------------------------- |
+| [getting-started.md](./getting-started.md)                           | Installation and first run              |
+| [configuration.md](./configuration.md)                               | Settings, agents, and env vars          |
+| [cli-commands.md](./cli-commands.md)                                 | Complete CLI command reference          |
+| [web-ui.md](./web-ui.md)                                             | Web interface usage                     |
+| [langgraph-agents.md](./langgraph-agents.md)                         | LangGraph agent system guide            |
 | [custom-worktree-provisioning.md](./custom-worktree-provisioning.md) | Custom worktree create / setup commands |
 
 ## Quick Start
@@ -26,7 +26,8 @@ cd ~/projects/my-app
 shep
 ```
 
-This launches the setup wizard on first run, then opens `http://localhost:4050/`.
+This starts the Shep daemon and opens `http://localhost:4050/`. First-run setup — picking an
+agent and a model — happens there, in the browser.
 
 ## Guide Categories
 

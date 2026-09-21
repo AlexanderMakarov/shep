@@ -55,15 +55,15 @@ describe('buildCommitPushPrPrompt — PR target resolution', () => {
       upstreamTarget
     );
     expect(prompt).toContain(
-      'gh pr create --repo shep-ai/shep --base main --head kevinnguyenhoang91:fix/pr_upstream'
+      'gh pr create --draft --repo shep-ai/shep --base main --head kevinnguyenhoang91:fix/pr_upstream'
     );
     expect(prompt).toContain('MUST be created on `shep-ai/shep` (upstream)');
-    expect(prompt).not.toContain('gh pr create --base main --head fix/pr_upstream ');
+    expect(prompt).not.toContain('gh pr create --draft --base main --head fix/pr_upstream ');
   });
 
   it('keeps the origin instruction byte-identical when no target is resolved', () => {
     const prompt = buildCommitPushPrPrompt(baseState(), 'feat/test', 'main', undefined, null);
-    expect(prompt).toContain('gh pr create --base main --head feat/test');
+    expect(prompt).toContain('gh pr create --draft --base main --head feat/test');
     expect(prompt).not.toContain('--repo');
     expect(prompt).not.toContain('upstream');
   });
@@ -71,7 +71,7 @@ describe('buildCommitPushPrPrompt — PR target resolution', () => {
   it('preserves current behavior when prTarget argument is omitted entirely', () => {
     const withArg = buildCommitPushPrPrompt(baseState(), 'feat/test', 'main', undefined, null);
     const withoutArg = buildCommitPushPrPrompt(baseState(), 'feat/test', 'main');
-    expect(withoutArg).toContain('gh pr create --base main --head feat/test');
+    expect(withoutArg).toContain('gh pr create --draft --base main --head feat/test');
     expect(withoutArg).not.toContain('--repo');
     expect(withoutArg).toBe(withArg);
   });

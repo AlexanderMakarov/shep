@@ -47,8 +47,8 @@ function Chip({
 }) {
   const toneClass = {
     muted: 'text-muted-foreground',
-    success: 'text-emerald-600 dark:text-emerald-400',
-    warning: 'text-amber-600 dark:text-amber-400',
+    success: 'text-emerald-700 dark:text-emerald-400',
+    warning: 'text-amber-700 dark:text-amber-400',
     danger: 'text-destructive',
   }[tone];
 

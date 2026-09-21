@@ -61,19 +61,46 @@ Reusable prompt configurations are extracted to separate files:
 
 ```typescript
 // src/presentation/tui/prompts/agent-select.prompt.ts
-import { Separator } from '@inquirer/prompts';
+import { listAgentDescriptors } from '@shepai/core/domain/shared/agent-catalog.js';
 
-export const agentSelectConfig = {
-  message: 'Select your AI coding agent',
-  choices: [
-    { name: 'Claude Code', value: 'claude-code', description: '...' },
-    { name: 'Gemini CLI', value: 'gemini-cli', description: 'Google Gemini CLI agent' },
-    new Separator('--- Tracked in shep-ai/shep#618 ---'),
-    { name: 'Aider', value: 'aider', disabled: '(tracked in shep-ai/shep#618)' },
-    { name: 'Continue', value: 'continue', disabled: '(tracked in shep-ai/shep#618)' },
-  ],
-};
+export function createAgentSelectConfig() {
+  const t = getTuiI18n().t;
+  const choiceKey = (key: string, field: string) =>
+    `tui:prompts.selectAgent.choices.${key}.${field}`;
+
+  return {
+    message: t('tui:prompts.selectAgent.message'),
+    choices: listAgentDescriptors().map((descriptor) => {
+      const name = t(choiceKey(descriptor.i18nKey, 'name'), { defaultValue: descriptor.label });
+      if (!descriptor.supported) {
+        return {
+          name,
+          value: descriptor.type,
+          disabled: t(choiceKey(descriptor.i18nKey, 'disabled'), { defaultValue: '(Coming Soon)' }),
+        };
+      }
+      return {
+        name,
+        value: descriptor.type,
+        description: t(choiceKey(descriptor.i18nKey, 'description'), {
+          defaultValue: descriptor.description,
+        }),
+      };
+    }),
+    theme: shepTheme,
+  };
+}
 ```
+
+The choice list is **derived from `AGENT_CATALOG`**, never hand-written — a newly supported
+agent appears in the picker as soon as its catalog row exists, ordered by `descriptor.order`,
+and `supported: false` rows render disabled with a "Coming Soon" badge. The previous
+hand-maintained array had silently omitted `llmproxy`, leaving a working agent unreachable
+from `shep settings`.
+
+Translations are looked up under `tui:prompts.selectAgent.choices.<i18nKey>.{name,description,
+disabled}` across all nine locales in `translations/`, with the catalog's own English text as
+the fallback, so a locale that has not caught up never hides a working agent.
 
 ## Theming
 

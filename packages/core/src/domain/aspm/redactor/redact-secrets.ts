@@ -15,7 +15,7 @@
  * `Date.now()`, no `crypto` (callers pass `computeRawHash` a hasher).
  */
 
-import { SECRET_PATTERNS } from './secret-patterns';
+import { SECRET_PATTERNS, type SecretPattern } from './secret-patterns';
 
 export interface RedactionResult {
   /** Text with every matched span replaced by `[REDACTED:<pattern>]`. */
@@ -24,13 +24,22 @@ export interface RedactionResult {
   hits: string[];
 }
 
-export function redactSecrets(input: string): RedactionResult {
+/**
+ * @param input - Text to redact.
+ * @param patterns - Pattern subset to apply; defaults to the whole table.
+ *   Callers redacting human-readable text pass `NAMED_SECRET_PATTERNS` to
+ *   leave out the high-entropy fallback.
+ */
+export function redactSecrets(
+  input: string,
+  patterns: readonly SecretPattern[] = SECRET_PATTERNS
+): RedactionResult {
   if (input.length === 0) return { redacted: '', hits: [] };
 
   let output = input;
   const hits = new Set<string>();
 
-  for (const pattern of SECRET_PATTERNS) {
+  for (const pattern of patterns) {
     // Reset lastIndex so consecutive calls with the same regex stay safe.
     pattern.regex.lastIndex = 0;
     if (!pattern.regex.test(output)) continue;

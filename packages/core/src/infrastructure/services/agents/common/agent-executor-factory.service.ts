@@ -35,8 +35,52 @@ import { TogetherAiExecutorService } from './executors/together-ai-executor.serv
 import { OllamaExecutorService } from './executors/ollama-executor.service.js';
 import { LlmProxyExecutorService } from './executors/llmproxy-executor.service.js';
 import { ClineExecutorService } from './executors/cline-executor.service.js';
+import { KimiCodeExecutorService } from './executors/kimi-code-executor.service.js';
 import type { SpawnFunction } from './types.js';
 import { OPENROUTER_MODELS, TOGETHER_AI_MODELS, getModelsForAgent } from './agent-model-catalog.js';
+import { listAgentDescriptors } from '../../../../domain/shared/agent-catalog.js';
+
+/**
+ * Agent types that have a concrete executor in this factory.
+ *
+ * Derived from the catalog rather than hand-listed, so `getSupportedAgents()`
+ * and `createExecutor()` cannot disagree — they used to, and the mismatch was
+ * invisible until a user picked an agent that threw at run time.
+ */
+const EXECUTABLE_AGENT_TYPES: ReadonlySet<string> = new Set(
+  listAgentDescriptors()
+    .filter((descriptor) => descriptor.supported)
+    .map((descriptor) => descriptor.type as string)
+);
+
+/**
+ * Ollama and LLMProxy take a BASE URL where every other agent takes an API key,
+ * because both front a local server. The settings field is nonetheless called
+ * `token`, so a user who pastes a key there would send it as a URL — and a
+ * hostile value such as a cloud metadata endpoint would receive the full
+ * prompt, which contains the source of the repository being worked on.
+ *
+ * Accept the value only when it is a plausible base URL, and refuse the
+ * link-local metadata range outright. Anything else falls back to the
+ * executor's own default.
+ */
+function resolveLocalProviderBaseUrl(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+  // 169.254.0.0/16 — cloud instance metadata lives here on every major provider.
+  if (parsed.hostname.startsWith('169.254.')) return undefined;
+
+  return trimmed;
+}
 
 /**
  * Factory that creates and caches agent executor instances.
@@ -99,6 +143,9 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
       case 'cline':
         executor = new ClineExecutorService(this.spawn);
         break;
+      case 'kimi-code':
+        executor = new KimiCodeExecutorService(this.spawn, _authConfig);
+        break;
       case 'openrouter':
         executor = new OpenRouterExecutorService(_authConfig.token ?? '');
         break;
@@ -106,10 +153,10 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
         executor = new TogetherAiExecutorService(_authConfig.token ?? '');
         break;
       case 'ollama':
-        executor = new OllamaExecutorService(_authConfig.token ?? undefined);
+        executor = new OllamaExecutorService(resolveLocalProviderBaseUrl(_authConfig.token));
         break;
       case 'llmproxy':
-        executor = new LlmProxyExecutorService(_authConfig.token ?? undefined);
+        executor = new LlmProxyExecutorService(resolveLocalProviderBaseUrl(_authConfig.token));
         break;
       default:
         throw new Error(
@@ -127,30 +174,21 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
    * @returns Array of supported agent types
    */
   getSupportedAgents(): AgentType[] {
-    return [
-      'claude-code' as AgentType,
-      'cursor' as AgentType,
-      'dev' as AgentType,
-      'gemini-cli' as AgentType,
-      'codex-cli' as AgentType,
-      'copilot-cli' as AgentType,
-      'cline' as AgentType,
-      'openrouter' as AgentType,
-      'together-ai' as AgentType,
-      'ollama' as AgentType,
-      'llmproxy' as AgentType,
-    ];
+    return listAgentDescriptors()
+      .filter((descriptor) => EXECUTABLE_AGENT_TYPES.has(descriptor.type as string))
+      .map((descriptor) => descriptor.type);
   }
 
   getCliInfo(): AgentCliInfo[] {
-    return [
-      { agentType: 'claude-code' as AgentType, cmd: 'claude', versionArgs: ['--version'] },
-      { agentType: 'gemini-cli' as AgentType, cmd: 'gemini', versionArgs: ['--version'] },
-      { agentType: 'cursor' as AgentType, cmd: 'cursor', versionArgs: ['--version'] },
-      { agentType: 'codex-cli' as AgentType, cmd: 'codex', versionArgs: ['--version'] },
-      { agentType: 'copilot-cli' as AgentType, cmd: 'copilot', versionArgs: ['--version'] },
-      { agentType: 'cline' as AgentType, cmd: 'cline', versionArgs: ['version'] },
-    ];
+    return listAgentDescriptors()
+      .filter(
+        (descriptor) => descriptor.supported && descriptor.kind === 'cli' && descriptor.binary
+      )
+      .map((descriptor) => ({
+        agentType: descriptor.type,
+        cmd: descriptor.binary as string,
+        versionArgs: [...descriptor.versionArgs],
+      }));
   }
 
   /**

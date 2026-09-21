@@ -30,6 +30,8 @@ import type {
   IWorktreeHookRunner,
   WorktreeHookContext,
 } from '../../../application/ports/output/services/worktree-hook-runner.interface.js';
+import { assertSafeGitRef, isSafeGitRef } from '../../../domain/shared/git-ref-argument.js';
+import { toWorktreeSlug } from '../../../domain/shared/worktree-slug.js';
 import { getShepHomeDir } from '../filesystem/shep-directory.service.js';
 import {
   arePathsEquivalent,
@@ -60,6 +62,9 @@ export class WorktreeService implements IWorktreeService {
     worktreePath: string,
     startPoint?: string
   ): Promise<WorktreeInfo> {
+    assertSafeGitRef(branch, 'branch');
+    if (startPoint !== undefined) assertSafeGitRef(startPoint, 'startPoint');
+
     const context: WorktreeHookContext = {
       repoPath,
       worktreePath,
@@ -71,7 +76,11 @@ export class WorktreeService implements IWorktreeService {
       await this.hookRunner.runCreateHook(context);
     } else {
       try {
-        const args = ['worktree', 'add', worktreePath, '-b', branch];
+        // `--` before the positionals so neither the worktree path nor the
+        // start point can be read as an option. `-b <branch>` is already safe
+        // (parse-options consumes the next argv entry verbatim) but the guard
+        // above covers the branch anyway.
+        const args = ['worktree', 'add', '-b', branch, '--', worktreePath];
         if (startPoint) args.push(startPoint);
         await this.execFile('git', args, { cwd: repoPath });
       } catch (error) {
@@ -85,6 +94,8 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async addExisting(repoPath: string, branch: string, worktreePath: string): Promise<WorktreeInfo> {
+    assertSafeGitRef(branch, 'branch');
+
     // No start point: the branch already exists and is only checked out here.
     const context: WorktreeHookContext = { repoPath, worktreePath, branch };
 
@@ -92,7 +103,9 @@ export class WorktreeService implements IWorktreeService {
       await this.hookRunner.runCreateHook(context);
     } else {
       try {
-        await this.execFile('git', ['worktree', 'add', worktreePath, branch], { cwd: repoPath });
+        await this.execFile('git', ['worktree', 'add', '--', worktreePath, branch], {
+          cwd: repoPath,
+        });
       } catch (error) {
         throw parseGitError(error);
       }
@@ -107,7 +120,7 @@ export class WorktreeService implements IWorktreeService {
     try {
       const args = ['worktree', 'remove'];
       if (force) args.push('--force');
-      args.push(worktreePath);
+      args.push('--', worktreePath);
       await this.execFile('git', args, { cwd: repoPath });
     } catch (error) {
       throw parseGitError(error);
@@ -135,8 +148,13 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async branchExists(repoPath: string, branch: string): Promise<boolean> {
+    // A probe answers "no" for an unusable ref rather than throwing: an
+    // option-shaped name is not a branch that exists. Without the guard,
+    // `git branch --list --all` listed EVERY branch and this returned true.
+    if (!isSafeGitRef(branch)) return false;
+
     try {
-      const { stdout } = await this.execFile('git', ['branch', '--list', branch], {
+      const { stdout } = await this.execFile('git', ['branch', '--list', '--', branch], {
         cwd: repoPath,
       });
       return stdout.trim().length > 0;
@@ -146,10 +164,18 @@ export class WorktreeService implements IWorktreeService {
   }
 
   async remoteBranchExists(repoPath: string, branch: string): Promise<boolean> {
+    if (!isSafeGitRef(branch)) return false;
+
     try {
-      const { stdout } = await this.execFile('git', ['ls-remote', '--heads', 'origin', branch], {
-        cwd: repoPath,
-      });
+      // `ls-remote` already stops option parsing after the repository
+      // argument; the `--` keeps every ref positional in this file uniform.
+      const { stdout } = await this.execFile(
+        'git',
+        ['ls-remote', '--heads', 'origin', '--', branch],
+        {
+          cwd: repoPath,
+        }
+      );
       return stdout.trim().length > 0;
     } catch {
       return false;
@@ -223,7 +249,9 @@ export class WorktreeService implements IWorktreeService {
     // Normalize separators before hashing so C:\foo and C:/foo produce the same hash
     const normalizedRepoPath = repoPath.replace(/\\/g, '/');
     const repoHash = createHash('sha256').update(normalizedRepoPath).digest('hex').slice(0, 16);
-    const slug = branch.replace(/\//g, '-');
+    // Same slug rule as `compute-worktree-path.ts` — one implementation, or
+    // the two drift and a branch resolves to two different directories.
+    const slug = toWorktreeSlug(branch);
     return path.join(getShepHomeDir(), 'repos', repoHash, 'wt', slug).replace(/\\/g, '/');
   }
 

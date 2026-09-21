@@ -242,4 +242,17 @@ describe('FeaturesCanvas', () => {
       expect(screen.getByTestId('features-canvas')).toBeInTheDocument();
     });
   });
+
+  describe('named application region (A12)', () => {
+    // xyflow renders role="application" on its wrapper. Unnamed, a screen
+    // reader announces a bare application region and switches interaction
+    // mode with no explanation of what the user just entered.
+    it('names the role="application" region', () => {
+      render(<FeaturesCanvas nodes={[mockNode]} edges={[]} />);
+
+      const region = screen.getByRole('application');
+      expect(region).toHaveAccessibleName();
+      expect(region.getAttribute('aria-label')).toMatch(/canvas|graph/i);
+    });
+  });
 });

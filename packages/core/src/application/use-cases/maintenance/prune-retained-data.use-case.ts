@@ -1,0 +1,78 @@
+/**
+ * PruneRetainedDataUseCase
+ *
+ * Deletes history past the retention window, at most once per interval.
+ *
+ * Every log-shaped table Shep writes grew without bound: the operation log had
+ * a `pruneBefore()` that nothing called, and the activity log, agent and
+ * interactive messages, phase timings and PM notifications had no retention at
+ * all — about 184 MB a year at five agents a day.
+ *
+ * It runs on process start rather than on a timer because Shep has no
+ * always-on component it can rely on: the daemon may never have been started,
+ * and a CLI invocation may be the only process that runs all week. The
+ * interval claim is what makes that affordable — a due check is one indexed
+ * point read, and the prune itself happens once a day no matter how many
+ * processes ask.
+ */
+
+import { injectable, inject } from 'tsyringe';
+import type { IRetentionRepository } from '../../ports/output/repositories/retention.repository.interface.js';
+import type { RetentionPruneCounts } from '../../ports/output/repositories/retention.repository.interface.js';
+import type { IOperationLogRepository } from '../../ports/output/repositories/operation-log.repository.interface.js';
+import {
+  DEFAULT_DATA_RETENTION_DAYS,
+  DATA_RETENTION_PRUNE_INTERVAL_MS,
+  retentionCutoff,
+} from '../../../domain/shared/data-retention.js';
+
+export interface PruneRetainedDataResult {
+  /** False when another process already pruned inside the interval. */
+  pruned: boolean;
+  /** The cutoff applied, present only when `pruned`. */
+  cutoff?: Date;
+  /** Rows removed per table, present only when `pruned`. */
+  counts?: RetentionPruneCounts & { operationLog: number };
+}
+
+export interface PruneRetainedDataOptions {
+  /** Prune regardless of when the last one ran. */
+  force?: boolean;
+  /** Override the retention window, in days. */
+  retentionDays?: number;
+  /** Current time; injectable so the interval is testable without waiting. */
+  now?: Date;
+}
+
+@injectable()
+export class PruneRetainedDataUseCase {
+  constructor(
+    @inject('IRetentionRepository')
+    private readonly retentionRepo: IRetentionRepository,
+    @inject('IOperationLogRepository')
+    private readonly operationLogRepo: IOperationLogRepository
+  ) {}
+
+  async execute(options?: PruneRetainedDataOptions): Promise<PruneRetainedDataResult> {
+    const now = options?.now ?? new Date();
+    const retentionDays = options?.retentionDays ?? DEFAULT_DATA_RETENTION_DAYS;
+
+    if (options?.force !== true) {
+      const claimed = await this.retentionRepo.claimPruneCycle(
+        now,
+        DATA_RETENTION_PRUNE_INTERVAL_MS
+      );
+      if (!claimed) {
+        return { pruned: false };
+      }
+    }
+
+    const cutoff = retentionCutoff(now, retentionDays);
+    const counts = await this.retentionRepo.pruneOlderThan(cutoff);
+    // The operation log keeps its own port: `pruneBefore` was already the
+    // right method, it simply had no caller.
+    const operationLog = await this.operationLogRepo.pruneBefore(cutoff.getTime());
+
+    return { pruned: true, cutoff, counts: { ...counts, operationLog } };
+  }
+}

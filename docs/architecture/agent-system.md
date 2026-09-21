@@ -16,13 +16,38 @@ See [AGENTS.md -- Settings-Driven Agent Resolution](../../AGENTS.md#settings-dri
 
 ---
 
+## The Agent Catalog — One Source of Truth
+
+`packages/core/src/domain/shared/agent-catalog.ts` holds every per-agent fact in
+one place: label, description, kind (`cli` / `sdk` / `mock`), `supported` flag,
+binary name and version args, tool-installer id, static model list, sort order,
+whether a token is required, and the docs URL.
+
+It exists because those facts used to be restated in a dozen hand-maintained
+tables — the executor factory's lists, the validator's binary map, the auth use
+case's metadata table, the model catalog, the TUI choices and three separate web
+tables — with nothing relating them. They drifted: `codex-cli` and `llmproxy`
+were missing from the auth table and reported as "Unknown", the Cursor binary was
+recorded as `cursor` in two places and `cursor-agent` in two others, and two tool
+ids never matched a real tool file.
+
+The catalog is typed as a total `Record<AgentType, AgentDescriptor>`, so **adding
+a member to the TypeSpec `AgentType` enum is a compile error until its facts are
+filled in here.** It lives in `domain/` because it is pure data with no
+dependencies — application use cases, infrastructure services, the CLI, the TUI
+and the web app all read the same rows.
+
+When you need an agent fact, read the catalog. Do not add another table.
+
+---
+
 ## Architecture
 
 Multi-stage workflow orchestration using LangGraph StateGraphs with agent-agnostic execution. The FeatureAgent and AnalyzeRepository graphs are implemented; the multi-agent supervisor pattern is planned.
 
 ## Overview
 
-Shep implements a **state-based workflow system** using [LangGraph](https://www.langchain.com/langgraph) for multi-stage feature development. Nodes are **pure async functions** that process and update state. Agent execution is delegated to an `IAgentExecutor` implementation (Claude Code, Gemini CLI, Aider, Cursor, etc.) resolved via settings.
+Shep implements a **state-based workflow system** using [LangGraph](https://www.langchain.com/langgraph) for multi-stage feature development. Nodes are **pure async functions** that process and update state. Agent execution is delegated to an `IAgentExecutor` implementation (Claude Code, Kimi Code, Codex CLI, Copilot CLI, Cursor CLI, Gemini CLI, Cline, OpenRouter, Together AI, Ollama, LLM Proxy, or the Demo mock) resolved via settings.
 
 ```
 +-----------------------------------------+
@@ -56,48 +81,56 @@ Shep implements a **state-based workflow system** using [LangGraph](https://www.
 
 ### StateGraph
 
-Typed workflow definition using LangGraph's StateGraph:
+Typed workflow definition using LangGraph's Annotation API. The feature-agent
+graph's channels are declared in
+`feature-agent/state.ts` as `FeatureAgentAnnotation`, with
+`FeatureAgentState` as the derived state type:
 
 ```typescript
 import { Annotation } from '@langchain/langgraph';
 
-export const FeatureState = Annotation.Root({
-  repoPath: Annotation<string>,
-  requirements: Annotation<Requirement[]>({
-    reducer: (prev, next) => [...prev, ...next],
-    default: () => [],
+export const FeatureAgentAnnotation = Annotation.Root({
+  featureId: Annotation<string>,
+  repositoryPath: Annotation<string>,
+  specDir: Annotation<string>,
+  worktreePath: Annotation<string>,
+  currentNode: Annotation<string>,
+  error: Annotation<string | null>({
+    reducer: (prev, next) => (next !== undefined ? next : prev),
+    default: () => null,
   }),
-  plan: Annotation<Plan | null>,
-  tasks: Annotation<Task[]>({
-    reducer: (prev, next) => [...prev, ...next],
-    default: () => [],
+  approvalGates: Annotation<ApprovalGates | undefined>({
+    reducer: (prev, next) => next ?? prev,
+    default: () => undefined,
   }),
-  messages: Annotation<string[]>({
-    reducer: (prev, next) => [...prev, ...next],
-    default: () => [],
-  }),
+  // …many more channels
 });
 
-export type FeatureStateType = typeof FeatureState.State;
+export type FeatureAgentState = typeof FeatureAgentAnnotation.State;
 ```
+
+The graph is built by
+`createFeatureAgentGraph(depsOrExecutor, checkpointer?)`, where deps is
+`FeatureAgentGraphDeps { executor, selectProjectMemory? }`. A bare
+`IAgentExecutor` is still accepted for the legacy call shape.
 
 ### Nodes
 
-Functions that process and update state by delegating to `IAgentExecutor`:
+A node is a **factory that receives the executor** and returns the state
+function. Nodes never construct, choose or configure a model client — the
+executor is handed to them, which is what keeps the graph agent-agnostic:
 
 ```typescript
-function createAnalyzeNode(executor: IAgentExecutor) {
-  return async (
-    state: AnalyzeRepositoryStateType
-  ): Promise<Partial<AnalyzeRepositoryStateType>> => {
-    const prompt = buildAnalyzePrompt(state.repositoryPath);
-    const result = await executor.execute(prompt, {
-      cwd: state.repositoryPath,
-    });
-    return { analysisMarkdown: result.result };
-  };
+export function createAnalyzeNode(executor: IAgentExecutor, selectMemory?: MemorySelector) {
+  return executeNode('analyze', executor, buildAnalyzePrompt, selectMemory);
 }
 ```
+
+`executeNode` (in `nodes/node-helpers.ts`) carries the shared concerns —
+prompt building, memory injection, execution and state update — so an
+individual node stays a single declarative line. Importing a model SDK such as
+`ChatAnthropic` inside a node is wrong twice over: it bypasses settings-driven
+resolution, and `@langchain/anthropic` is not a dependency of this project.
 
 ### Edges
 
@@ -284,6 +317,42 @@ Three new SSE event kinds — `agent_message`, `agent_question`,
 dedicated compute helpers (`compute-message-deltas.ts`,
 `compute-question-deltas.ts`, `compute-decision-deltas.ts`).
 
+## Agent Executors
+
+Every executor implements `IAgentExecutor` and lives in
+`packages/core/src/infrastructure/services/agents/common/executors/`. The
+factory picks one from `settings.agent.type`; nothing else may.
+
+| Agent type    | Executor file                             | Kind |
+| ------------- | ----------------------------------------- | ---- |
+| `claude-code` | `claude-code-executor.service.ts`          | cli  |
+| `kimi-code`   | `kimi-code-executor.service.ts`            | cli  |
+| `codex-cli`   | `codex-cli-executor.service.ts`            | cli  |
+| `copilot-cli` | `copilot-cli-executor.service.ts`          | cli  |
+| `cursor`      | `cursor-executor.service.ts`               | cli  |
+| `gemini-cli`  | `gemini-cli-executor.service.ts`           | cli  |
+| `cline`       | `cline-executor.service.ts`                | cli  |
+| `openrouter`  | `openrouter-executor.service.ts`           | sdk  |
+| `together-ai` | `together-ai-executor.service.ts`          | sdk  |
+| `ollama`      | `ollama-executor.service.ts`               | sdk  |
+| `llmproxy`    | `llmproxy-executor.service.ts`             | sdk  |
+| `dev`         | `dev-executor.service.ts`                  | mock |
+
+**`aider` and `continue` have no executor.** They are `supported: false` in the
+agent catalog, with `binary: null` and `toolId: null`, and must never reach the
+executor factory. There is no `aider-executor.service.ts`.
+
+Supporting files in the same directory:
+
+- `ai-sdk-base-executor.service.ts` -- shared base for the four SDK executors
+- `claude-code-interactive-executor.service.ts` -- interactive (chat) variant
+- `mock-executor.service.ts` / `mock-executor-factory.service.ts` -- test doubles
+- `process-stream.ts` -- reusable `createLineAccumulator()` and `killProcessTree()`
+- `security-constraint-validator.ts` -- per-execution constraint checks
+
+`packages/core/src/domain/shared/agent-resume-descriptor.ts` (`RESUME_BINARIES`)
+records which CLI agents support session resume.
+
 ## Agent Executor Interfaces
 
 The agent system uses these key interfaces (defined in `packages/core/src/application/ports/output/agents/`):
@@ -301,12 +370,18 @@ The agent system uses these key interfaces (defined in `packages/core/src/applic
 
 ## Workflow Stages
 
-| Stage            | Node               | Responsibility                                               |
-| ---------------- | ------------------ | ------------------------------------------------------------ |
-| **Analyze**      | `analyzeNode`      | Parse codebase structure, patterns, tech stack               |
-| **Requirements** | `requirementsNode` | Gather requirements via conversation, validate clarity       |
-| **Plan**         | `planNode`         | Decompose into tasks, create artifacts (PRD, RFC, Tech Plan) |
-| **Implement**    | `implementNode`    | Execute tasks respecting dependency graph                    |
+| Stage            | Node factory              | Responsibility                                               |
+| ---------------- | ------------------------- | ------------------------------------------------------------ |
+| **Analyze**      | `createAnalyzeNode`       | Parse codebase structure, patterns, tech stack               |
+| **Requirements** | `createRequirementsNode`  | Gather requirements via conversation, validate clarity       |
+| **Research**     | `createResearchNode`      | Technical research feeding the plan                          |
+| **Plan**         | `createPlanNode`          | Decompose into tasks, create artifacts (PRD, RFC, Tech Plan) |
+| **Implement**    | `createImplementNode`     | Execute tasks respecting dependency graph                    |
+
+Each lives in `feature-agent/nodes/<stage>.node.ts`. The graph also wires
+supporting nodes from the same directory — `validate`, `repair`, `evidence`,
+`extract-memory`, `apply-feedback`, `prototype-generate`, `fast-implement` and
+the `merge/` node set.
 
 ## Adaptive Model Selection (spec 110)
 
@@ -343,7 +418,7 @@ When adding a model to `agent-model-catalog.ts`, add a matching entry to
 
 ## Practical Example
 
-For implementation details, see [docs/development/adding-agents.md](../development/adding-agents.md).
+For implementation details, see [adding-agent-nodes.md](../development/adding-agent-nodes.md) (adding a LangGraph node) and [adding-agent-types.md](../development/adding-agent-types.md) (adding an agent provider).
 
 ---
 
@@ -359,5 +434,6 @@ For implementation details, see [docs/development/adding-agents.md](../developme
 **Related docs:**
 
 - [AGENTS.md](../../AGENTS.md) - Detailed LangGraph implementation
-- [../development/adding-agents.md](../development/adding-agents.md) - Adding new nodes
+- [../development/adding-agent-nodes.md](../development/adding-agent-nodes.md) - Adding a LangGraph node
+- [../development/adding-agent-types.md](../development/adding-agent-types.md) - Adding an agent provider
 - [supervision.md](./supervision.md) - Agent collaboration & supervision (spec 093)

@@ -32,4 +32,7 @@ enum CiStatus {
 
   @doc("CI has failed one or more checks")
   Failure,
+
+  @doc("CI could not be read (rate limit, API error, or no run observed) — absence of evidence, never treated as a pass")
+  Indeterminate,
 }

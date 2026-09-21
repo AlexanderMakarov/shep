@@ -544,6 +544,7 @@ export type WorkflowConfig = {
 };
 export enum AgentType {
   ClaudeCode = 'claude-code',
+  KimiCode = 'kimi-code',
   CodexCli = 'codex-cli',
   CopilotCli = 'copilot-cli',
   GeminiCli = 'gemini-cli',
@@ -1309,6 +1310,7 @@ export enum CiStatus {
   Pending = 'Pending',
   Success = 'Success',
   Failure = 'Failure',
+  Indeterminate = 'Indeterminate',
 }
 
 /**

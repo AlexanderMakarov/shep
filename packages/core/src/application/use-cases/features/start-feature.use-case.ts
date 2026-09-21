@@ -153,8 +153,39 @@ export class StartFeatureUseCase {
 
     // Gate 2 — capacity. Evaluated only after the dependency gate, so a feature
     // that cannot run yet never takes a place in the queue ahead of one that can.
-    if (options?.bypassCapacityLimit !== true && !(await this.capacity.hasCapacity())) {
-      const queuedFeature = markQueuedForCapacity(resolved);
+    //
+    // The gate and the transition are ONE statement. Asking "is there a slot?"
+    // and then writing "this feature is now running" separately lets two
+    // `shep start` invocations both see 2 running against a limit of 3 and both
+    // start, and lets a dashboard drain start a feature this call is also about
+    // to start — two detached workers in one worktree.
+    const now = new Date();
+    const targetLifecycle =
+      resolved.fast === true || resolved.buildMode === BuildMode.Fast
+        ? SdlcLifecycle.Implementation
+        : SdlcLifecycle.Requirements;
+
+    const claimed = await this.capacity.claimSlot({
+      featureId: resolved.id,
+      targetLifecycle,
+      // The feature was Pending when this call read it; if it is not Pending
+      // any more, someone else already started it.
+      requireLifecycle: SdlcLifecycle.Pending,
+      bypassLimit: options?.bypassCapacityLimit === true,
+      now,
+    });
+
+    if (!claimed) {
+      const fresh = await this.featureRepo.findById(resolved.id);
+
+      if (fresh && fresh.lifecycle !== SdlcLifecycle.Pending) {
+        // Lost the race to another process, which owns the spawn. Report the
+        // feature as it now is; spawning here would be the second worker.
+        return { feature: fresh, agentRun, blocked: false, queued: false };
+      }
+
+      // Still Pending — the cap refused it, so it joins the queue.
+      const queuedFeature = markQueuedForCapacity(resolved, now);
       await this.featureRepo.update(queuedFeature);
 
       return {
@@ -166,17 +197,15 @@ export class StartFeatureUseCase {
       };
     }
 
-    // Both gates open — transition and start.
+    // Both gates open, and the slot is ours — the claim already wrote the
+    // lifecycle transition, so this object mirrors the row rather than saving
+    // it a second time.
     const updatedFeature: Feature = {
       ...resolved,
-      lifecycle:
-        resolved.fast === true || resolved.buildMode === BuildMode.Fast
-          ? SdlcLifecycle.Implementation
-          : SdlcLifecycle.Requirements,
-      updatedAt: new Date(),
+      lifecycle: targetLifecycle,
+      updatedAt: now,
     };
     delete updatedFeature.queuedAt;
-    await this.featureRepo.update(updatedFeature);
 
     await this.spawnFeatureAgent.execute({
       feature: updatedFeature,

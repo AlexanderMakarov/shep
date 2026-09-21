@@ -10,6 +10,7 @@
  * index.ts is reverted or the wrong command factories are used.
  */
 
+import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Command } from 'commander';
 

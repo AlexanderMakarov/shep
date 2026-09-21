@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { readFile, stat } from 'fs/promises';
-import { extname, resolve } from 'path';
+import { extname, resolve, sep } from 'path';
 import { getShepHomeDir } from '@shepai/core/infrastructure/services/filesystem/shep-directory.service';
 
 const MIME_MAP: Record<string, string> = {
@@ -34,8 +34,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const resolved = resolve(path);
   const reposRoot = resolve(getShepHomeDir(), 'repos');
+  // The trailing separator is load-bearing: without it `~/.shep/repos-evil/`
+  // passes as `~/.shep/repos`. Same shape as `resolveInside()` in
+  // `node-application-file-system.service.ts`.
+  const rootWithSep = reposRoot.endsWith(sep) ? reposRoot : reposRoot + sep;
 
-  if (!resolved.startsWith(reposRoot)) {
+  if (!resolved.startsWith(rootWithSep)) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 });
   }
 

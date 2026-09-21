@@ -1,0 +1,44 @@
+[
+  {
+    "viewport": "desktop-light",
+    "overflow": false,
+    "errors": [],
+    "violations": []
+  },
+  {
+    "viewport": "desktop-dark",
+    "overflow": false,
+    "errors": [],
+    "violations": []
+  },
+  {
+    "viewport": "mobile-light",
+    "overflow": false,
+    "errors": [],
+    "violations": []
+  },
+  {
+    "viewport": "mobile-dark",
+    "overflow": false,
+    "errors": [],
+    "violations": []
+  },
+  {
+    "viewport": "narrow",
+    "overflow": false,
+    "errors": [],
+    "violations": []
+  },
+  {
+    "story": "loading",
+    "rendered": true
+  },
+  {
+    "story": "load-error",
+    "rendered": true
+  },
+  {
+    "story": "empty",
+    "rendered": true
+  }
+]

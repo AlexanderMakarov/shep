@@ -50,17 +50,33 @@ import { hasSettings, getSettings } from '../../../settings.service.js';
 
 const DEFAULT_MAX_RETRIES = 3;
 
+export interface EvidenceNodeOptions {
+  /**
+   * Whether a planned task list (tasks.yaml) is expected in the spec
+   * directory. Planned mode writes tasks.yaml, so a missing or unparseable
+   * one means the completeness gate has nothing to check against and must
+   * fail. Fast mode never writes tasks.yaml, so its absence is correct there
+   * and is reported as "no tasks" rather than "unknown tasks".
+   *
+   * Defaults to `true` — fail closed unless a caller states otherwise.
+   */
+  requireTaskList?: boolean;
+}
+
 /**
  * Parse tasks.yaml into TaskForValidation[] for evidence completeness checking.
- * Returns empty array if tasks.yaml is missing or unparseable.
+ *
+ * @returns the declared tasks, `[]` when the file declares an empty task
+ *   list, or `null` when the file is missing or cannot be parsed — those are
+ *   different facts and the caller must not conflate them.
  */
-function parseTasks(specDir: string): TaskForValidation[] {
+function parseTasks(specDir: string): TaskForValidation[] | null {
   const content = readSpecFile(specDir, 'tasks.yaml');
-  if (!content) return [];
+  if (!content) return null;
 
   try {
     const data = yaml.load(content) as { tasks?: unknown[] };
-    if (!data?.tasks || !Array.isArray(data.tasks)) return [];
+    if (!data?.tasks || !Array.isArray(data.tasks)) return null;
 
     return data.tasks
       .filter((t): t is Record<string, unknown> => t !== null && typeof t === 'object')
@@ -74,7 +90,7 @@ function parseTasks(specDir: string): TaskForValidation[] {
         tdd: t.tdd != null ? (t.tdd as TaskForValidation['tdd']) : null,
       }));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -84,8 +100,9 @@ function parseTasks(specDir: string): TaskForValidation[] {
  * @param executor - Agent executor for running the evidence capture prompt
  * @returns A LangGraph node function
  */
-export function createEvidenceNode(executor: IAgentExecutor) {
+export function createEvidenceNode(executor: IAgentExecutor, options?: EvidenceNodeOptions) {
   const log = createNodeLogger('evidence');
+  const requireTaskList = options?.requireTaskList ?? true;
 
   return async (state: FeatureAgentState): Promise<Partial<FeatureAgentState>> => {
     log.activate();
@@ -110,7 +127,14 @@ export function createEvidenceNode(executor: IAgentExecutor) {
     const settings = hasSettings() ? getSettings() : undefined;
     const maxRetries = settings?.workflow.evidenceRetries ?? DEFAULT_MAX_RETRIES;
     const options = buildExecutorOptions(state, undefined, 'evidence');
-    const tasks = parseTasks(state.specDir);
+    // `null` = the task list could not be read. Only a caller that expects a
+    // task list propagates that as "unknown" (which fails the gate); a caller
+    // that never writes one treats absence as "no tasks".
+    const parsedTasks = parseTasks(state.specDir);
+    const tasks: TaskForValidation[] | null = parsedTasks ?? (requireTaskList ? null : []);
+    if (parsedTasks === null && requireTaskList) {
+      log.error('tasks.yaml missing or unparseable — evidence completeness cannot be verified');
+    }
 
     // --- Validation retry loop ---
     let allEvidence: Evidence[] = [];
@@ -144,8 +168,17 @@ export function createEvidenceNode(executor: IAgentExecutor) {
         // --- Parse evidence records (graceful degradation) ---
         let evidence: Evidence[];
         try {
-          evidence = parseEvidenceRecords(result.result);
-          log.info(`Attempt ${attempt}: parsed ${evidence.length} evidence record(s)`);
+          const parsed = parseEvidenceRecords(result.result);
+          evidence = parsed.records;
+          // "The agent reported no evidence" and "we could not read the
+          // agent's answer" look identical in a bare count — say which.
+          if (parsed.failure) {
+            log.error(
+              `Attempt ${attempt}: no evidence block could be read from agent output (${parsed.failure})`
+            );
+          } else {
+            log.info(`Attempt ${attempt}: parsed ${evidence.length} evidence record(s)`);
+          }
         } catch (parseErr) {
           const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
           log.error(

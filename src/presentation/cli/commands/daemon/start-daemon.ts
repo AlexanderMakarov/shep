@@ -23,6 +23,7 @@ import http from 'node:http';
 import { container } from '@/infrastructure/di/container.js';
 import { findAvailablePort, DEFAULT_PORT } from '@/infrastructure/services/port.service.js';
 import { getDaemonLogPath } from '@/infrastructure/services/filesystem/shep-directory.service.js';
+import { ROTATED_LOG_SUFFIX } from '@/infrastructure/services/logging/daemon-log-rotator.js';
 import { fmt, messages, spinner } from '../../ui/index.js';
 import type { IDaemonService } from '@/application/ports/output/services/daemon-service.interface.js';
 import type { IBrowserOpener } from '@/application/ports/output/services/i-browser-opener.js';
@@ -62,11 +63,17 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<void> 
   const startPort = opts.port ?? DEFAULT_PORT;
   const port = await findAvailablePort(startPort);
 
-  // Rotate existing daemon.log → daemon.log.old (keep 1 backup)
+  // Rotate existing daemon.log → daemon.log.old (keep 1 backup).
+  //
+  // This start-of-day rotation is only half the policy: the running daemon
+  // also caps the log on SIZE via DaemonLogRotator (see _serve.command.ts),
+  // because a daemon that stays up for weeks would otherwise write one
+  // unbounded file between restarts. The suffix is shared so both halves
+  // keep exactly one generation.
   const logPath = getDaemonLogPath();
   try {
     if (existsSync(logPath)) {
-      renameSync(logPath, `${logPath}.old`);
+      renameSync(logPath, `${logPath}${ROTATED_LOG_SUFFIX}`);
     }
   } catch {
     // Best-effort rotation — continue even if rename fails

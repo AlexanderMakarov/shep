@@ -271,6 +271,7 @@ import {
 import { ListFleetTriageItemsUseCase } from '../../../application/use-cases/fleet/list-fleet-triage-items.use-case.js';
 import { GetFleetOverviewUseCase } from '../../../application/use-cases/fleet/get-fleet-overview.use-case.js';
 import { BatchApproveFeaturesUseCase } from '../../../application/use-cases/fleet/batch-approve-features.use-case.js';
+import { PruneRetainedDataUseCase } from '../../../application/use-cases/maintenance/prune-retained-data.use-case.js';
 import {
   ListFleetTriageItemsUseCaseToken,
   GetFleetOverviewUseCaseToken,
@@ -1083,4 +1084,7 @@ export function registerUseCases(container: DependencyContainer): void {
   container.register(BatchApproveFeaturesUseCaseToken, {
     useFactory: (c) => c.resolve(BatchApproveFeaturesUseCase),
   });
+
+  // ─── Maintenance ────────────────────────────────────────────────────────
+  container.registerSingleton(PruneRetainedDataUseCase);
 }

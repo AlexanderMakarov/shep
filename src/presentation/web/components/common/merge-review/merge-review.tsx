@@ -17,6 +17,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { CiStatusBadge } from '@/components/common/ci-status-badge';
 import { DrawerActionBar } from '@/components/common/drawer-action-bar';
@@ -278,8 +279,41 @@ export function MergeReview({
   const { pr, diffSummary, fileDiffs, branch, warning, evidence, hideCiStatus } = data;
   const hasConflicts = pr?.mergeable === false;
 
-  const handleApproveOrResolve =
-    hasConflicts && onReject ? () => onReject('Resolve merge conflicts', []) : onApprove;
+  /**
+   * Merging is irreversible, so Approve is confirmed against the branch and PR
+   * it will actually merge — both already arrive in `data`, no extra fetch.
+   */
+  const approveConfirm = useMemo(
+    () => ({
+      title: 'Approve merge?',
+      description: (
+        <>
+          {branch ? (
+            <>
+              This merges{' '}
+              <span className="text-foreground font-mono font-medium">{branch.source}</span> into{' '}
+              <span className="text-foreground font-mono font-medium">{branch.target}</span>
+            </>
+          ) : (
+            <>This merges the feature branch</>
+          )}
+          {pr ? (
+            <>
+              {' '}
+              via <span className="text-foreground font-medium">PR #{pr.number}</span>
+            </>
+          ) : null}
+          {'. '}
+          {hasConflicts
+            ? 'GitHub reports merge conflicts on this pull request — merging now may fail or produce a broken result. '
+            : null}
+          This cannot be undone.
+        </>
+      ),
+      confirmLabel: 'Approve Merge',
+    }),
+    [branch, pr, hasConflicts]
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -346,6 +380,26 @@ export function MergeReview({
                     Conflicts
                   </Badge>
                 </div>
+              ) : null}
+
+              {/*
+                This action sends "Resolve merge conflicts" back to the agent as
+                revision feedback — it does NOT run git's conflict resolution — so
+                it is labelled for what it does. (The deterministic path exists as
+                the `rebaseFeature` action, but it is not wired into this tab.)
+              */}
+              {hasConflicts && !readOnly && onReject ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  data-testid="merge-review-ask-agent-conflicts"
+                  onClick={() => onReject('Resolve merge conflicts', [])}
+                  disabled={isRejecting || isProcessing}
+                >
+                  Ask the agent to resolve the conflicts
+                </Button>
               ) : null}
 
               {/* CI status */}
@@ -415,14 +469,27 @@ export function MergeReview({
         {evidence && evidence.length > 0 ? <EvidenceList evidence={evidence} /> : null}
 
         {/* File diffs */}
-        {fileDiffs && fileDiffs.length > 0 ? <DiffView fileDiffs={fileDiffs} /> : null}
+        {fileDiffs && fileDiffs.length > 0 ? (
+          <DiffView fileDiffs={fileDiffs} />
+        ) : fileDiffs ? (
+          /* An empty diff is a real, reviewable outcome — say so rather than
+             rendering nothing and leaving the reviewer wondering if it failed. */
+          <div
+            data-testid="merge-review-empty-diff"
+            className="text-muted-foreground flex flex-col items-center gap-2 py-8 text-center"
+          >
+            <FileDiff className="h-8 w-8" />
+            <p className="text-sm">No file changes in this diff.</p>
+          </div>
+        ) : null}
       </div>
 
       {!readOnly && (
         <DrawerActionBar
           onReject={onReject}
-          onApprove={handleApproveOrResolve}
-          approveLabel={hasConflicts ? 'Resolve Conflicts' : 'Approve Merge'}
+          onApprove={onApprove}
+          approveLabel="Approve Merge"
+          approveConfirm={approveConfirm}
           approveVariant={hasConflicts ? 'warning' : 'default'}
           revisionPlaceholder="Ask AI to revise before merging..."
           isProcessing={isProcessing}

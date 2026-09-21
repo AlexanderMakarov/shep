@@ -32,7 +32,7 @@ export interface AppOverflowMenuProps {
 
 export function AppOverflowMenu({ children, className }: AppOverflowMenuProps) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -51,7 +51,7 @@ export function AppOverflowMenu({ children, className }: AppOverflowMenuProps) {
           <MoreHorizontal className="size-4" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-64" regionLabel="Application options">
         <DropdownMenuLabel className="text-[10px] font-medium tracking-wide uppercase">
           More options
         </DropdownMenuLabel>

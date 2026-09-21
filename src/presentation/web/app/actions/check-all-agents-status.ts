@@ -1,15 +1,28 @@
 'use server';
 
 import { resolve } from '@/lib/server-container';
+import { listAgentDescriptors } from '@shepai/core/domain/shared/agent-catalog';
 import type { ListToolsUseCase } from '@shepai/core/application/use-cases/tools/list-tools.use-case';
 
-const AGENT_TOOL_MAP: Record<string, string> = {
-  'claude-code': 'claude-code',
-  cursor: 'cursor-cli',
-  'gemini-cli': 'gemini-cli',
-  'copilot-cli': 'copilot-cli',
-  'codex-cli': 'codex-cli',
-};
+/**
+ * agentType → tool-installer id, from the domain catalog.
+ *
+ * The hand-written map this replaces omitted cline, ollama, openrouter,
+ * together-ai and llmproxy, and used tool ids (`copilot-cli`, `codex-cli`) that
+ * match no file in the tool catalogue — tool ids are the JSON filename, so
+ * those two lookups never matched and both agents always reported "not
+ * installed".
+ */
+const AGENT_TOOL_MAP: Record<string, string> = Object.fromEntries(
+  listAgentDescriptors()
+    .filter((descriptor) => descriptor.toolId !== null)
+    .map((descriptor) => [descriptor.type as string, descriptor.toolId as string])
+);
+
+/** Agents that need no installed binary are always "available". */
+const BINARY_FREE_AGENTS: string[] = listAgentDescriptors()
+  .filter((descriptor) => descriptor.supported && descriptor.binary === null)
+  .map((descriptor) => descriptor.type as string);
 
 export type AgentInstallMap = Record<string, boolean>;
 
@@ -27,8 +40,8 @@ export async function checkAllAgentsStatus(): Promise<AgentInstallMap> {
       const tool = tools.find((t) => t.id === toolId);
       result[agentType] = tool?.status.status === 'available';
     }
-    // Dev/demo agents are always "installed"
-    result['dev'] = true;
+    // SDK providers and the demo mock need no binary.
+    for (const agentType of BINARY_FREE_AGENTS) result[agentType] = true;
 
     return result;
   } catch {

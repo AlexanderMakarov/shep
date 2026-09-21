@@ -8,6 +8,10 @@ import type {
   StoredAttachment,
 } from '../../application/ports/output/services/feature-attachment-storage.interface.js';
 import { getShepHomeDir } from './filesystem/shep-directory.service.js';
+import {
+  isValidAttachmentSessionId,
+  isValidAttachmentSlug,
+} from './attachments/attachment-identifier.js';
 
 // Re-export the port's StoredAttachment shape to preserve the existing type
 // surface for legacy consumers that import it from this module.
@@ -123,12 +127,26 @@ export class AttachmentStorageService implements IAttachmentStorageService {
     return join(getShepHomeDir(), 'attachments');
   }
 
+  /**
+   * Both directory names below are built from caller-supplied ids. The
+   * filename is sanitised, but the id used to go in raw — and the `pending-`
+   * prefix does not contain a traversal, because `pending-..` is still a
+   * poppable segment. A sessionId of `"../../../../.config/systemd/user"`
+   * resolved to `~/.config/systemd/user` and was then created and written
+   * into; the same id in `delete()` would have removed it.
+   */
   private getPendingDir(sessionId: string): string {
-    return join(getShepHomeDir(), 'attachments', `pending-${sessionId}`);
+    if (!isValidAttachmentSessionId(sessionId)) {
+      throw new Error(`Invalid attachment sessionId: ${JSON.stringify(sessionId)}`);
+    }
+    return join(this.getAttachmentsRoot(), `pending-${sessionId}`);
   }
 
   private getSlugDir(featureSlug: string): string {
-    return join(getShepHomeDir(), 'attachments', featureSlug);
+    if (!isValidAttachmentSlug(featureSlug)) {
+      throw new Error(`Invalid attachment slug: ${JSON.stringify(featureSlug)}`);
+    }
+    return join(this.getAttachmentsRoot(), featureSlug);
   }
 
   /** Generate unique filename by appending content hash when name collides (e.g. clipboard "image.png"). */

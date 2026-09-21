@@ -113,3 +113,6 @@ scripts/marketing/output/
 .agents/
 .claude/skills/frontend-design/
 .claude/skills/remotion-best-practices/
+
+# Local agent-tooling run records (not project source)
+.coding-agent/

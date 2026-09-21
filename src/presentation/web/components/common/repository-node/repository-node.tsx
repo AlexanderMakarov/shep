@@ -29,6 +29,7 @@ import { useRepositoryCardActions } from './use-repository-card-actions';
 import { RepositoryDeleteDialog } from './repository-delete-dialog';
 import { ChatDotIndicator } from '@/components/features/chat/ChatDotIndicator';
 import { FeatureSessionsDropdown } from '@/components/common/feature-node/feature-sessions-dropdown';
+import { ACTIVATABLE_TITLE_CLASS, useActivatableTitle } from '@/hooks/use-activatable-title';
 
 /** Vertical offset of the edge handles, aligned with the card's first row. */
 const HANDLE_TOP_PX = 70;
@@ -77,6 +78,11 @@ export function RepositoryNode({
     },
     [router]
   );
+
+  const activateTitle = useCallback(() => {
+    data.onClick?.();
+  }, [data]);
+  const titleProps = useActivatableTitle(activateTitle);
 
   return (
     <div
@@ -130,20 +136,11 @@ export function RepositoryNode({
       ) : null}
 
       <div
-        role="button"
-        tabIndex={0}
         data-testid="repository-node-card"
         data-repo-name={data.name}
         onClick={(e) => {
           e.stopPropagation();
           data.onClick?.();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            e.stopPropagation();
-            data.onClick?.();
-          }
         }}
         className={cn(
           'nodrag bg-card flex w-[26rem] cursor-pointer flex-col overflow-hidden rounded-xl border shadow-sm transition-[border-color,box-shadow] duration-200 dark:bg-neutral-800/80',
@@ -153,13 +150,19 @@ export function RepositoryNode({
         {/* Row 1: Repository name + action buttons */}
         <div className="flex items-center gap-3 px-4 py-3">
           <Github className="text-muted-foreground h-5 w-5 shrink-0" />
-          <span data-testid="repository-node-name" className="min-w-0 truncate text-sm font-medium">
+          {/* The name — not the card — is the activatable control: the card
+              holds real buttons, which may not be nested inside `role="button"`. */}
+          <span
+            {...titleProps}
+            data-testid="repository-node-name"
+            className={cn('min-w-0 truncate text-sm font-medium', ACTIVATABLE_TITLE_CLASS)}
+          >
             {data.name}
           </span>
 
           <div
             className={cn(
-              'flex shrink-0 items-center gap-2',
+              'flex shrink-0 items-center gap-1',
               (data.repositoryPath ?? data.onAdd) && 'ms-auto'
             )}
             onClick={(e) => e.stopPropagation()}
@@ -197,7 +200,7 @@ export function RepositoryNode({
                         data.onAdd?.();
                       }}
                       className={cn(
-                        'flex h-6 shrink-0 cursor-pointer items-center gap-0.5 rounded bg-blue-500 px-1.5 text-[11px] font-bold text-white transition-colors hover:bg-blue-600 dark:bg-amber-500 dark:hover:bg-amber-400',
+                        'flex h-8 shrink-0 cursor-pointer items-center gap-0.5 rounded bg-blue-600 px-1.5 text-[11px] font-bold text-white transition-colors hover:bg-blue-600 dark:bg-amber-500 dark:text-neutral-950 dark:hover:bg-amber-400',
                         data.pulseAdd && 'animate-pulse-cta'
                       )}
                     >
@@ -252,7 +255,7 @@ export function RepositoryNode({
                   </span>
                   {data.committer ? (
                     <span
-                      className="text-muted-foreground/70 ms-auto flex shrink-0 items-center gap-1"
+                      className="text-muted-foreground ms-auto flex shrink-0 items-center gap-1"
                       data-testid="repository-node-committer"
                     >
                       <User className="h-3 w-3 shrink-0" />
@@ -272,13 +275,11 @@ export function RepositoryNode({
             >
               <div className="flex items-center gap-2 text-xs">
                 <FolderOpen className="h-3 w-3 shrink-0" />
-                <span className="min-w-0 truncate opacity-60">
-                  {data.repositoryPath ?? 'Unknown path'}
-                </span>
+                <span className="min-w-0 truncate">{data.repositoryPath ?? 'Unknown path'}</span>
               </div>
             </div>
             <div className="text-muted-foreground border-border/50 border-t px-4 py-2">
-              <div className="flex items-center gap-2 text-xs opacity-40">
+              <div className="flex items-center gap-2 text-xs">
                 <GitBranch className="h-3 w-3 shrink-0" />
                 <span>{t('repositoryNode.notAGitRepository')}</span>
               </div>
@@ -334,7 +335,7 @@ export function RepositoryNode({
               ) : (
                 <span className="text-muted-foreground inline-flex items-baseline gap-2">
                   <span>{t('repositoryNode.run')}</span>
-                  <span className="text-muted-foreground/50 text-[10px]">
+                  <span className="text-muted-foreground text-xs">
                     {t('repositoryNode.startLocalEnvironment')}
                   </span>
                 </span>
@@ -376,7 +377,7 @@ function ToolbarActionButton({ action }: { action: RepositoryAction }) {
               icon={action.icon}
               iconOnly
               variant="ghost"
-              size="icon-xs"
+              size="icon-sm"
               disabled={action.disabled}
               {...(!action.error && { className: TONE_CLASS[action.tone] })}
             />
@@ -407,7 +408,7 @@ function ChatActionButton({
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={action.label}
             onClick={(e) => {
               e.stopPropagation();

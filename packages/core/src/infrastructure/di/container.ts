@@ -93,6 +93,7 @@ import { registerCluster } from './modules/register-cluster.js';
 import { registerSecurity } from './modules/register-security.js';
 import { registerScheduledWorkflows } from './modules/register-scheduled-workflows.js';
 import { registerPlugins } from './modules/register-plugins.js';
+import { PruneRetainedDataUseCase } from '../../application/use-cases/maintenance/prune-retained-data.use-case.js';
 
 let _initialized = false;
 
@@ -134,6 +135,18 @@ export async function initializeContainer(): Promise<typeof container> {
   registerSecurity(container);
   registerScheduledWorkflows(container);
   registerPlugins(container);
+
+  // ─── Retention housekeeping ──────────────────────────────────────────────
+  // Shep has no always-on component to hang a timer on — the daemon may never
+  // have been started — so history is pruned on process start. The use case
+  // claims a once-a-day cycle first, so the usual cost here is one indexed
+  // point read. Housekeeping must never be the reason Shep fails to start.
+  try {
+    await container.resolve(PruneRetainedDataUseCase).execute();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[shep] data retention prune skipped:', error);
+  }
 
   // ─── Eager deployment service ────────────────────────────────────────────
   // DeploymentService needs the database and calls `recoverAll()` at startup,
@@ -180,7 +193,16 @@ export async function initializeContainer(): Promise<typeof container> {
       const gitPrService = c.resolve<IGitPrService>('IGitPrService');
       const notifService = c.resolve<INotificationService>('INotificationService');
       const execFnResolved = c.resolve<ExecFunction>('ExecFunction');
-      return new GitHubWebhookService(featureRepo, gitPrService, notifService, execFnResolved);
+      // The webhook service runs inside the daemon; give it the container's
+      // logger rather than letting it fall back to its own ConsoleLogger.
+      const webhookLogger = c.resolve<ILogger>('ILogger');
+      return new GitHubWebhookService(
+        featureRepo,
+        gitPrService,
+        notifService,
+        execFnResolved,
+        webhookLogger
+      );
     },
   });
 

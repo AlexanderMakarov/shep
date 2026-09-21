@@ -1,0 +1,52 @@
+name: review-and-experience-polish
+phase: Research
+summary: >-
+  Use the existing semantic design tokens, query cache and status model. Avoid new production
+  dependencies.
+openQuestions: []
+decisions:
+  - title: Workspace navigation
+    chosen: Client-side search and status filters over the existing cached applications list
+    rejected:
+      - New API endpoints and persisted filters
+      - A new dashboard framework
+    rationale: >-
+      The complete list is already fetched; local filtering is immediate, reversible and consistent
+      with current ownership.
+  - title: Story fixtures
+    chosen: Isolated QueryClient seeded per story
+    rejected:
+      - Unsupported applications props
+      - Global fetch mutation
+    rationale: >-
+      The component reads TanStack Query; stories must exercise that interface and remain
+      deterministic.
+  - title: Visual direction
+    chosen: >-
+      Existing blue accent, restrained tonal surfaces, generous spacing, clear type hierarchy and
+      responsive cards
+    rejected:
+      - Unrelated brand redesign
+      - Decorative animations and external image assets
+    rationale: >-
+      Extend the established design system; communicate application readiness and next actions
+      without visual noise.
+sources:
+  - url: https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html
+    retrieved: '2026-09-20T19:18:58.457Z'
+    application: Announce loading, search results and failed actions without moving focus.
+  - url: https://www.w3.org/WAI/WCAG22/Understanding/reflow.html
+    retrieved: '2026-09-20T19:18:58.457Z'
+    application: Validate narrow viewports without page-level horizontal overflow.
+  - url: https://react.dev/reference/react/useEffect
+    retrieved: '2026-09-20T19:18:58.457Z'
+    application: Clean up asynchronous UI effects and guard obsolete completions.
+  - url: https://tanstack.com/query/latest/docs/framework/react/reference/classes/QueryClient
+    retrieved: '2026-09-20T19:18:58.457Z'
+    application: Seed story data through QueryClient.setQueryData.
+content: >
+  ## Security and Performance
+
+  Preserve the existing server boundaries and per-call agent resolution. Search only operates on
+  data already visible to the user. Keep polling intervals and cached stale-data recovery. Verify
+  dependencies using the installed lockfile and package audit.

@@ -1,6 +1,9 @@
+import { useMemo } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Meta, StoryObj } from '@storybook/react';
 import { ApplicationsPageClient } from './applications-page-client';
 import { ApplicationStatus } from '@shepai/core/domain/generated/output';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { ApplicationWithStatus } from '@shepai/core/application/use-cases/applications/list-applications.use-case';
 
 const now = new Date().toISOString();
@@ -82,8 +85,44 @@ const meta: Meta<typeof ApplicationsPageClient> = {
   title: 'Features/ApplicationsPageClient',
   component: ApplicationsPageClient,
   parameters: {
-    layout: 'padded',
+    layout: 'fullscreen',
+    applications: mockApps,
   },
+  decorators: [
+    (Story, { parameters }) => {
+      const client = useMemo(() => {
+        const queryClient = new QueryClient({
+          defaultOptions: { queries: { enabled: false, retry: false } },
+        });
+        queryClient.setQueryData(['deployments', 'all'], []);
+        if (parameters.queryState === 'loading') {
+          void queryClient.fetchQuery({
+            queryKey: ['applications'],
+            queryFn: () => new Promise<ApplicationWithStatus[]>(() => undefined),
+          });
+        } else if (parameters.queryState) {
+          queryClient
+            .getQueryCache()
+            .build(queryClient, { queryKey: ['applications'] })
+            .setState({
+              status: parameters.queryState === 'error' ? 'error' : 'pending',
+              fetchStatus: parameters.queryState === 'error' ? 'idle' : 'fetching',
+              error: parameters.queryState === 'error' ? new Error('Daemon unavailable') : null,
+            });
+        } else {
+          queryClient.setQueryData(['applications'], parameters.applications);
+        }
+        return queryClient;
+      }, [parameters.applications, parameters.queryState]);
+      return (
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <Story />
+          </TooltipProvider>
+        </QueryClientProvider>
+      );
+    },
+  ],
   tags: ['autodocs'],
 };
 
@@ -91,19 +130,28 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
-  args: { applications: mockApps },
+  parameters: { applications: mockApps },
 };
 
 export const Empty: Story = {
-  args: { applications: [] },
+  parameters: { applications: [] },
 };
 
 export const SingleApp: Story = {
-  args: { applications: [mockApps[0]] },
+  parameters: { applications: [mockApps[0]] },
 };
 
 export const AllActive: Story = {
-  args: {
-    applications: mockApps.map((app) => ({ ...app, status: ApplicationStatus.Active })),
+  parameters: {
+    applications: mockApps.map((app) => ({
+      ...app,
+      status: ApplicationStatus.Active,
+      effectiveStatus: 'building',
+    })),
   },
 };
+
+export const Loading: Story = { parameters: { queryState: 'loading' } };
+export const LoadError: Story = { parameters: { queryState: 'error' } };
+export const Mobile: Story = { parameters: { viewport: { defaultViewport: 'mobile1' } } };
+export const Dark: Story = { parameters: { backgrounds: { default: 'dark' } } };

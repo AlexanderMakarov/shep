@@ -3,19 +3,31 @@
 Every feature begins with a specification before any code is written.
 
 ```
-/shep-kit:new-feature → /shep-kit:research → /shep-kit:plan → /shep-kit:implement → /shep-kit:commit-pr → /shep-kit:merged
+/shep-kit:new-feature → /shep-kit:research → /shep-kit:plan → /shep-kit:implement → /shep-kit:commit-pr
 ```
+
+`/shep-kit:merged` runs afterwards, once the PR is actually merged — it is
+cleanup, not a sixth step of the authoring chain.
 
 ## Quick Reference
 
-| Command                 | Purpose                   | Output                                        |
-| ----------------------- | ------------------------- | --------------------------------------------- |
-| `/shep-kit:new-feature` | Start new feature         | Branch + `spec.yaml`                          |
-| `/shep-kit:research`    | Technical analysis        | `research.yaml`                               |
-| `/shep-kit:plan`        | Implementation plan       | `plan.yaml` + `tasks.yaml`                    |
-| `/shep-kit:implement`   | Autonomous implementation | Code + tests + updated `feature.yaml`         |
-| `/shep-kit:commit-pr`   | Commit, push, PR, CI      | Pull request (watches CI, fixes failures)     |
-| `/shep-kit:merged`      | Post-merge cleanup        | Clean workspace                               |
+| Command                 | Purpose                   | Output                                    |
+| ----------------------- | ------------------------- | ----------------------------------------- |
+| `/shep-kit:new-feature` | Start new feature         | Branch + `spec.yaml`                      |
+| `/shep-kit:research`    | Technical analysis        | `research.yaml`                           |
+| `/shep-kit:plan`        | Implementation plan       | `plan.yaml` + `tasks.yaml`                |
+| `/shep-kit:implement`   | Autonomous implementation | Code + tests + updated `feature.yaml`     |
+| `/shep-kit:commit-pr`   | Commit, push, PR, CI      | Pull request (watches CI, fixes failures) |
+
+After the merge:
+
+| Command            | Purpose            | Output          |
+| ------------------ | ------------------ | --------------- |
+| `/shep-kit:merged` | Post-merge cleanup | Clean workspace |
+
+Each of these is a skill under `.claude/skills/shep-kit-<name>/SKILL.md`.
+Variants exist alongside them: `new-feature-fast`, `fast-loop`, `status` and
+`parallel-task`.
 
 ## Spec Directory
 
@@ -84,7 +96,7 @@ Agent designs architecture and breaks work into TDD phases. Plans **must** defin
 
 Commits, pushes, creates PR, watches CI. If CI fails: fixes and retries. Then watches for review comments and applies fixes autonomously (max 5 iterations).
 
-### 6. Merged
+### After merge: `/shep-kit:merged`
 
 Switches to main, pulls, deletes feature branch, marks `feature.yaml` complete.
 

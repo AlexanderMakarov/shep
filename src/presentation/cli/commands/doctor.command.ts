@@ -1,10 +1,11 @@
 /**
  * Doctor Command
  *
- * `shep doctor` — diagnose the contributor environment. Runs every
- * registered `IDiagnostic` strategy via the `RunDoctorUseCase`, prints a
- * structured table (status / name / detail / fix-hint), and exits with a
- * non-zero code when any diagnostic is `fail`.
+ * `shep doctor` — diagnose the contributor environment. Prints the build
+ * identity (CLI version, Node version, OS, git SHA) as a paste-ready line,
+ * runs every registered `IDiagnostic` strategy via the `RunDoctorUseCase`,
+ * prints a structured table (status / name / detail / fix-hint), and exits
+ * with a non-zero code when any diagnostic is `fail`.
  *
  * Presentation only: no business logic. The use case owns aggregation;
  * this command owns formatting + exit-code mapping.
@@ -60,6 +61,14 @@ function renderReport(report: DoctorReportWithSummary, out: (line: string) => vo
   out('');
   out(`  ${fmt.heading('shep doctor')}`);
   out('');
+
+  // Build identity first: this is the command users are told to run for a
+  // bug report, and it used to print no version at all. One line, no
+  // colour codes in the value, so it survives a copy-paste into an issue.
+  if (report.buildIdentityLine !== null) {
+    out(`  ${colors.muted('Build:')} ${report.buildIdentityLine}`);
+    out('');
+  }
 
   // Header row
   out(

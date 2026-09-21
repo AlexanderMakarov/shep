@@ -14,7 +14,9 @@ import { PassThrough } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { CopilotCliExecutorService } from '@/infrastructure/services/agents/common/executors/copilot-cli-executor.service.js';
 import type { SpawnFunction } from '@/infrastructure/services/agents/common/types.js';
-import { AgentType, AgentFeature } from '@/domain/generated/output.js';
+import { AgentType, AgentFeature, SecurityMode } from '@/domain/generated/output.js';
+import { SecurityViolationError } from '@/domain/errors/security-violation.error.js';
+import { strictConstraints } from './security-constraints.fixture.js';
 import type { AgentConfig } from '@/domain/generated/output.js';
 
 /**
@@ -924,6 +926,149 @@ describe('CopilotCliExecutorService', () => {
       expect(spawnArgs[0]).toBe('-p');
       expect(spawnArgs[1]).not.toBe(largePrompt);
       expect(spawnArgs[1]).toContain('The full original user prompt is stored in this file:');
+    });
+  });
+  // --- defects proven by audit: UTF-8, structured content, signals, policy ---
+
+  describe('multi-byte output', () => {
+    it('should not corrupt a character split across two stdout chunks', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const answer = 'héllo — ✅ 日本語 🚀 done';
+      const payload = Buffer.from(`${assistantMessage(answer)}\n`, 'utf8');
+      const splitAt = payload.indexOf(Buffer.from('🚀', 'utf8')) + 2;
+
+      const executePromise = executor.execute('Prompt', { silent: true });
+      process.nextTick(() => {
+        mockProc.stdout.write(payload.subarray(0, splitAt));
+        mockProc.stdout.write(payload.subarray(splitAt));
+        mockProc.stdout.end();
+        mockProc.stderr.end();
+        mockProc.emit('close', 0);
+      });
+
+      expect((await executePromise).result).toBe(answer);
+    });
+  });
+
+  describe('structured message content', () => {
+    it('should read text out of content blocks instead of stringifying the object', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const blocks = JSON.stringify({
+        type: 'assistant.message',
+        content: [
+          { type: 'text', text: 'The fix is ' },
+          { type: 'text', text: 'in foo.ts' },
+        ],
+      });
+
+      const executePromise = executor.execute('Prompt', { silent: true });
+      emitJsonlLines(mockProc, [blocks], null, 0);
+
+      const result = await executePromise;
+      expect(result.result).not.toContain('[object Object]');
+      expect(result.result).toBe('The fix is in foo.ts');
+    });
+
+    it('should carry block text into the streamed result event too', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const events: { type: string; content: string }[] = [];
+      const gen = executor.executeStream('Prompt', { silent: true });
+
+      process.nextTick(() => {
+        mockProc.stdout.write(
+          `${JSON.stringify({
+            type: 'assistant.message',
+            content: [{ type: 'text', text: 'blocked answer' }],
+          })}\n`
+        );
+        mockProc.stdout.write(`${resultEvent('sess-1')}\n`);
+        mockProc.stdout.end();
+        mockProc.stderr.end();
+        mockProc.emit('close', 0);
+      });
+
+      for await (const event of gen) {
+        events.push({ type: event.type, content: event.content });
+      }
+
+      expect(events).toContainEqual({ type: 'result', content: 'blocked answer' });
+    });
+  });
+
+  describe('signal termination', () => {
+    it('should reject when the CLI is killed by a signal with nothing captured', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Prompt', { silent: true });
+      process.nextTick(() => {
+        mockProc.stdout.end();
+        mockProc.stderr.end();
+        mockProc.emit('close', null, 'SIGKILL');
+      });
+
+      await expect(executePromise).rejects.toThrow(/SIGKILL/);
+    });
+
+    it('should still return work already captured before the signal', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Prompt', { silent: true });
+      emitJsonlLines(mockProc, [assistantMessage('partial work')], null, null);
+
+      expect((await executePromise).result).toBe('partial work');
+    });
+  });
+
+  describe('security constraints', () => {
+    it('should refuse execute() under an enforced strict sandbox', async () => {
+      await expect(
+        executor.execute('Prompt', {
+          silent: true,
+          securityConstraints: strictConstraints(SecurityMode.Enforce),
+        })
+      ).rejects.toBeInstanceOf(SecurityViolationError);
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it('should refuse executeStream() under an enforced strict sandbox', async () => {
+      const iterate = async () => {
+        for await (const _event of executor.executeStream('Prompt', {
+          silent: true,
+          securityConstraints: strictConstraints(SecurityMode.Enforce),
+        })) {
+          // validation runs before the spawn
+        }
+      };
+
+      await expect(iterate()).rejects.toBeInstanceOf(SecurityViolationError);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('executeStream lifetime', () => {
+    it('should kill the child when the consumer stops iterating early', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const gen = executor.executeStream('Prompt', { silent: true });
+      process.nextTick(() => {
+        mockProc.stdout.write(`${messageDelta('first')}\n`);
+      });
+
+      for await (const _event of gen) {
+        break;
+      }
+
+      expect(mockProc.kill).toHaveBeenCalled();
     });
   });
 });

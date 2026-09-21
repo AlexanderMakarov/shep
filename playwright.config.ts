@@ -9,13 +9,14 @@ export default defineConfig({
   globalSetup: './tests/e2e/web/global-setup.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
+  failOnFlakyTests: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'github' : [['html', { open: 'never' }]],
 
   use: {
     baseURL: 'http://localhost:3001',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
 
@@ -42,10 +43,17 @@ export default defineConfig({
       : []),
   ],
 
-  /* Run your local dev server before starting the tests */
+  /* CI builds the release first; exercise the same server users run. */
   webServer: {
-    command: 'pnpm dev:web',
-    env: { PORT: '3001', SHEP_COLLABORATION_FLAG: '1', SHEP_MOCK_GATEWAY: '1' },
+    command: process.env.CI
+      ? 'node dist/src/presentation/cli/index.js ui --port 3001 --no-open'
+      : 'pnpm dev:web',
+    env: {
+      PORT: '3001',
+      SHEP_COLLABORATION_FLAG: '1',
+      SHEP_MOCK_GATEWAY: '1',
+      ...(process.env.CI ? { NODE_ENV: 'production' } : {}),
+    },
     url: 'http://localhost:3001',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

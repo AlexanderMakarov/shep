@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Clock, Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,6 +78,8 @@ export function TimeEntryList({
     if (!result.error) {
       setEntries((prev) => prev.filter((e) => e.id !== entryId));
       setTotalMinutes((prev) => prev - duration);
+    } else {
+      toast.error(result.error);
     }
   }, []);
 
@@ -194,6 +197,7 @@ export function TimeEntryList({
                   className="text-destructive h-5 w-5 p-0"
                   onClick={() => handleDelete(entry.id, entry.durationMinutes)}
                   title="Delete"
+                  data-testid={`delete-time-entry-${entry.id}`}
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>

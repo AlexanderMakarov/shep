@@ -17,19 +17,9 @@ import type {
   AgentValidationResult,
 } from '../../../../application/ports/output/agents/agent-validator.interface.js';
 
-import type { ExecFunction } from './types.js';
+import { getAgentDescriptor } from '../../../../domain/shared/agent-catalog.js';
 
-/**
- * Map of supported agent types to their binary command names.
- */
-const AGENT_BINARY_MAP: Partial<Record<AgentType, string>> = {
-  'claude-code': 'claude',
-  'codex-cli': 'codex',
-  'copilot-cli': 'copilot',
-  cursor: 'cursor-agent',
-  'gemini-cli': 'gemini',
-  cline: 'cline',
-};
+import type { ExecFunction } from './types.js';
 
 /**
  * Service that validates agent tool availability on the system.
@@ -56,15 +46,18 @@ export class AgentValidatorService implements IAgentValidator {
    * @returns Validation result with availability status and version
    */
   async isAvailable(agentType: AgentType): Promise<AgentValidationResult> {
-    // Dev type requires no binary — always available for local development
-    if (agentType === 'dev') return { available: true, version: 'dev' };
+    const descriptor = getAgentDescriptor(agentType);
 
-    // SDK-based agents require no binary — always available (auth checked at execution time)
-    if (agentType === 'openrouter' || agentType === 'together-ai' || agentType === 'ollama') {
-      return { available: true, version: 'sdk' };
-    }
+    // Mock agent requires no binary — always available for local development.
+    if (descriptor?.kind === 'mock') return { available: true, version: 'dev' };
 
-    const binary = AGENT_BINARY_MAP[agentType];
+    // SDK-based agents require no binary — always available (auth is checked at
+    // execution time). Deriving this from the catalog rather than an inline list
+    // is what stopped `llmproxy`, a fully supported agent, being reported as
+    // "not supported yet" because someone forgot to extend the list.
+    if (descriptor?.kind === 'sdk') return { available: true, version: 'sdk' };
+
+    const binary = descriptor?.supported === true ? descriptor.binary : null;
 
     if (!binary) {
       return {
@@ -74,7 +67,7 @@ export class AgentValidatorService implements IAgentValidator {
     }
 
     try {
-      const { stdout } = await this.execFn(binary, ['--version']);
+      const { stdout } = await this.execFn(binary, [...(descriptor?.versionArgs ?? ['--version'])]);
       const version = stdout.trim();
 
       return {

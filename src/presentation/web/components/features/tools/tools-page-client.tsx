@@ -57,7 +57,7 @@ export function ToolsPageClient({ tools: initialTools, className }: ToolsPageCli
         onValueChange={(value) => setActiveTab(value as TabValue)}
         data-testid="tools-page-tabs"
       >
-        <TabsList className="h-7">
+        <TabsList className="h-auto max-w-full flex-wrap justify-start gap-1">
           <TabsTrigger value="all" data-testid="tools-tab-all" className="px-2.5 text-xs">
             All
           </TabsTrigger>

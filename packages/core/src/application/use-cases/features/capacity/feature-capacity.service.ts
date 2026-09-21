@@ -19,6 +19,7 @@
 import { injectable, inject } from 'tsyringe';
 import type { IFeatureRepository } from '../../../ports/output/repositories/feature-repository.interface.js';
 import type { ISettingsRepository } from '../../../ports/output/repositories/settings.repository.interface.js';
+import type { SdlcLifecycle } from '../../../../domain/generated/output.js';
 import {
   RUNNING_LIFECYCLES,
   UNLIMITED_PARALLEL_FEATURES,
@@ -32,6 +33,26 @@ export interface QueuedFeaturePosition {
   /** 1-based: the next feature to be admitted is position 1. */
   position: number;
   queuedAt: Date;
+}
+
+/** What a caller must still be true when it takes a slot. */
+export interface ClaimSlotInput {
+  /** The feature taking the slot. */
+  featureId: string;
+  /** Lifecycle the feature moves to when the claim is won. */
+  targetLifecycle: SdlcLifecycle;
+  /** Require the feature to still be waiting in the capacity queue. */
+  requireQueued?: boolean;
+  /** Require the feature to still be in this lifecycle. */
+  requireLifecycle?: SdlcLifecycle;
+  /**
+   * The user's explicit "start anyway". Skips the cap — and ONLY the cap: the
+   * queue and lifecycle conditions still hold, because they are about whether
+   * this feature is still the caller's to start, not about resource budget.
+   */
+  bypassLimit?: boolean;
+  /** Stamp written to `updatedAt`. Defaults to now. */
+  now?: Date;
 }
 
 export interface ParallelCapacitySnapshot {
@@ -73,6 +94,12 @@ export class FeatureCapacityService {
   /**
    * May one more feature start right now?
    *
+   * An ADVISORY answer, and only ever that: it is read in one statement and
+   * acted on in another, so by the time the caller writes, another process may
+   * have taken the last slot. Use it to decide what to TELL the user (or which
+   * lifecycle to give a feature that is not being started); use
+   * {@link claimSlot} to actually take the slot.
+   *
    * Deliberately cheaper than `snapshot()` — it skips the queue query, because
    * the admission path is on the critical path of starting a feature and does
    * not care who else is waiting.
@@ -83,6 +110,36 @@ export class FeatureCapacityService {
       return true;
     }
     return hasCapacity(await this.getRunningCount(), limit);
+  }
+
+  /**
+   * Take a slot for this feature, atomically.
+   *
+   * This is the ONLY safe gate in front of a spawn. `hasCapacity()` answers in
+   * one transaction and the caller writes in another, so two `shep start`
+   * invocations could both see 2 running against a limit of 3 and both start;
+   * likewise two queue drains could both admit the same feature and put two
+   * detached workers in one git worktree. Here the count is derived INSIDE the
+   * statement that performs the write it authorises.
+   *
+   * Deriving the count rather than keeping a counter is still deliberate — see
+   * this class's header — and is unchanged: the fix is where the derivation
+   * happens, not how.
+   *
+   * @param input - The feature, its target lifecycle, and what must still hold
+   * @returns True when this call took the slot and may spawn
+   */
+  async claimSlot(input: ClaimSlotInput): Promise<boolean> {
+    const limit = input.bypassLimit === true ? UNLIMITED_PARALLEL_FEATURES : await this.getLimit();
+
+    return this.featureRepo.claimForStart({
+      featureId: input.featureId,
+      targetLifecycle: input.targetLifecycle,
+      updatedAt: input.now ?? new Date(),
+      ...(input.requireQueued === undefined ? {} : { requireQueued: input.requireQueued }),
+      ...(input.requireLifecycle === undefined ? {} : { requireLifecycle: input.requireLifecycle }),
+      capacity: { limit, runningLifecycles: [...RUNNING_LIFECYCLES] },
+    });
   }
 
   /** Full read model: limit, running count, remaining slots, and the queue. */

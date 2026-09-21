@@ -25,3 +25,8 @@ export const Pending: Story = {
 export const Failure: Story = {
   args: { status: CiStatus.Failure },
 };
+
+/** CI could not be read (rate limit / no run observed) — amber, never a pass. */
+export const Indeterminate: Story = {
+  args: { status: CiStatus.Indeterminate },
+};

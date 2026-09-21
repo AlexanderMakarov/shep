@@ -170,3 +170,59 @@ describe('AttachmentStorageService', () => {
     });
   });
 });
+
+describe('AttachmentStorageService — path traversal', () => {
+  /**
+   * Verified exploit: `getPendingDir()` built
+   * `join(getShepHomeDir(), 'attachments', `pending-${sessionId}`)`. The
+   * filename was sanitised; the sessionId never was, and the `pending-`
+   * prefix does not help because `pending-..` is still a poppable segment.
+   * A sessionId of `"../../../../.config/systemd/user"` resolved to
+   * `~/.config/systemd/user`, which was then mkdir -p'd and written into.
+   */
+  const TRAVERSAL_ID = '../../../../.config/systemd/user';
+
+  it('refuses to store under a traversing sessionId', () => {
+    expect(() => service.store(createTestBuffer(), 'unit.service', 'text/plain', TRAVERSAL_ID)) //
+      .toThrow(/session/i);
+  });
+
+  it('writes nothing outside the attachments directory', () => {
+    const escaped = join(tmpDir, '..', '..', '..', '..', '.config', 'systemd', 'user');
+
+    try {
+      service.store(createTestBuffer(), 'unit.service', 'text/plain', TRAVERSAL_ID);
+    } catch {
+      // expected
+    }
+
+    expect(existsSync(escaped)).toBe(false);
+  });
+
+  it('refuses to commit under a traversing sessionId or slug', () => {
+    expect(() => service.commit(TRAVERSAL_ID, 'my-feature')).toThrow(/session/i);
+    expect(() => service.commit('session-1', TRAVERSAL_ID)).toThrow(/slug/i);
+  });
+
+  it('refuses to delete a traversing slug', () => {
+    // `delete()` is an rmSync(recursive) — an unvalidated slug here removes
+    // any directory the daemon's user can write.
+    expect(() => service.delete(TRAVERSAL_ID)).toThrow(/slug/i);
+  });
+
+  it('leaves the targeted directory in place when delete is refused', () => {
+    const victim = join(tmpDir, 'attachments');
+    service.store(createTestBuffer(), 'file.png', 'image/png', 'session-1');
+    expect(existsSync(victim)).toBe(true);
+
+    expect(() => service.delete('../attachments')).toThrow();
+
+    expect(existsSync(victim)).toBe(true);
+  });
+
+  it('still accepts every id shape the product actually produces', () => {
+    for (const id of ['session-1', 'onboarding', 'chat-feat-1', crypto.randomUUID()]) {
+      expect(() => service.store(createTestBuffer(id), 'file.png', 'image/png', id)).not.toThrow();
+    }
+  });
+});
