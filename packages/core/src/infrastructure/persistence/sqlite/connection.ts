@@ -180,6 +180,10 @@ function configureConnection(dbPath: string): Database.Database {
     // Publish only a fully configured connection. Failed initialization is
     // retryable and must never leave a partially configured cached handle.
     dbInstance = connection;
+    // Workers call process.exit(). Close SQLite before the OS tears down its
+    // locks and memory mappings: Windows can otherwise race a new opener with
+    // SQLITE_IOERR_TRUNCATE while recovering the shared-memory file.
+    process.once('exit', closeSQLiteConnection);
     return connection;
   } catch (error) {
     connection.close();
@@ -193,6 +197,7 @@ function configureConnection(dbPath: string): Database.Database {
  * Safe to call multiple times.
  */
 export function closeSQLiteConnection(): void {
+  process.removeListener('exit', closeSQLiteConnection);
   if (dbInstance) {
     dbInstance.close();
     dbInstance = null;

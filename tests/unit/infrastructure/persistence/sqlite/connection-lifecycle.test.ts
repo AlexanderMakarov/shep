@@ -58,6 +58,16 @@ describe('SQLite connection lifecycle', () => {
     expect(getExistingConnection()).toBe(first);
   });
 
+  it('registers one exit cleanup and removes it when the connection is closed', async () => {
+    await Promise.all([getSQLiteConnection(), getSQLiteConnection()]);
+    expect(
+      process.listeners('exit').filter((listener) => listener === closeSQLiteConnection)
+    ).toHaveLength(1);
+
+    closeSQLiteConnection();
+    expect(process.listeners('exit')).not.toContain(closeSQLiteConnection);
+  });
+
   it('closes a connection whose configuration failed and allows a fresh retry', async () => {
     const failed = connection();
     failed.pragma.mockImplementation(() => {

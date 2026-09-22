@@ -9,6 +9,10 @@ its busy handler; retry initialization within a deadline and close failed handle
 Use `runOrThrow` for successful CLI scenarios so CI retains the command and stderr.
 Serialize the settings existence check and insert in one immediate transaction;
 if another startup wins, load its persisted settings instead of replacing them.
+Close the database synchronously on process exit. A Windows probe reproduced
+`SQLITE_IOERR_TRUNCATE` when workers exited with open WAL connections; explicit
+SQLite shutdown eliminated those I/O failures. Verify cleanup before reopening
+the file, since reopening can recover the WAL and hide the missing shutdown.
 
 ## Review the complete report and the complete interaction
 
