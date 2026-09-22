@@ -12,6 +12,7 @@
  */
 
 import { injectable, inject } from 'tsyringe';
+import { execFileSync } from 'node:child_process';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -21,6 +22,7 @@ import type {
   ActiveMcpServer,
 } from '../../../application/ports/output/services/mcp-server-manager.interface.js';
 import { IS_WINDOWS } from '../../platform.js';
+import { SIGKILL_GRACE_MS } from '../agents/common/executors/process-stream.js';
 
 /** Type for the spawn function — matches node:child_process.spawn signature */
 export type SpawnFn = (
@@ -50,6 +52,16 @@ interface FeatureEntry {
   pluginNames: Set<string>;
   configPath: string | null;
 }
+
+/**
+ * How long to wait for the OS to reap a process after SIGKILL.
+ *
+ * SIGKILL cannot be caught, so this is not about giving the child a chance to
+ * clean up — it is only about letting the kernel deliver the `exit` event. Kept
+ * short because a caller that is already tearing down must not be stalled by a
+ * process that refused every polite request.
+ */
+export const REAP_GRACE_MS = 250;
 
 @injectable()
 export class McpServerManagerService implements IMcpServerManager {
@@ -118,8 +130,10 @@ export class McpServerManagerService implements IMcpServerManager {
 
       server.referenceCount--;
       if (server.referenceCount <= 0) {
-        this.killProcess(server);
+        // Drop the entry first: an exit listener registered by killProcess must
+        // not resurrect it, and a late exit for a released server is expected.
         this.servers.delete(pluginName);
+        await this.killProcess(server);
       }
     }
 
@@ -189,12 +203,16 @@ export class McpServerManagerService implements IMcpServerManager {
   /**
    * Kill all managed servers and clean up all temp files.
    * Called on SIGTERM, SIGINT, beforeExit, and explicit shutdown.
+   *
+   * Resolves only once every server has actually exited, so a caller that
+   * deletes files the child was holding (a worktree, a temp config) afterwards
+   * cannot race the OS still keeping those handles open on Windows.
    */
   async shutdown(): Promise<void> {
-    for (const server of this.servers.values()) {
-      this.killProcess(server);
-    }
+    const pending = [...this.servers.values()].map((server) => this.killProcess(server));
     this.servers.clear();
+
+    await Promise.allSettled(pending);
 
     for (const entry of this.features.values()) {
       if (entry.configPath) {
@@ -236,12 +254,79 @@ export class McpServerManagerService implements IMcpServerManager {
     return env;
   }
 
-  /** Send SIGTERM to a managed server process */
-  private killProcess(server: ManagedServer): void {
+  /**
+   * Terminate a managed server and wait for it to actually exit.
+   *
+   * SIGTERM is a request the child may ignore — an MCP server blocked on its
+   * own child routinely does. So this waits for the `exit` event and escalates
+   * to SIGKILL after {@link SIGKILL_GRACE_MS}, mirroring
+   * `terminateWithEscalation` in the agent executors. Without the wait, a
+   * caller that removes what the server was holding (a worktree, a temp config)
+   * races the OS: on Windows the child's handle on its cwd stays open until the
+   * process dies, and the removal fails with EBUSY. See LESSONS.md —
+   * "`kill()` is a signal, not a join".
+   *
+   * The exit listener is attached *before* the signal is sent: the registry
+   * drops the entry on exit, so a listener added afterwards is never reached.
+   *
+   * Never rejects — a server that is already gone is the expected case.
+   */
+  private async killProcess(server: ManagedServer): Promise<void> {
+    // The exit listener is attached before any signal is sent — see the note
+    // above about the registry dropping the entry on exit.
+    const exited = new Promise<void>((resolve) => {
+      server.process.on('exit', () => resolve());
+    });
+
+    const pid = server.process.pid;
+    const signalTree = (force: boolean) => {
+      if (!pid) return;
+      try {
+        execFileSync('taskkill', ['/T', ...(force ? ['/F'] : []), '/PID', String(pid)], {
+          stdio: 'ignore',
+        });
+      } catch {
+        // taskkill unavailable or the pid is already gone — fall through.
+      }
+    };
+
+    // Windows: signal the whole tree, not just the direct child. An MCP server
+    // launched through a wrapper script leaves the real process running when
+    // only the child is killed. Without /F first, so the server can still
+    // flush and close its own children.
+    if (IS_WINDOWS) {
+      signalTree(false);
+    }
+
     try {
       server.process.kill('SIGTERM');
     } catch {
-      // Process may have already exited
+      // Process may have already exited.
+    }
+
+    const grace = () =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, SIGKILL_GRACE_MS).unref?.();
+      });
+
+    const stillAlive = await Promise.race([exited.then(() => false), grace().then(() => true)]);
+
+    if (stillAlive) {
+      if (IS_WINDOWS) {
+        signalTree(true);
+      }
+      try {
+        server.process.kill('SIGKILL');
+      } catch {
+        // Already gone — the expected case.
+      }
+      // SIGKILL cannot be caught, so the kernel reaps the process on its own
+      // schedule. Waiting another full grace would only stall a caller that is
+      // already tearing down, so give it a short window and move on.
+      await Promise.race([
+        exited,
+        new Promise<void>((r) => setTimeout(r, REAP_GRACE_MS).unref?.()),
+      ]);
     }
   }
 }
