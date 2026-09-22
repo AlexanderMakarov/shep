@@ -18,20 +18,36 @@ function fail(stderr = 'boom'): RunCommandResult {
 describe('PnpmInstalledDiagnostic', () => {
   it('returns ok with the parsed pnpm version', async () => {
     const runner = vi.fn().mockResolvedValue(ok('9.6.0'));
-    const result = await new PnpmInstalledDiagnostic(runner).run();
+    const result = await new PnpmInstalledDiagnostic(runner, 'linux').run();
     expect(result.status).toBe(DiagnosticStatus.Ok);
     expect(result.detail).toContain('9.6.0');
     expect(runner).toHaveBeenCalledWith('pnpm', ['--version']);
   });
 
+  it('runs the pnpm cmd shim through cmd.exe on Windows', async () => {
+    const runner = vi.fn().mockResolvedValue(ok('10.34.5'));
+
+    const result = await new PnpmInstalledDiagnostic(runner, 'win32').run();
+
+    expect(result.status).toBe(DiagnosticStatus.Ok);
+    expect(result.detail).toContain('10.34.5');
+    expect(runner).toHaveBeenCalledWith('cmd.exe', ['/d', '/s', '/c', 'pnpm', '--version']);
+  });
+
   it('returns fail with fixHint when pnpm is not on PATH', async () => {
-    const result = await new PnpmInstalledDiagnostic(vi.fn().mockResolvedValue(notFound())).run();
+    const result = await new PnpmInstalledDiagnostic(
+      vi.fn().mockResolvedValue(notFound()),
+      'linux'
+    ).run();
     expect(result.status).toBe(DiagnosticStatus.Fail);
     expect(result.fixHint).toBeDefined();
   });
 
   it('returns fail when pnpm exits non-zero', async () => {
-    const result = await new PnpmInstalledDiagnostic(vi.fn().mockResolvedValue(fail())).run();
+    const result = await new PnpmInstalledDiagnostic(
+      vi.fn().mockResolvedValue(fail()),
+      'linux'
+    ).run();
     expect(result.status).toBe(DiagnosticStatus.Fail);
     expect(result.detail).toContain('exited with code 1');
   });

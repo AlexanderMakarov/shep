@@ -20,10 +20,16 @@ type CommandRunner = (binary: string, args: readonly string[]) => Promise<RunCom
 export class PnpmInstalledDiagnostic implements IDiagnostic {
   readonly name = 'pnpm-installed';
 
-  constructor(private readonly run_: CommandRunner = runCommand) {}
+  constructor(
+    private readonly run_: CommandRunner = runCommand,
+    private readonly platform_: NodeJS.Platform = process.platform
+  ) {}
 
   async run(): Promise<DiagnosticResult> {
-    const result = await this.run_('pnpm', ['--version']);
+    const result =
+      this.platform_ === 'win32'
+        ? await this.run_('cmd.exe', ['/d', '/s', '/c', 'pnpm', '--version'])
+        : await this.run_('pnpm', ['--version']);
     if (result.notFound) {
       return {
         name: this.name,
