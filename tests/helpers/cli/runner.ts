@@ -331,20 +331,25 @@ export function runCli(args: string): CliResult {
  * Security: exec is used intentionally here for test infrastructure.
  * All command arguments come from test code, not user input.
  */
-export async function runCliAsync(args: string): Promise<CliResult> {
-  const shepHome = getModuleShepHome();
+export async function runCliAsync(
+  args: string,
+  options: CliRunnerOptions = {}
+): Promise<CliResult> {
+  const shepHome = options.env?.SHEP_HOME ?? getModuleShepHome();
   const cliPath = USE_DIST_BY_DEFAULT ? CLI_PATH_DIST : CLI_PATH_DEV;
   const runner = USE_DIST_BY_DEFAULT ? 'node' : 'npx tsx';
   const command = `${runner} ${cliPath} ${args}`;
+  const timeout = options.timeout ?? DEFAULT_OPTIONS.timeout;
 
   const execOptions = {
-    cwd: DEFAULT_OPTIONS.cwd,
+    cwd: options.cwd ?? DEFAULT_OPTIONS.cwd,
     encoding: 'utf-8' as const,
-    timeout: DEFAULT_OPTIONS.timeout,
+    timeout,
     env: {
       ...process.env,
       ...DEFAULT_OPTIONS.env,
       SHEP_HOME: shepHome,
+      ...options.env,
       NO_COLOR: '1',
       FORCE_COLOR: '0',
     },
@@ -372,7 +377,7 @@ export async function runCliAsync(args: string): Promise<CliResult> {
     // killed rather than exited, which for exec means the timeout elapsed.
     const timedOut = execError.code == null;
     const stderr = String(execError.stderr ?? '').trim();
-    const timeoutNote = `[cli-runner] "shep ${args}" timed out after ${DEFAULT_OPTIONS.timeout}ms and was killed (signal=${execError.signal ?? 'unknown'}). exitCode below is a placeholder, not the command's own status.`;
+    const timeoutNote = `[cli-runner] "shep ${args}" timed out after ${timeout}ms and was killed (signal=${execError.signal ?? 'unknown'}). exitCode below is a placeholder, not the command's own status.`;
 
     return {
       stdout: String(execError.stdout ?? '').trim(),

@@ -48,7 +48,15 @@ export class InitializeSettingsUseCase {
     const newSettings = createDefaultSettings();
 
     // Persist to database
-    await this.settingsRepository.initialize(newSettings);
+    try {
+      await this.settingsRepository.initialize(newSettings);
+    } catch (error) {
+      // Another CLI or worker may have initialized the singleton since load().
+      // Reuse its persisted values rather than failing startup or overwriting them.
+      const concurrentSettings = await this.settingsRepository.load();
+      if (concurrentSettings) return concurrentSettings;
+      throw error;
+    }
 
     return newSettings;
   }

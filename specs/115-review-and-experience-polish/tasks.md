@@ -11,3 +11,5 @@ The earlier review also passed 87 CLI/TUI tests and a frozen-lockfile install. T
 ## CI and review follow-up
 
 The September 21 review identified four failing remote jobs and five additional findings. Their repairs, red/green evidence and current verification are recorded in [the CI follow-up record](evidence/ci-review-followup.yaml). Remote acceptance remains tied to every applicable check on the final pushed head.
+
+PR 876 passed its upstream and fork matrices and was merged. The subsequent September 21 scrolling, shortcut and workflow-bootstrap fixes have their own [follow-up verification record](evidence/ui-followup-review.yaml).

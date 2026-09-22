@@ -60,6 +60,49 @@ test.describe('populated page accessibility', () => {
     await expect(workspace).toBeVisible();
   });
 
+  for (const modifier of ['Meta', 'Control']) {
+    test(`Control Center keeps ${modifier} search and chat shortcuts separate`, async ({
+      page,
+    }) => {
+      await page.goto('/control-center');
+      await expect(page.getByRole('button', { name: /shep chat/i })).toBeVisible();
+      const chat = page.getByRole('dialog', { name: /shep chat/i });
+      const search = page.getByTestId('global-search-dialog');
+
+      await page.keyboard.press(`${modifier}+Shift+k`);
+      await expect(chat).toBeVisible();
+      await expect(search).not.toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(chat).not.toBeVisible();
+
+      // Some platform/layout combinations report a lowercase key with Shift held.
+      // Both global listeners must still agree on which shortcut owns the event.
+      await page.evaluate((primary) => {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'k',
+            code: 'KeyK',
+            shiftKey: true,
+            metaKey: primary === 'Meta',
+            ctrlKey: primary === 'Control',
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+      }, modifier);
+      await expect(chat).toBeVisible();
+      await expect(search).not.toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(chat).not.toBeVisible();
+
+      await page.keyboard.press(`${modifier}+k`);
+      await expect(search).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(search).not.toBeVisible();
+      await expect(chat).not.toBeVisible();
+    });
+  }
+
   test('all project view controls fit a phone', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/projects/${fixtures.ids.project}`);

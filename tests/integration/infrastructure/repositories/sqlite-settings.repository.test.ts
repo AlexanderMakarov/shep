@@ -112,6 +112,19 @@ describe('SQLiteSettingsRepository', () => {
   });
 
   describe('initialize()', () => {
+    it('allows only one concurrent initializer even when their settings IDs differ', async () => {
+      const first = { ...createTestSettings(), id: 'first-startup' };
+      const second = { ...createTestSettings(), id: 'second-startup' };
+      const results = await Promise.allSettled([
+        repository.initialize(first),
+        new SQLiteSettingsRepository(db).initialize(second),
+      ]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      expect(db.prepare('SELECT id FROM settings').all()).toEqual([{ id: first.id }]);
+    });
+
     it('should create new settings in database', async () => {
       // Arrange
       const settings = createTestSettings();

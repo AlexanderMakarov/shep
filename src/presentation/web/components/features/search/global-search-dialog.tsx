@@ -14,6 +14,7 @@ import {
   CommandSeparator,
 } from '@/components/ui/command';
 import { globalSearch } from '@/app/actions/global-search';
+import { matchesGlobalShortcut } from '@/lib/keyboard-shortcuts';
 
 interface SearchResult {
   type: 'project' | 'workItem' | 'page';
@@ -38,8 +39,9 @@ export function GlobalSearchDialog({ className }: GlobalSearchDialogProps) {
   // Register Cmd+K / Ctrl+K keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+      if (matchesGlobalShortcut(e, 'k')) {
         e.preventDefault();
+        if (e.repeat) return;
         setOpen((prev) => !prev);
       }
     };

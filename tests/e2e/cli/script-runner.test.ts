@@ -72,8 +72,15 @@ function discoverScripts(): string[] {
 
 function isDockerAvailable(): boolean {
   try {
-    execFileSync('docker', ['info'], { stdio: 'pipe', timeout: 5000 });
-    return true;
+    // The packaged-install script builds FROM node:22-slim. A running Windows
+    // container daemon cannot run that image and does not satisfy its requirement.
+    return (
+      execFileSync('docker', ['info', '--format', '{{.OSType}}'], {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+        timeout: 5000,
+      }).trim() === 'linux'
+    );
   } catch {
     return false;
   }

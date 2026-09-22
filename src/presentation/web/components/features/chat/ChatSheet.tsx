@@ -4,8 +4,9 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MessageSquare, X, Bot, GripVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { matchesGlobalShortcut } from '@/lib/keyboard-shortcuts';
 import { Button } from '@/components/ui/button';
-import { ChatTab } from './ChatTab';
+import { ChatTab } from '@/components/features/chat/ChatTab';
 import { ChatDotIndicator } from './ChatDotIndicator';
 import { useTurnStatus } from '@/hooks/turn-statuses-provider';
 import { useFabLayout } from '@/hooks/fab-layout-context';
@@ -157,8 +158,9 @@ export function GlobalChatPopup() {
   // Keyboard shortcuts: Cmd/Ctrl+Shift+K = toggle, Cmd/Ctrl+Shift+M = maximize
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+      if (matchesGlobalShortcut(e, 'k', { shift: true })) {
         e.preventDefault();
+        if (e.repeat) return;
         if (isMaximized) setIsMaximized(false);
         toggle();
         // Focus the composer input after panel opens
@@ -169,8 +171,9 @@ export function GlobalChatPopup() {
           }, 100);
         });
       }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+      if (matchesGlobalShortcut(e, 'm', { shift: true })) {
         e.preventDefault();
+        if (e.repeat) return;
         toggleMaximize();
       }
     };

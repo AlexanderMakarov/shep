@@ -29,6 +29,8 @@ import {
  */
 let dbInstance: Database.Database | null = null;
 let initialization: Promise<Database.Database> | null = null;
+const BUSY_TIMEOUT_MS = 5_000;
+const STARTUP_RETRY_DELAY_MS = 25;
 
 /**
  * Opens the database file, translating the failures a user can act on.
@@ -45,15 +47,14 @@ let initialization: Promise<Database.Database> | null = null;
 function openDatabase(dbPath: string): Database.Database {
   try {
     return new Database(dbPath, {
+      // Startup retries asynchronously; normal query waits are configured below.
+      timeout: 0,
       // eslint-disable-next-line no-console
       verbose: process.env.DEBUG_SQL ? console.log : undefined,
     });
   } catch (err) {
     if (isSqliteNativeBindingError(err)) {
       throw toSqliteNativeBindingError(err);
-    }
-    if (isSqliteBusyError(err)) {
-      throw new SqliteDatabaseBusyError(dbPath, err);
     }
     if (isSqliteCorruptionError(err)) {
       // Too damaged for SQLite to open at all — the quick-check path below
@@ -64,6 +65,7 @@ function openDatabase(dbPath: string): Database.Database {
         describeQuarantine(salvagedPath, [err instanceof Error ? err.message : String(err)])
       );
       return new Database(dbPath, {
+        timeout: 0,
         // eslint-disable-next-line no-console
         verbose: process.env.DEBUG_SQL ? console.log : undefined,
       });
@@ -105,7 +107,28 @@ async function initializeConnection(): Promise<Database.Database> {
 
   // Get database path
   const dbPath = getShepDbPath();
+  const deadline = Date.now() + BUSY_TIMEOUT_MS;
 
+  while (true) {
+    try {
+      return configureConnection(dbPath);
+    } catch (error) {
+      if (!isSqliteBusyError(error)) throw error;
+
+      // Switching journal modes and recovering/closing a WAL can report BUSY
+      // without invoking SQLite's busy handler. A new CLI and a detached worker
+      // can hit this race even when busy_timeout is set. Close the failed handle
+      // before retrying so it cannot keep the other process's lock upgrade stuck.
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new SqliteDatabaseBusyError(dbPath, error);
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(STARTUP_RETRY_DELAY_MS, remaining))
+      );
+    }
+  }
+}
+
+function configureConnection(dbPath: string): Database.Database {
   let connection = openDatabase(dbPath);
 
   try {
@@ -152,7 +175,7 @@ async function initializeConnection(): Promise<Database.Database> {
     // Wait up to 5s for write locks before failing with SQLITE_BUSY. Without
     // this, concurrent SSE polls + watcher writes (PR sync, notifications,
     // auto-archive) can race and surface "database is locked" errors.
-    connection.pragma('busy_timeout = 5000');
+    connection.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
 
     // Publish only a fully configured connection. Failed initialization is
     // retryable and must never leave a partially configured cached handle.

@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, statSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { createCliRunner } from '../../helpers/cli/index.js';
+import { createCliRunner, runCliAsync } from '../../helpers/cli/index.js';
 
 /**
  * Per-CLI-spawn budget, taken from the runner's own platform-aware default
@@ -129,23 +129,23 @@ describe('CLI: settings initialization', () => {
   it(
     'should handle multiple concurrent CLI invocations safely',
     async () => {
-      const runner = createCliRunner({
-        env: { SHEP_HOME: shepDir },
-      });
-
-      const promises = [
-        Promise.resolve(runner.run('version')),
-        Promise.resolve(runner.run('--version')),
-        Promise.resolve(runner.run('--help')),
-      ];
+      const promises = ['version', '--version', '--help'].map((command) =>
+        runCliAsync(command, { env: { SHEP_HOME: shepDir } })
+      );
 
       const results = await Promise.all(promises);
 
       results.forEach((result) => {
-        expect(result.success).toBe(true);
+        expect(result.success, JSON.stringify(result)).toBe(true);
       });
 
       expect(existsSync(dbPath)).toBe(true);
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        expect(db.prepare('SELECT id FROM settings').all()).toHaveLength(1);
+      } finally {
+        db.close();
+      }
     },
     timeoutForRuns(3)
   );

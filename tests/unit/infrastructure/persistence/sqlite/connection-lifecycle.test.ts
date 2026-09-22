@@ -24,7 +24,7 @@ vi.mock('@/infrastructure/persistence/sqlite/database-integrity.js', () => ({
   quarantineDatabaseFile: vi.fn(),
   describeQuarantine: vi.fn(),
   isSqliteCorruptionError: () => false,
-  isSqliteBusyError: () => false,
+  isSqliteBusyError: (error: { code?: string }) => error?.code === 'SQLITE_BUSY',
 }));
 
 import {
@@ -45,7 +45,10 @@ describe('SQLite connection lifecycle', () => {
     mocks.open.mockImplementation(connection);
   });
 
-  afterEach(() => closeSQLiteConnection());
+  afterEach(() => {
+    closeSQLiteConnection();
+    vi.useRealTimers();
+  });
 
   it('shares one initialized connection between concurrent first callers', async () => {
     const [first, second] = await Promise.all([getSQLiteConnection(), getSQLiteConnection()]);
@@ -81,6 +84,62 @@ describe('SQLite connection lifecycle', () => {
     await expect(getSQLiteConnection()).rejects.toThrow('integrity check failed');
     expect(getExistingConnection()).toBeNull();
     expect(failed.close).toHaveBeenCalledTimes(1);
+    await expect(getSQLiteConnection()).resolves.toBeDefined();
+  });
+
+  it('retries a transient startup lock and shares the recovered connection', async () => {
+    const failed = connection();
+    failed.pragma.mockImplementation(() => {
+      throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    });
+    mocks.open.mockReturnValueOnce(failed);
+
+    const [first, second] = await Promise.all([getSQLiteConnection(), getSQLiteConnection()]);
+
+    expect(first).toBe(second);
+    expect(first).not.toBe(failed);
+    expect(failed.close).toHaveBeenCalledTimes(1);
+    expect(mocks.open).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a transient lock while opening the database', async () => {
+    mocks.open.mockImplementationOnce(() => {
+      throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    });
+
+    await expect(getSQLiteConnection()).resolves.toBeDefined();
+    expect(mocks.open).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes and retries when the integrity check encounters a transient lock', async () => {
+    const failed = connection();
+    mocks.open.mockReturnValueOnce(failed);
+    mocks.quickCheck.mockImplementationOnce(() => {
+      throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    });
+
+    await expect(getSQLiteConnection()).resolves.toBeDefined();
+    expect(failed.close).toHaveBeenCalledTimes(1);
+    expect(mocks.open).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds persistent startup lock retries and leaves no cached connection', async () => {
+    vi.useFakeTimers();
+    const failed = connection();
+    failed.pragma.mockImplementation(() => {
+      throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    });
+    mocks.open.mockReturnValue(failed);
+
+    const outcome = getSQLiteConnection().catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(await outcome).toMatchObject({ name: 'SqliteDatabaseBusyError' });
+    expect(getExistingConnection()).toBeNull();
+    expect(mocks.open.mock.calls.length).toBeGreaterThan(1);
+    expect(failed.close).toHaveBeenCalledTimes(mocks.open.mock.calls.length);
+
+    mocks.open.mockImplementation(connection);
     await expect(getSQLiteConnection()).resolves.toBeDefined();
   });
 });

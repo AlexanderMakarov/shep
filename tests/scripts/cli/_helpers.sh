@@ -85,7 +85,8 @@ assert_file_exists() {
 # --- Docker helpers ---
 
 docker_available() {
-  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+  command -v docker >/dev/null 2>&1 &&
+    [ "$(docker info --format '{{.OSType}}' 2>/dev/null)" = linux ]
 }
 
 # Run a Docker container and capture output + exit code.

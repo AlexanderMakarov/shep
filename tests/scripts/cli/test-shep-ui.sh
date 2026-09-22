@@ -2,7 +2,7 @@
 # Tests that shep works after npm pack + global install in a clean Docker container.
 # Validates package structure, version command, and ui server startup.
 #
-# Requirements: Docker
+# Requirements: Docker (Linux containers)
 # Timeout: 300
 
 set -euo pipefail
@@ -15,7 +15,7 @@ log_section "Test: shep ui (Docker packaged install)"
 
 # --- Preconditions ---
 if ! docker_available; then
-  log_warn "Docker is not available — skipping"
+  log_warn "Docker with Linux container support is not available — skipping"
   exit 2
 fi
 

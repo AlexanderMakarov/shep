@@ -1,5 +1,23 @@
 # Lessons Learned
 
+## Exercise real concurrency and retain subprocess errors
+
+`Promise.resolve(runner.run(...))` still runs each synchronous CLI command in
+sequence. Use asynchronous child processes sharing an isolated database to test
+startup races. SQLite can return `SQLITE_BUSY` during WAL startup without calling
+its busy handler; retry initialization within a deadline and close failed handles.
+Use `runOrThrow` for successful CLI scenarios so CI retains the command and stderr.
+Serialize the settings existence check and insert in one immediate transaction;
+if another startup wins, load its persisted settings instead of replacing them.
+
+## Review the complete report and the complete interaction
+
+Inspect a supplied recording's audio as well as its frames before narrowing the
+reported problem. Check long pages halfway down and at the bottom in both themes;
+an above-the-fold screenshot misses a background that ends at the first viewport.
+Exercise global shortcuts together, including extra modifiers and held keys, so
+one gesture cannot open competing panels or repeatedly toggle the same panel.
+
 ## Exercise native compilation independently of caches
 
 Green PR jobs can hide an incompatible native build toolchain when they download
@@ -2397,6 +2415,11 @@ Rules:
    somewhere a human looks daily.
 4. **Verify the build context, not just the Dockerfile text.** `.dockerignore` decides whether
    a COPY can resolve at all; confirm the file lands at the exact path the hook invokes.
+5. **Dependency patches are install inputs.** Copy `patches/` before every install stage
+   when `pnpm.patchedDependencies` references it; `--ignore-scripts` does not skip patches.
+6. **Probe native modules in the final runtime.** With scripts disabled, rebuilding only
+   `better-sqlite3` leaves `node-pty` unavailable. Exercise a database query, terminal spawn,
+   and web readiness as the image's default user after the build succeeds.
 
 ## An issue reference in a commit body makes commitlint fail `footer-leading-blank`
 

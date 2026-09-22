@@ -9,7 +9,7 @@
  */
 
 import 'reflect-metadata';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InitializeSettingsUseCase } from '@/application/use-cases/settings/initialize-settings.use-case.js';
 import { MockSettingsRepository } from '../../../helpers/mock-repository.helper.js';
 import { createDefaultSettings } from '@/domain/factories/settings-defaults.factory.js';
@@ -115,6 +115,24 @@ describe('InitializeSettingsUseCase', () => {
   });
 
   describe('edge cases', () => {
+    it('returns the persisted settings when another startup initializes them first', async () => {
+      const winner = createDefaultSettings();
+      winner.user.name = 'Concurrent user';
+      vi.spyOn(mockRepository, 'initialize').mockImplementation(async () => {
+        mockRepository.setSettings(winner);
+        throw new Error('Settings already exist');
+      });
+
+      await expect(useCase.execute()).resolves.toBe(winner);
+    });
+
+    it('preserves an initialization failure when no settings were persisted', async () => {
+      const failure = new Error('storage failed');
+      vi.spyOn(mockRepository, 'initialize').mockRejectedValue(failure);
+
+      await expect(useCase.execute()).rejects.toBe(failure);
+    });
+
     it('should handle rapid consecutive calls correctly', async () => {
       // Arrange
       mockRepository.setSettings(null);

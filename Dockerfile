@@ -21,6 +21,7 @@ WORKDIR /app
 
 # Copy only dependency files first (maximizes cache hits)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY src/presentation/web/package.json ./src/presentation/web/package.json
 COPY packages/core/package.json ./packages/core/package.json
 
@@ -29,7 +30,7 @@ RUN apk add --no-cache python3 make g++
 
 # Install production dependencies and rebuild native addons
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts && \
-    pnpm rebuild better-sqlite3
+    pnpm rebuild better-sqlite3 node-pty
 
 # =============================================================================
 # Stage 2: Build TypeScript
@@ -42,6 +43,7 @@ WORKDIR /app
 
 # Copy dependency and config files (workspace config + all package.json files first for cache)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.build.json tspconfig.yaml ./
+COPY patches/ ./patches/
 COPY src/presentation/web/package.json ./src/presentation/web/package.json
 COPY packages/core/package.json ./packages/core/package.json
 

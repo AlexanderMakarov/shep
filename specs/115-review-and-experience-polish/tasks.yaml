@@ -94,7 +94,7 @@ tasks:
   - id: task-6
     phaseId: phase-6
     title: Close PR review findings and verify the final pushed CI matrix
-    state: WIP
+    state: Done
     dependencies:
       - task-5
     acceptanceCriteria:
@@ -151,4 +151,9 @@ content: >
   repairs, red/green evidence and current verification are recorded in
   [the CI follow-up record](evidence/ci-review-followup.yaml). Remote acceptance remains tied to
   every applicable check on the final pushed head.
+
+
+  PR 876 passed its upstream and fork matrices and was merged. The subsequent September 21
+  scrolling, shortcut and workflow-bootstrap fixes have their own
+  [follow-up verification record](evidence/ui-followup-review.yaml).
 totalEstimate: L

@@ -1,0 +1,54 @@
+date: '2026-09-21'
+recoveredSession: 01a0c363-ec78-7072-a018-5f0d0bf799ce
+run: 53a3a7c8d23f
+scope: >-
+  Finish the interrupted repair of the Applications scroll background and overlapping search/chat
+  shortcuts, then verify the complete production browser suite and current CI failures.
+reports:
+  - The supplied video and its Hebrew audio describe a white-to-grey boundary while scrolling.
+  - The supplied screenshot reports Command+Shift+K opening both Search and Shep Chat.
+  - The screenshot also assigns Fleet cleanup to the maintainer's separate branch.
+repairs:
+  - finding: The Applications content background shrank to one viewport while cards overflowed.
+    change: Use a non-flex scroll container so the page surface grows through the last card row.
+    red: Four browser cases failed at desktop and phone widths, in both themes.
+    green: All four cases pass at halfway and bottom scroll positions, without horizontal overflow.
+  - finding: Search and chat shortcut handlers accepted overlapping modifier combinations.
+    change: >-
+      Share chord matching across Search, Chat and Sidebar; require the intended Shift state,
+      preserve Alt-modified and already handled events, ignore IME composition, and consume
+      held-key repeats without toggling again.
+    red: 24 focused unit regressions and both Control/Command browser collision cases failed.
+    green: >-
+      All 56 focused component tests pass. Both browser shortcuts open only the intended panel;
+      Escape, unshifted search and lowercase shifted key events remain covered.
+  - finding: The issue-labeling runner could not spawn its agent and omitted OAuth configuration.
+    red: https://github.com/shep-ai/shep/actions/runs/35623963185
+    change: >-
+      Install and verify the Claude CLI using the existing scheduled-workflow installation pattern,
+      pass the existing OAuth secret to grooming, and report a missing secret before invoking it.
+    verification: >-
+      Validate the edited workflow with actionlint and shell syntax checks. Live grooming still
+      requires the maintainer to restore the existing organization's OAuth subscription access.
+localVerification:
+  applicationSourceCommit: 07fcd2b300637150f9208f508ecac7f98dcc6f98
+  browser: 79 production-browser scenarios passed, zero retries and zero skips.
+  focusedComponents: 4 files and 56 tests passed.
+  releaseBuild: passed
+  storybookBuild: passed
+  typechecks: Root and web passed.
+  lintAndFormatting: passed
+  storyCoverage: 276 of 340 components have stories; 64 existing exceptions remain.
+  specValidation: Completeness, architecture and consistency passed.
+priorCiRepair:
+  upstream: https://github.com/shep-ai/shep/pull/878
+  fork: https://github.com/bensynapse/shep/pull/3
+  result: All applicable checks passed, including forced Windows SQLite source compilation.
+  dependency: This follow-up includes the pending Windows repair until PR 878 is merged.
+remoteAcceptance:
+  requirement: Check all applicable jobs on the final pushed source tree in upstream and the fork.
+  evidence: The run directory retains current checks and build logs independently of this source commit.
+limitations:
+  - Fleet cleanup is owned by the maintainer and is outside the requested follow-up fixes.
+  - Restoring organization subscription access requires the maintainer's account permissions.
+  - Source and browser verification cannot establish universal correctness or accessibility.

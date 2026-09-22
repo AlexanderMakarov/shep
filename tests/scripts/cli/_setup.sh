@@ -8,7 +8,7 @@
 #   TARBALL_PATH  - absolute path to the .tgz after create_tarball()
 #
 # Functions:
-#   create_tarball  - runs npm pack (cached by version)
+#   create_tarball  - runs npm pack against the current build
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -20,7 +20,6 @@ TEST_ARTIFACTS_DIR="${TEST_ARTIFACTS_DIR:-$PROJECT_ROOT/.test-artifacts}"
 TARBALL_PATH=""
 
 # Run npm pack and set TARBALL_PATH.
-# Reuses existing tarball only when build artifacts exist (so cache is valid).
 # Ensures build is run before pack so dist/ and web/ are included.
 create_tarball() {
   mkdir -p "$TEST_ARTIFACTS_DIR"
@@ -32,17 +31,10 @@ create_tarball() {
   fi
 
   local version
-  version=$(node -p "require('$PROJECT_ROOT/package.json').version")
-  local expected="$TEST_ARTIFACTS_DIR/shepai-cli-${version}.tgz"
-
-  if [ -f "$expected" ]; then
-    log_info "Reusing cached tarball: $expected"
-    TARBALL_PATH="$expected"
-    return 0
-  fi
+  version=$(cd "$PROJECT_ROOT" && node -p "require('./package.json').version")
 
   log_info "Creating npm pack tarball (v${version})..."
-  # Clean old tarballs
+  # The version does not change between local edits, so always pack the current build.
   rm -f "$TEST_ARTIFACTS_DIR"/shepai-cli-*.tgz
 
   # Run npm pack (husky prepare hook requires the destination directory to exist)

@@ -32,12 +32,6 @@ export class SQLiteSettingsRepository implements ISettingsRepository {
    * @throws Error if settings already exist (singleton constraint)
    */
   async initialize(settings: Settings): Promise<void> {
-    // Check if settings already exist (singleton constraint)
-    const existing = await this.load();
-    if (existing !== null) {
-      throw new Error('Settings already exist. Use update() to modify existing settings.');
-    }
-
     // Convert to database format
     const row = toDatabase(settings);
 
@@ -160,8 +154,16 @@ export class SQLiteSettingsRepository implements ISettingsRepository {
       )
     `);
 
-    // Execute with named parameters (safe from SQL injection)
-    stmt.run(row);
+    // Take the write lock before checking the singleton. A check followed by an
+    // awaited load lets concurrent startups insert different UUIDs into this table.
+    this.db
+      .transaction(() => {
+        if (this.db.prepare('SELECT 1 FROM settings LIMIT 1').get()) {
+          throw new Error('Settings already exist. Use update() to modify existing settings.');
+        }
+        stmt.run(row);
+      })
+      .immediate();
   }
 
   /**
@@ -170,7 +172,7 @@ export class SQLiteSettingsRepository implements ISettingsRepository {
    * @returns The existing Settings or null if not initialized
    */
   async load(): Promise<Settings | null> {
-    // Query the singleton row (table enforces at most one row)
+    // Query the singleton row created by initialize().
     const stmt = this.db.prepare('SELECT * FROM settings LIMIT 1');
 
     // Execute query
