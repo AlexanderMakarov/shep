@@ -31,12 +31,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # pnpm's bundled node-gyp requires Visual Studio 2022 for native fallback builds.
+        os: [ubuntu-latest, windows-2022, macos-latest]
         agent: [dev, claude-code]
         # cursor temporarily excluded from e2e matrix
         # agent: [dev, claude-code, cursor]
         # exclude:
-        #   - os: windows-latest
+        #   - os: windows-2022
         #     agent: cursor
 
     permissions:
@@ -293,7 +294,7 @@ jobs:
   # ===========================================================================
   claude-windows-full-sdlc:
     name: claude-code / windows / full-sdlc
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 30
 
     permissions:

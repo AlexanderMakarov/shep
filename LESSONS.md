@@ -1,5 +1,12 @@
 # Lessons Learned
 
+## Exercise native compilation independently of caches
+
+Green PR jobs can hide an incompatible native build toolchain when they download
+prebuilt binaries. After an install failure, inspect the actual runner image and
+bundled compiler tooling, force the native source-build fallback in CI, and verify
+the binding loads. Preserve required check names when pinning a runner image.
+
 ## Use the fork to verify CI while upstream approval is pending
 
 An upstream approval gate does not prevent testing in an owned fork. Check fork

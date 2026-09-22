@@ -81,11 +81,15 @@ jobs:
   # ===========================================================================
   test-unit:
     name: Unit Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        include:
+          # Keep the required check name; pnpm's node-gyp needs Visual Studio 2022.
+          - os: windows-latest
+            runner: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -100,11 +104,14 @@ jobs:
 
   test-e2e-cli:
     name: E2E CLI (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        include:
+          - os: windows-latest
+            runner: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -113,6 +120,20 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # Exercise the fallback even when a prebuilt binary or cached build exists.
+      - name: Build Windows SQLite from source
+        if: runner.os == 'Windows'
+        env:
+          npm_config_build_from_source: 'true'
+        run: pnpm rebuild better-sqlite3
+      - name: Verify Windows SQLite native binding
+        if: runner.os == 'Windows'
+        run: >-
+          node -e "const Database = require('better-sqlite3');
+          const db = new Database(':memory:');
+          require('node:assert/strict').equal(db.prepare('SELECT 1 AS value').get().value, 1);
+          db.close();
+          console.log('SQLite source build loaded and executed a query');"
       - run: pnpm run build:release
       - run: pnpm run test:e2e:cli
 
@@ -179,7 +200,7 @@ jobs:
   # ===========================================================================
   build-electron:
     name: Electron (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -190,6 +211,7 @@ jobs:
             artifact_pattern: 'packages/electron/release/*.dmg'
             artifact_name: 'electron-mac'
           - os: windows-latest
+            runner: windows-2022
             build_cmd: 'build:win'
             artifact_pattern: 'packages/electron/release/*.exe'
             artifact_name: 'electron-win'
@@ -233,7 +255,7 @@ jobs:
   # ===========================================================================
   build-electron-apps-only:
     name: Electron Apps-Only (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -244,6 +266,7 @@ jobs:
             artifact_pattern: 'packages/electron/release-apps-only/*.dmg'
             artifact_name: 'electron-apps-only-mac'
           - os: windows-latest
+            runner: windows-2022
             build_cmd: 'build:apps-only:win'
             artifact_pattern: 'packages/electron/release-apps-only/*.exe'
             artifact_name: 'electron-apps-only-win'
@@ -375,7 +398,6 @@ jobs:
         uses: peter-evans/create-or-update-comment@v5
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          comment-tag: security-summary
           body: |
             ## 🔒 Security Issues Detected
 

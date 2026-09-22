@@ -48,6 +48,21 @@ All of these live in `ci.yml` and run on Node 22.
 | **Electron**              | Desktop installers for macOS/Windows/Linux (matrix), uploaded as artifacts  |
 | **Electron Apps-Only**    | Second matrix building the `apps-only` shell variant                        |
 
+Windows jobs in `ci.yml` and `shep-e2e.yml` use `windows-2022` (Visual Studio 2022).
+GitHub migrated `windows-latest` to Visual Studio 2026, which the `node-gyp` 11.5
+bundled with pnpm 10.33.0 cannot detect. Pinning the image keeps native dependency
+installation working when a prebuilt binary is unavailable. The `ci.yml` matrix
+retains its `windows-latest` check names because branch protection requires them;
+`matrix.runner` selects the actual Windows image.
+
+The Windows CLI job also forces `better-sqlite3` to rebuild from source and runs
+an in-memory SQL query before building the CLI. This checks the fallback compiler
+path on every run, including when dependency installation uses cached binaries.
+Revisit the image pin when the package manager bundles a `node-gyp` version that
+supports Visual Studio 2026 (support was added in 12.1.0).
+See the [GitHub runner migration notice](https://github.blog/changelog/2026-05-14-github-actions-upcoming-image-migrations/)
+and [node-gyp changelog](https://github.com/nodejs/node-gyp/blob/main/CHANGELOG.md).
+
 > **Note:** Docker images are not built in the CI matrix. They are published by
 > the separate [`docker-publish.yml`](../../.github/workflows/docker-publish.yml)
 > workflow, which fires on the **published GitHub Release** — deliberately not on
