@@ -22,4 +22,15 @@ describe('getModelMeta', () => {
     expect(meta.displayName).toBe('Unknown Model');
     expect(meta.description).toBe('');
   });
+
+  it.each([
+    ['auto', 'Auto'],
+    ['composer-2.5', 'Composer 2.5'],
+    ['composer-2.5-fast', 'Composer 2.5 Fast'],
+  ])('returns display metadata for Cursor id %s', (id, displayName) => {
+    const meta = getModelMeta(id);
+
+    expect(meta.displayName).toBe(displayName);
+    expect(meta.description).not.toBe('');
+  });
 });

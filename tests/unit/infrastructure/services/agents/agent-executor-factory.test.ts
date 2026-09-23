@@ -384,6 +384,9 @@ describe('AgentExecutorFactory', () => {
       const models = factory.getSupportedModels(AgentType.Cursor);
 
       expect(models).toEqual([
+        'auto',
+        'composer-2.5',
+        'composer-2.5-fast',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
@@ -394,7 +397,6 @@ describe('AgentExecutorFactory', () => {
         'gpt-5.2',
         'gpt-5.3-codex',
         'gemini-3.1-pro-preview',
-        'composer-1.5',
         'grok-code',
       ]);
     });

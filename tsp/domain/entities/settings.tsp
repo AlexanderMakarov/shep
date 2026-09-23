@@ -62,7 +62,7 @@ import "../../agents/supervisor-policy.tsp";
  * Valid model IDs depend on the configured agent executor:
  * - claude-code: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5
  * - gemini-cli: gemini-3.1-pro, gemini-3-flash, gemini-2.5-pro, gemini-2.5-flash
- * - cursor: claude-opus-4-6, claude-sonnet-4-6, gpt-5.4, gpt-5, gpt-5.3-codex, gemini-3.1-pro, composer-1.5, grok-code
+ * - cursor: auto, composer-2.5, claude-opus-4-6, claude-sonnet-4-6, gpt-5.4, gpt-5.3-codex, gemini-3.1-pro, grok-code
  */
 @doc("AI model configuration for the SDLC agent")
 model ModelConfiguration {

@@ -111,6 +111,17 @@ describe('known drift regressions', () => {
     expect(AGENT_CATALOG[AgentType.Cursor].binary).toBe('cursor-agent');
   });
 
+  it('should list Cursor auto and composer-2.5 ahead of obsolete composer-1.5', () => {
+    // Live `cursor-agent --list-models` defaults to auto and ships composer-2.5;
+    // the static catalog must stay current until discovery (PR B) lands.
+    const models = getModelsForAgent(AgentType.Cursor);
+
+    expect(models[0]).toBe('auto');
+    expect(models).toContain('composer-2.5');
+    expect(models).toContain('composer-2.5-fast');
+    expect(models).not.toContain('composer-1.5');
+  });
+
   it('should describe codex-cli and llmproxy, which the auth table used to omit', () => {
     expect(getAgentDescriptor(AgentType.CodexCli)?.label).toBe('Codex CLI');
     expect(getAgentDescriptor(AgentType.LlmProxy)?.label).toBe('LLM Proxy');

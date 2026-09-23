@@ -49,8 +49,15 @@ const MODEL_METADATA: Record<string, ModelMeta> = {
   },
   'gpt-5': { displayName: 'GPT-5', description: 'Legacy flagship' },
 
-  // Other
-  'composer-1.5': { displayName: 'Composer 1.5', description: 'Multi-file editing' },
+  // Cursor CLI models
+  auto: { displayName: 'Auto', description: 'Cursor default model routing' },
+  'composer-2.5': { displayName: 'Composer 2.5', description: 'Cursor coding model' },
+  'composer-2.5-fast': {
+    displayName: 'Composer 2.5 Fast',
+    description: 'Faster Composer 2.5 variant',
+  },
+  // Legacy id kept for old settings rows that still store composer-1.5
+  'composer-1.5': { displayName: 'Composer 1.5', description: 'Legacy multi-file editing' },
   'grok-code': { displayName: 'Grok Code', description: 'xAI code model' },
 
   // Z.ai models

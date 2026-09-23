@@ -72,6 +72,8 @@ const CURSOR_MODEL_MAP: Record<string, string> = {
   'claude-sonnet-4-6': 'sonnet-4.6',
   'claude-haiku-4-5': 'haiku-4.5',
   'grok-code': 'grok',
+  // Obsolete catalog id → current Composer line (CLI no longer lists 1.5).
+  'composer-1.5': 'composer-2.5',
 };
 
 function toCursorModelName(model: string): string {
