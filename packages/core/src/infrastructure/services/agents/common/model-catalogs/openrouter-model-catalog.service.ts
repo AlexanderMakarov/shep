@@ -67,6 +67,8 @@ export class OpenRouterModelCatalogService extends TtlModelCatalog {
         contextLength: entry.context_length,
         isFree,
         vendor,
+        promptPrice: Number.isFinite(promptPrice) ? promptPrice : undefined,
+        completionPrice: Number.isFinite(completionPrice) ? completionPrice : undefined,
       };
     });
   }

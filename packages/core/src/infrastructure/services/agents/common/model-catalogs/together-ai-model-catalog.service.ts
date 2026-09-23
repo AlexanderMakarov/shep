@@ -65,6 +65,8 @@ export class TogetherAiModelCatalogService extends TtlModelCatalog {
           isFree,
           vendor:
             entry.organization ?? (entry.id.includes('/') ? entry.id.split('/')[0] : undefined),
+          promptPrice: input,
+          completionPrice: output,
         };
       });
   }

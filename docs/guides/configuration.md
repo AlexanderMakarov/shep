@@ -118,11 +118,19 @@ shep feat new "…" --model <id>   # per-feature override
 The default model is `claude-sonnet-4-6`. The picker only offers models the **configured agent**
 supports, so switching agents can change which models are available.
 
-For **Cursor CLI**, the picker prefers the live list from `cursor-agent --list-models` (cached
-in-process for a few minutes). **Claude Code** discovers aliases via `claude … "/model"`.
-**OpenRouter** / **Together AI** use their HTTP catalogs. If discovery fails, Shep falls back to
-the hardcoded entries in `agent-catalog.ts`. All live catalogs share one `IModelCatalog` port and
-a TTL cache (see `model-catalogs/catalog-fetch.ts`).
+Live discovery (via `IModelCatalog`, TTL-cached) when the binary/API is available:
+
+| Agent        | Discovery source                                      |
+| ------------ | ----------------------------------------------------- |
+| Cursor CLI   | `cursor-agent --list-models`                          |
+| Claude Code  | `claude -p --restricted --safe-mode "/model"`         |
+| Codex CLI    | `codex debug models`                                  |
+| OpenRouter   | `GET https://openrouter.ai/api/v1/models`             |
+| Together AI  | `GET https://api.together.xyz/v1/models` (needs key)  |
+
+If discovery fails, Shep falls back to the hardcoded list in `agent-catalog.ts`.
+OpenRouter/Together may mark free models (`isFree`); CLI catalogs do not publish
+$/token prices, and Shep does not keep a hardcoded price table.
 
 ### Adaptive model tiers
 

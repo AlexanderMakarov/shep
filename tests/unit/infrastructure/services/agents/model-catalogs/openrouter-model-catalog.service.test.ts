@@ -58,6 +58,36 @@ describe('OpenRouterModelCatalogService', () => {
         contextLength: 1000,
         isFree: true,
         vendor: 'vendor',
+        promptPrice: 0,
+        completionPrice: 0,
+      },
+    ]);
+  });
+
+  it('maps live OpenRouter pricing into isFree and per-token USD fields', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      okResponse({
+        data: [
+          {
+            id: 'vendor/paid',
+            name: 'Paid',
+            pricing: { prompt: '0.000001', completion: '0.000002' },
+          },
+        ],
+      })
+    );
+    const catalog = new OpenRouterModelCatalogService(fetchFn as unknown as typeof fetch);
+
+    await expect(catalog.listModels()).resolves.toEqual([
+      {
+        id: 'vendor/paid',
+        displayName: 'Paid',
+        description: undefined,
+        contextLength: undefined,
+        isFree: false,
+        vendor: 'vendor',
+        promptPrice: 0.000001,
+        completionPrice: 0.000002,
       },
     ]);
   });

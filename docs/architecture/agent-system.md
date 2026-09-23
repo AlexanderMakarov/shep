@@ -350,12 +350,6 @@ Supporting files in the same directory:
 - `process-stream.ts` -- reusable `createLineAccumulator()` and `killProcessTree()`
 - `security-constraint-validator.ts` -- per-execution constraint checks
 
-Dynamic model catalogs (OpenRouter HTTP, Together AI HTTP, Cursor
-`cursor-agent --list-models`, Claude Code `/model`) implement `IModelCatalog`
-under `common/model-catalogs/`, share a TTL cache via `TtlModelCatalog`, and
-are reached through `AgentExecutorFactory.listAvailableModels()` — never by
-spawning on every agent turn.
-
 `packages/core/src/domain/shared/agent-resume-descriptor.ts` (`RESUME_BINARIES`)
 records which CLI agents support session resume.
 
@@ -363,16 +357,22 @@ records which CLI agents support session resume.
 
 The agent system uses these key interfaces (defined in `packages/core/src/application/ports/output/agents/`):
 
-| Interface                     | Purpose                                          |
-| ----------------------------- | ------------------------------------------------ |
-| `IAgentExecutor`              | Execute prompts against an AI coding agent       |
-| `IAgentExecutorFactory`       | Create executor instances for a given agent type |
-| `IAgentExecutorProvider`      | Resolve the current executor from settings       |
-| `IAgentRegistry`              | Register and discover agent definitions          |
-| `IAgentRunner`                | Run agent workflows with lifecycle management    |
-| `IAgentValidator`             | Validate agent tool availability                 |
-| `IFeatureAgentProcessService` | Manage feature agent background processes        |
-| `IStructuredAgentCaller`      | Make structured (typed) calls to agents          |
+| Interface                     | Purpose                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `IAgentExecutor`              | Execute prompts against an AI coding agent                              |
+| `IAgentExecutorFactory`       | Create executor instances for a given agent type                        |
+| `IAgentExecutorProvider`      | Resolve the current executor from settings                              |
+| `IModelCatalog`               | Live model discovery per provider (HTTP or CLI); TTL-cached             |
+| `IAgentRegistry`              | Register and discover agent definitions                                 |
+| `IAgentRunner`                | Run agent workflows with lifecycle management                           |
+| `IAgentValidator`             | Validate agent tool availability                                        |
+| `IFeatureAgentProcessService` | Manage feature agent background processes                               |
+| `IStructuredAgentCaller`      | Make structured (typed) calls to agents                                 |
+
+`IModelCatalog` implementations live under `common/model-catalogs/` (OpenRouter,
+Together AI, Cursor `--list-models`, Claude Code `/model`, Codex
+`debug models`). The factory looks them up by agent type via
+`listAvailableModels()` — never on every agent turn.
 
 ## Workflow Stages
 

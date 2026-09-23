@@ -11,6 +11,7 @@ import { OpenRouterModelCatalogService } from './openrouter-model-catalog.servic
 import { TogetherAiModelCatalogService } from './together-ai-model-catalog.service.js';
 import { CursorModelCatalogService } from './cursor-model-catalog.service.js';
 import { ClaudeCodeModelCatalogService } from './claude-code-model-catalog.service.js';
+import { CodexCliModelCatalogService } from './codex-cli-model-catalog.service.js';
 
 export type ModelCatalogRegistry = ReadonlyMap<string, IModelCatalog>;
 
@@ -20,6 +21,7 @@ export function createDefaultModelCatalogs(): ModelCatalogRegistry {
     ['together-ai', new TogetherAiModelCatalogService()],
     ['cursor', new CursorModelCatalogService()],
     ['claude-code', new ClaudeCodeModelCatalogService()],
-    // Codex / Gemini / Copilot / Kimi: add when a stable list command exists.
+    ['codex-cli', new CodexCliModelCatalogService()],
+    // Gemini / Copilot / Kimi: add when a stable list command exists.
   ]);
 }
