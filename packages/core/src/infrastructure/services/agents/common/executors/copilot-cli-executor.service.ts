@@ -34,12 +34,17 @@ import { tmpdir } from 'node:os';
 import { EventChannel } from '../../streaming/event-channel.js';
 import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
 import {
+  agentTimeoutMessage,
   buildSpawnOptions,
   classifySpawnError,
   createLineAccumulator,
   createStderrTail,
+  missingTerminalEventMessage,
   signalTerminationMessage,
   terminateWithEscalation,
+  watchProcessIdle,
+  AGENT_ABORTED_MESSAGE,
+  watchAbortSignal,
 } from './process-stream.js';
 import {
   validateSecurityConstraints,
@@ -68,6 +73,9 @@ const EVENT_TYPE_MESSAGE_DELTA = 'assistant.message_delta';
 const EVENT_TYPE_MESSAGE = 'assistant.message';
 const EVENT_TYPE_RESULT = 'result';
 const EVENT_TYPE_ERROR = 'error';
+
+/** Copilot exited 0 without the event that ends every turn. */
+const TURN_NOT_COMPLETED_MESSAGE = missingTerminalEventMessage('Copilot CLI', EVENT_TYPE_RESULT);
 
 /**
  * Base flags always passed to the copilot CLI for non-interactive headless operation.
@@ -224,7 +232,10 @@ export class CopilotCliExecutorService implements IAgentExecutor {
       let resultText = '';
       let sessionId: string | undefined;
       let usage: AgentExecutionUsage | undefined;
-      let timedOut = false;
+      /** True once Copilot emitted its terminal `result` event. */
+      let resultSeen = false;
+      /** Set when the budget elapsed — the run's outcome, whatever follows. */
+      let timeoutError: string | undefined;
       let settled = false;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       let cancelEscalation: (() => void) | undefined;
@@ -232,18 +243,33 @@ export class CopilotCliExecutorService implements IAgentExecutor {
       const settle = (outcome: () => void): void => {
         if (settled) return;
         settled = true;
+        abortWatch.stop();
         if (timeoutId) clearTimeout(timeoutId);
         cancelEscalation?.();
         outcome();
       };
 
-      if (options?.timeout) {
-        timeoutId = setTimeout(() => {
-          timedOut = true;
-          log(`Timeout after ${options.timeout}ms — terminating agent`);
-          cancelEscalation = terminateWithEscalation(proc);
-        }, options.timeout);
+      /** Out of budget (total or idle): kill, and let 'close' report it. */
+      const expire = (message: string): void => {
+        if (timeoutError) return;
+        timeoutError = message;
+        log(`${message} — terminating agent`);
+        cancelEscalation = terminateWithEscalation(proc);
+      };
+
+      const timeoutMs = options?.timeout;
+      if (timeoutMs) {
+        timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
       }
+      watchProcessIdle(proc, options?.idleTimeout, (message) => {
+        if (!resultSeen) expire(message);
+      });
+      // The caller's cancel: like a timeout, 'close' reports it, so awaiting
+      // this call awaits the teardown.
+      const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+        onAbort: () => expire(AGENT_ABORTED_MESSAGE),
+        onUnreaped: () => settle(() => reject(new Error(AGENT_ABORTED_MESSAGE))),
+      });
 
       const accumulator = createLineAccumulator(
         (line) => {
@@ -253,6 +279,7 @@ export class CopilotCliExecutorService implements IAgentExecutor {
           if (parsed.type === EVENT_TYPE_MESSAGE && parsed.content) {
             resultText += contentToText(parsed.content);
           } else if (parsed.type === EVENT_TYPE_RESULT) {
+            resultSeen = true;
             if (typeof parsed.sessionId === 'string') sessionId = parsed.sessionId;
             if (parsed.usage) usage = extractUsage(parsed.usage as Record<string, unknown>);
           }
@@ -279,8 +306,8 @@ export class CopilotCliExecutorService implements IAgentExecutor {
         log(`Process closed with code ${code}, result=${resultText.length} chars`);
 
         settle(() => {
-          if (timedOut) {
-            reject(new Error('Agent execution timed out'));
+          if (timeoutError) {
+            reject(new Error(timeoutError));
             return;
           }
 
@@ -302,8 +329,17 @@ export class CopilotCliExecutorService implements IAgentExecutor {
             return;
           }
 
-          if (code === null && !resultText) {
+          // A signal kill (OOM killer, external kill) before the terminal
+          // `result` event cut the turn short, however much text had arrived.
+          if (code === null && !resultSeen) {
             reject(new Error(signalTerminationMessage(signal, stderr.text())));
+            return;
+          }
+
+          // Exit 0 without the `result` event means stdout was cut short: the
+          // captured text is a fragment, however complete it reads.
+          if (!resultSeen) {
+            reject(new Error(TURN_NOT_COMPLETED_MESSAGE));
             return;
           }
 
@@ -359,23 +395,34 @@ export class CopilotCliExecutorService implements IAgentExecutor {
     const stderr = createStderrTail();
     /** Accumulated final response text (from assistant.message events) */
     let resultText = '';
+    /** True once Copilot emitted its terminal `result` event. */
+    let resultSeen = false;
     let processClosed = false;
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    if (options?.timeout) {
-      timeoutId = setTimeout(() => {
-        timedOut = true;
-        log(`Timeout after ${options.timeout}ms — terminating agent`);
-        terminateWithEscalation(proc);
-        channel.push({
-          type: 'error',
-          content: 'Agent execution timed out',
-          timestamp: new Date(),
-        });
-        channel.close();
-      }, options.timeout);
+    /** Out of budget (total or idle): kill and end the stream with the reason. */
+    const expire = (message: string): void => {
+      if (timedOut) return;
+      timedOut = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      log(`${message} — terminating agent`);
+      terminateWithEscalation(proc);
+      channel.push({ type: 'error', content: message, timestamp: new Date() });
+      channel.close();
+    };
+
+    const timeoutMs = options?.timeout;
+    if (timeoutMs) {
+      timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
     }
+    watchProcessIdle(proc, options?.idleTimeout, (message) => {
+      if (!resultSeen) expire(message);
+    });
+    // The caller's cancel ends the stream the way a timeout does.
+    const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+      onAbort: () => expire(AGENT_ABORTED_MESSAGE),
+    });
 
     const accumulator = createLineAccumulator((line) => {
       const parsed = parseJsonLine(line);
@@ -401,6 +448,7 @@ export class CopilotCliExecutorService implements IAgentExecutor {
       }
 
       if (parsed.type === EVENT_TYPE_RESULT) {
+        resultSeen = true;
         // Final event — yield result with accumulated text
         const event: AgentExecutionStreamEvent = {
           type: 'result',
@@ -456,10 +504,15 @@ export class CopilotCliExecutorService implements IAgentExecutor {
               : `Process exited with code ${code}`),
           timestamp: new Date(),
         });
-      } else if (code === null && !resultText) {
+      } else if (!resultSeen) {
+        // Same rule as execute(): a kill or a clean exit before the `result`
+        // event is a cut turn.
         channel.push({
           type: 'error',
-          content: signalTerminationMessage(signal, stderr.text()),
+          content:
+            code === null
+              ? signalTerminationMessage(signal, stderr.text())
+              : TURN_NOT_COMPLETED_MESSAGE,
           timestamp: new Date(),
         });
       }
@@ -470,6 +523,7 @@ export class CopilotCliExecutorService implements IAgentExecutor {
       yield* channel;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      abortWatch.stop();
       // A consumer that breaks out of the loop would otherwise leave the agent
       // running until it finished on its own.
       if (!processClosed) terminateWithEscalation(proc);

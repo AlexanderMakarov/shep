@@ -26,12 +26,16 @@ import { EventChannel } from '../../streaming/event-channel.js';
 import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
 import { describeSubprocessFailure } from './subprocess-failure-message.js';
 import {
+  agentTimeoutMessage,
   buildSpawnOptions,
   classifySpawnError,
   createLineAccumulator,
   createStderrTail,
   signalTerminationMessage,
   terminateWithEscalation,
+  watchProcessIdle,
+  AGENT_ABORTED_MESSAGE,
+  watchAbortSignal,
 } from './process-stream.js';
 import {
   validateSecurityConstraints,
@@ -95,7 +99,8 @@ export class ClineExecutorService implements IAgentExecutor {
       let resultText = '';
       /** Anything the CLI printed that was not JSON (banners, warnings). */
       let rawText = '';
-      let timedOut = false;
+      /** Set when the budget elapsed — the run's outcome, whatever follows. */
+      let timeoutError: string | undefined;
       let settled = false;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       let cancelEscalation: (() => void) | undefined;
@@ -104,18 +109,33 @@ export class ClineExecutorService implements IAgentExecutor {
       const settle = (outcome: () => void): void => {
         if (settled) return;
         settled = true;
+        abortWatch.stop();
         if (timeoutId) clearTimeout(timeoutId);
         cancelEscalation?.();
         outcome();
       };
 
-      if (options?.timeout) {
-        timeoutId = setTimeout(() => {
-          timedOut = true;
-          log(`Timeout after ${options.timeout}ms — terminating agent`);
-          cancelEscalation = terminateWithEscalation(proc);
-        }, options.timeout);
+      /** Out of budget (total or idle): kill, and let 'close' report it. */
+      const expire = (message: string): void => {
+        if (timeoutError) return;
+        timeoutError = message;
+        log(`${message} — terminating agent`);
+        cancelEscalation = terminateWithEscalation(proc);
+      };
+
+      const timeoutMs = options?.timeout;
+      if (timeoutMs) {
+        timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
       }
+      watchProcessIdle(proc, options?.idleTimeout, (message) => {
+        expire(message);
+      });
+      // The caller's cancel: like a timeout, 'close' reports it, so awaiting
+      // this call awaits the teardown.
+      const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+        onAbort: () => expire(AGENT_ABORTED_MESSAGE),
+        onUnreaped: () => settle(() => reject(new Error(AGENT_ABORTED_MESSAGE))),
+      });
 
       const accumulator = createLineAccumulator(
         (line) => {
@@ -157,8 +177,8 @@ export class ClineExecutorService implements IAgentExecutor {
         log(`Process closed with code ${code}, result=${finalText.length} chars`);
 
         settle(() => {
-          if (timedOut) {
-            reject(new Error('Agent execution timed out'));
+          if (timeoutError) {
+            reject(new Error(timeoutError));
             return;
           }
 
@@ -174,9 +194,10 @@ export class ClineExecutorService implements IAgentExecutor {
           }
 
           // code === null means a signal killed the agent (OOM killer, an
-          // external kill). Resolving that as success hands the caller an
-          // empty result as if the agent had nothing to say.
-          if (code === null && !finalText) {
+          // external kill). Cline's output has no terminal event, so text that
+          // arrived before the kill cannot be told apart from a finished turn —
+          // a kill is always a failure, never a partial answer.
+          if (code === null) {
             reject(new Error(signalTerminationMessage(signal, stderr.text())));
             return;
           }
@@ -202,18 +223,30 @@ export class ClineExecutorService implements IAgentExecutor {
     let processClosed = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    if (options?.timeout) {
-      timeoutId = setTimeout(() => {
-        log(`Timeout after ${options.timeout}ms — terminating agent`);
-        terminateWithEscalation(proc);
-        channel.push({
-          type: 'error',
-          content: 'Agent execution timed out',
-          timestamp: new Date(),
-        });
-        channel.close();
-      }, options.timeout);
+    /** Set once a budget ran out; the kill's 'close' must not report again. */
+    let expired = false;
+    /** Out of budget (total or idle): kill and end the stream with the reason. */
+    const expire = (message: string): void => {
+      if (expired) return;
+      expired = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      log(`${message} — terminating agent`);
+      terminateWithEscalation(proc);
+      channel.push({ type: 'error', content: message, timestamp: new Date() });
+      channel.close();
+    };
+
+    const timeoutMs = options?.timeout;
+    if (timeoutMs) {
+      timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
     }
+    watchProcessIdle(proc, options?.idleTimeout, (message) => {
+      expire(message);
+    });
+    // The caller's cancel ends the stream the way a timeout does.
+    const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+      onAbort: () => expire(AGENT_ABORTED_MESSAGE),
+    });
 
     const accumulator = createLineAccumulator((line) => {
       const parsed = parseJsonLine(line);
@@ -256,15 +289,24 @@ export class ClineExecutorService implements IAgentExecutor {
 
       const finalText = resultText || rawText.trim();
 
-      if (code !== 0 && code !== null && stderr.text().trim()) {
-        channel.push({ type: 'error', content: stderr.text().trim(), timestamp: new Date() });
-      } else if (code === null && !finalText) {
+      if (code !== 0 && code !== null) {
+        channel.push({
+          type: 'error',
+          content: describeSubprocessFailure({
+            code,
+            resultText: finalText,
+            stderr: stderr.text(),
+          }),
+          timestamp: new Date(),
+        });
+      } else if (code === null) {
+        // Same rule as execute(): no terminal event exists, so a kill is never a result.
         channel.push({
           type: 'error',
           content: signalTerminationMessage(signal, stderr.text()),
           timestamp: new Date(),
         });
-      } else if (code === 0 || code === null) {
+      } else {
         channel.push({ type: 'result', content: finalText, timestamp: new Date() });
       }
       channel.close();
@@ -276,6 +318,7 @@ export class ClineExecutorService implements IAgentExecutor {
       // A consumer that breaks out of the loop would otherwise leave the agent
       // running — holding a worktree, burning tokens — until it exits on its own.
       if (timeoutId) clearTimeout(timeoutId);
+      abortWatch.stop();
       if (!processClosed) terminateWithEscalation(proc);
     }
   }

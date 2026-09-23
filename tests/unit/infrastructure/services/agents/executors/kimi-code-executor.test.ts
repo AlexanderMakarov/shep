@@ -8,7 +8,7 @@
  */
 
 import 'reflect-metadata';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { KimiCodeExecutorService } from '@/infrastructure/services/agents/common/executors/kimi-code-executor.service.js';
@@ -416,7 +416,7 @@ describe('KimiCodeExecutorService', () => {
     it('should kill the process and reject when the timeout elapses', async () => {
       // No output, no close — the timeout must fire.
       await expect(executor.execute('go', { silent: true, timeout: 20 })).rejects.toThrow(
-        /timed out/i
+        'Agent execution timed out after 0.02s'
       );
       expect(proc.kill).toHaveBeenCalled();
     });
@@ -479,6 +479,59 @@ describe('KimiCodeExecutorService', () => {
   });
 
   describe('signal termination', () => {
+    // Kimi's protocol has no terminal event, so a signal kill can never be
+    // told apart from a finished turn by the output — it is always a failure.
+    it('should reject naming the signal when killed after partial text', async () => {
+      const executePromise = executor.execute('go', { silent: true });
+      process.nextTick(() => {
+        for (const line of [assistantMessage('partial work')]) proc.stdout.write(`${line}\n`);
+        proc.stdout.end();
+        proc.stderr.end();
+        proc.emit('close', null, 'SIGKILL');
+      });
+
+      await expect(executePromise).rejects.toThrow(/SIGKILL/);
+    });
+
+    it('should stream an error, not a result, when killed after partial text', async () => {
+      process.nextTick(() => {
+        for (const line of [assistantMessage('partial work')]) proc.stdout.write(`${line}\n`);
+        proc.stdout.end();
+        proc.stderr.end();
+        proc.emit('close', null, 'SIGKILL');
+      });
+      const events: { type: string; content: string }[] = [];
+      for await (const event of executor.executeStream('go', { silent: true })) {
+        events.push({ type: event.type, content: event.content });
+      }
+
+      expect(events.some((e) => e.type === 'error' && e.content.includes('SIGKILL'))).toBe(true);
+      expect(events.some((e) => e.type === 'result')).toBe(false);
+    });
+
+    it('should stream the timeout with its budget and no result', async () => {
+      // A timeout kill reaches 'close' as a signal too; it must be reported once.
+      proc.kill.mockImplementation(() => {
+        process.nextTick(() => {
+          proc.stdout.write(`${assistantMessage('partial work')}\n`);
+          proc.stdout.end();
+          proc.stderr.end();
+          proc.emit('close', null, 'SIGTERM');
+        });
+        return true;
+      });
+
+      const events: { type: string; content: string }[] = [];
+      for await (const event of executor.executeStream('go', { silent: true, timeout: 20 })) {
+        events.push({ type: event.type, content: event.content });
+      }
+
+      expect(events.filter((e) => e.type === 'error')).toEqual([
+        { type: 'error', content: 'Agent execution timed out after 0.02s' },
+      ]);
+      expect(events.some((e) => e.type === 'result')).toBe(false);
+    });
+
     it('should reject when the CLI is killed by a signal with nothing captured', async () => {
       const executePromise = executor.execute('go', { silent: true });
       process.nextTick(() => {
@@ -531,5 +584,62 @@ describe('KimiCodeExecutorService', () => {
 
       expect(proc.kill).toHaveBeenCalled();
     });
+  });
+});
+
+describe('KimiCodeExecutorService — idle timeout', () => {
+  // A stalled agent (hung API connection, wedged tool) used to sit out the
+  // whole total budget — 30 minutes by default, hours for a long implement
+  // stage. `idleTimeout` ends it after that long without any output.
+  const IDLE_MESSAGE = 'Agent execution timed out: no output for 60s';
+  let mockSpawn: SpawnFunction;
+  let executor: KimiCodeExecutorService;
+
+  beforeEach(() => {
+    mockSpawn = vi.fn();
+    executor = new KimiCodeExecutorService(mockSpawn);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('execute(): kills an agent silent for the idle budget, naming the budget', async () => {
+    vi.useFakeTimers();
+    const proc = createMockChildProcess();
+    vi.mocked(mockSpawn).mockReturnValue(proc as any);
+
+    const outcome = executor.execute('Prompt', { silent: true, idleTimeout: 60_000 }).then(
+      () => 'resolved',
+      (error: Error) => error.message
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    proc.stderr.write('still working\n'); // any output restarts the budget
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(proc.kill).toHaveBeenCalled();
+    proc.emit('close', null, 'SIGTERM');
+
+    expect(await outcome).toBe(IDLE_MESSAGE);
+  });
+
+  it('executeStream(): ends a silent stream with an idle-timeout error event', async () => {
+    const proc = createMockChildProcess();
+    vi.mocked(mockSpawn).mockReturnValue(proc as any);
+
+    const events: { type: string; content: string }[] = [];
+    for await (const event of executor.executeStream('Prompt', {
+      silent: true,
+      idleTimeout: 20,
+    })) {
+      events.push({ type: event.type, content: event.content });
+    }
+
+    expect(events).toContainEqual({
+      type: 'error',
+      content: 'Agent execution timed out: no output for 0.02s',
+    });
+    expect(proc.kill).toHaveBeenCalled();
   });
 });

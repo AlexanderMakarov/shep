@@ -15,6 +15,10 @@ import type { LanguageModelV3 } from '@ai-sdk/provider';
 import { AgentFeature } from '@/domain/generated/output.js';
 import type { AgentExecutionStreamEvent } from '@/application/ports/output/agents/agent-executor.interface.js';
 import { AiSdkBaseExecutorService } from '@/infrastructure/services/agents/common/executors/ai-sdk-base-executor.service.js';
+import {
+  classifyError,
+  retryExecute,
+} from '@/infrastructure/services/agents/feature-agent/nodes/node-helpers.js';
 
 /**
  * Concrete test subclass of the abstract AiSdkBaseExecutorService.
@@ -73,7 +77,8 @@ function makeStreamResult(
     outputTotal?: number;
     cacheRead?: number;
     cacheWrite?: number;
-  }
+  },
+  finishReason: 'stop' | 'length' | 'content-filter' | 'error' = 'stop'
 ) {
   const textId = 'text-0';
   return {
@@ -88,7 +93,7 @@ function makeStreamResult(
       { type: 'text-end' as const, id: textId },
       {
         type: 'finish' as const,
-        finishReason: { unified: 'stop' as const, raw: undefined },
+        finishReason: { unified: finishReason, raw: undefined },
         usage: {
           inputTokens: {
             total: usage?.inputTotal ?? 100,
@@ -136,6 +141,59 @@ describe('AiSdkBaseExecutorService', () => {
       const executor = new TestSdkExecutor('test-key', model);
 
       await expect(executor.execute('Write a very long thing')).rejects.toThrow(/truncat/i);
+    });
+
+    it.each(['content-filter', 'error'] as const)(
+      'rejects when the model stopped with finishReason %s',
+      async (finishReason) => {
+        const partial = makeGenerateResult('Part of an answer');
+        const model = new MockLanguageModelV3({
+          doGenerate: { ...partial, finishReason: { unified: finishReason, raw: undefined } },
+        });
+        const executor = new TestSdkExecutor('test-key', model);
+
+        await expect(executor.execute('Prompt')).rejects.toThrow(
+          new RegExp(`finishReason=${finishReason}`)
+        );
+      }
+    );
+
+    it('classifies an AbortSignal.timeout TimeoutError as a timeout', async () => {
+      // AbortSignal.timeout() rejects with a DOMException named TimeoutError
+      // ("The operation was aborted due to timeout") — not an AbortError and
+      // not the words "timed out".
+      const model = new MockLanguageModelV3({
+        doGenerate: async () => {
+          throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        },
+      });
+      const executor = new TestSdkExecutor('test-key', model);
+
+      await expect(executor.execute('Prompt', { timeout: 1234 })).rejects.toThrow(
+        'TestProvider: Agent execution timed out after 1.234s'
+      );
+    });
+
+    it('is not retried: a timed-out request is not re-sent three more times', async () => {
+      // The TimeoutError is classified as a timeout here, but retryExecute's
+      // classifier did not recognise the resulting "Request timed out" text,
+      // filed it as `unknown`, and re-ran the whole request up to 3x — so a
+      // 5-minute budget could spend 15 more minutes.
+      let calls = 0;
+      const model = new MockLanguageModelV3({
+        doGenerate: async () => {
+          calls++;
+          throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        },
+      });
+      const executor = new TestSdkExecutor('test-key', model);
+
+      const error = await retryExecute(executor, 'Prompt', { timeout: 1234 }, { baseDelayMs: 1 })
+        .then(() => undefined)
+        .catch((e: Error) => e);
+
+      expect(classifyError(error?.message ?? '')).toBe('non-retryable');
+      expect(calls).toBe(1);
     });
 
     it('names the provider in the truncation error', async () => {
@@ -299,6 +357,61 @@ describe('AiSdkBaseExecutorService', () => {
       const resultEvent = events.find((e) => e.type === 'result');
       expect(resultEvent).toBeDefined();
       expect(resultEvent!.content).toBe('Hello world');
+    });
+
+    /** Drain executeStream, returning the events seen before it ended or threw. */
+    async function drain(executor: TestSdkExecutor, options?: { timeout?: number }) {
+      const events: AgentExecutionStreamEvent[] = [];
+      let error: Error | undefined;
+      try {
+        for await (const event of executor.executeStream('Prompt', options)) {
+          events.push(event);
+        }
+      } catch (caught) {
+        error = caught as Error;
+      }
+      return { events, error };
+    }
+
+    it.each(['length', 'content-filter', 'error'] as const)(
+      'throws and yields no result when the stream finished with finishReason %s',
+      async (finishReason) => {
+        const model = new MockLanguageModelV3({
+          doStream: makeStreamResult(['Half an answer'], undefined, finishReason),
+        });
+        const executor = new TestSdkExecutor('test-key', model);
+
+        const { events, error } = await drain(executor);
+
+        expect(error?.message).toMatch(new RegExp(`finishReason=${finishReason}`));
+        expect(error?.message).toContain('TestProvider');
+        expect(events.some((e) => e.type === 'result')).toBe(false);
+      }
+    );
+
+    it('throws a timeout, not a result, when the stream is aborted by its time budget', async () => {
+      // streamText reports its own timeout as an `abort` part and then ends the
+      // stream cleanly — the partial text must not become the result.
+      const model = new MockLanguageModelV3({
+        doStream: async ({ abortSignal }) => ({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: 'stream-start', warnings: [] });
+              controller.enqueue({ type: 'text-start', id: 't' });
+              controller.enqueue({ type: 'text-delta', id: 't', delta: 'partial' });
+              // Never finishes on its own; a real provider's fetch body errors
+              // with the signal's reason when the signal aborts.
+              abortSignal?.addEventListener('abort', () => controller.error(abortSignal.reason));
+            },
+          }),
+        }),
+      });
+      const executor = new TestSdkExecutor('test-key', model);
+
+      const { events, error } = await drain(executor, { timeout: 20 });
+
+      expect(error?.message).toBe('TestProvider: Agent execution timed out after 0.02s');
+      expect(events.some((e) => e.type === 'result')).toBe(false);
     });
 
     it('passes system prompt to streamText', async () => {

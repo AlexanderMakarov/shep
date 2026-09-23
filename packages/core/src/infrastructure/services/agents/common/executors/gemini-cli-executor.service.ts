@@ -23,13 +23,17 @@ import type { SpawnFunction } from '../types.js';
 import { EventChannel } from '../../streaming/event-channel.js';
 import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
 import {
+  agentTimeoutMessage,
   buildSpawnOptions,
   classifySpawnError,
   createLineAccumulator,
   createStderrTail,
   signalTerminationMessage,
   terminateWithEscalation,
+  watchProcessIdle,
   writePromptToStdin,
+  AGENT_ABORTED_MESSAGE,
+  watchAbortSignal,
 } from './process-stream.js';
 import {
   validateSecurityConstraints,
@@ -106,7 +110,8 @@ export class GeminiCliExecutorService implements IAgentExecutor {
     return new Promise<AgentExecutionResult>((resolve, reject) => {
       const stderr = createStderrTail();
       const stdoutLines: string[] = [];
-      let timedOut = false;
+      /** Set when the budget elapsed — the run's outcome, whatever follows. */
+      let timeoutError: string | undefined;
       let settled = false;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       let cancelEscalation: (() => void) | undefined;
@@ -114,18 +119,33 @@ export class GeminiCliExecutorService implements IAgentExecutor {
       const settle = (outcome: () => void): void => {
         if (settled) return;
         settled = true;
+        abortWatch.stop();
         if (timeoutId) clearTimeout(timeoutId);
         cancelEscalation?.();
         outcome();
       };
 
-      if (options?.timeout) {
+      // No idle guard here, by design: `--output-format json` prints ONE line
+      // when the whole turn is done, so silence is the normal shape of a
+      // healthy run and `options.idleTimeout` would kill every run longer than
+      // it. The total timeout bounds this path; executeStream() honours idle.
+      const timeoutMs = options?.timeout;
+      if (timeoutMs) {
         timeoutId = setTimeout(() => {
-          timedOut = true;
-          log(`Timeout after ${options.timeout}ms — terminating agent`);
+          timeoutError = agentTimeoutMessage(timeoutMs);
+          log(`Timeout after ${timeoutMs}ms — terminating agent`);
           cancelEscalation = terminateWithEscalation(proc);
-        }, options.timeout);
+        }, timeoutMs);
       }
+      // The caller's cancel: like a timeout, 'close' reports it, so awaiting
+      // this call awaits the teardown.
+      const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+        onAbort: () => {
+          timeoutError ??= AGENT_ABORTED_MESSAGE;
+          log(`${AGENT_ABORTED_MESSAGE} — terminating agent`);
+        },
+        onUnreaped: () => settle(() => reject(new Error(AGENT_ABORTED_MESSAGE))),
+      });
 
       // A single JSON document, read through the decoder so a multi-byte
       // character straddling two reads is reassembled rather than corrupted.
@@ -153,8 +173,8 @@ export class GeminiCliExecutorService implements IAgentExecutor {
         log(`Process closed with code ${code}, stdout=${stdout.length} chars`);
 
         settle(() => {
-          if (timedOut) {
-            reject(new Error('Agent execution timed out'));
+          if (timeoutError) {
+            reject(new Error(timeoutError));
             return;
           }
 
@@ -230,19 +250,28 @@ export class GeminiCliExecutorService implements IAgentExecutor {
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    if (options?.timeout) {
-      timeoutId = setTimeout(() => {
-        timedOut = true;
-        log(`Timeout after ${options.timeout}ms — terminating agent`);
-        terminateWithEscalation(proc);
-        channel.push({
-          type: 'error',
-          content: 'Agent execution timed out',
-          timestamp: new Date(),
-        });
-        channel.close();
-      }, options.timeout);
+    /** Out of budget (total or idle): kill and end the stream with the reason. */
+    const expire = (message: string): void => {
+      if (timedOut) return;
+      timedOut = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      log(`${message} — terminating agent`);
+      terminateWithEscalation(proc);
+      channel.push({ type: 'error', content: message, timestamp: new Date() });
+      channel.close();
+    };
+
+    const timeoutMs = options?.timeout;
+    if (timeoutMs) {
+      timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
     }
+    watchProcessIdle(proc, options?.idleTimeout, (message) => {
+      if (!sawResult) expire(message);
+    });
+    // The caller's cancel ends the stream the way a timeout does.
+    const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+      onAbort: () => expire(AGENT_ABORTED_MESSAGE),
+    });
 
     const accumulator = createLineAccumulator((line) => {
       const event = parseStreamEvent(line);
@@ -302,6 +331,7 @@ export class GeminiCliExecutorService implements IAgentExecutor {
       yield* channel;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      abortWatch.stop();
       // A consumer that breaks out of the loop would otherwise leave the agent
       // running until it finished on its own.
       if (!processClosed) terminateWithEscalation(proc);

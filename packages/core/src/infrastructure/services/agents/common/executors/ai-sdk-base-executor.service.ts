@@ -15,7 +15,14 @@
  * - Application and domain layers have zero knowledge of the Vercel AI SDK
  */
 
-import { generateText, streamText, generateObject, jsonSchema, APICallError } from 'ai';
+import {
+  generateText,
+  streamText,
+  generateObject,
+  jsonSchema,
+  APICallError,
+  type FinishReason,
+} from 'ai';
 import type { LanguageModelV3 } from '@ai-sdk/provider';
 import type { AgentType, AgentFeature } from '../../../../../domain/generated/output.js';
 import type {
@@ -25,17 +32,75 @@ import type {
   AgentExecutionStreamEvent,
   AgentExecutionUsage,
 } from '../../../../../application/ports/output/agents/agent-executor.interface.js';
+import { AGENT_ABORTED_MESSAGE, agentTimeoutMessage } from './process-stream.js';
 
 /** Default timeout in milliseconds (5 minutes) */
 const DEFAULT_TIMEOUT_MS = 300_000;
 
 /**
- * Finish reason meaning the model ran out of output tokens mid-answer.
+ * Finish reasons that mean the model did NOT finish its answer.
+ *
+ * - `length`: it ran out of output tokens mid-answer.
+ * - `content-filter`: the provider cut the response off.
+ * - `error`: the provider reported a failure while generating.
  *
  * The text that comes back is a fragment, not an answer. Returning it as a
  * normal result lets a truncated run be read downstream as a completed one.
  */
-const TRUNCATED_FINISH_REASON = 'length';
+const INCOMPLETE_FINISH_REASONS: ReadonlySet<FinishReason> = new Set<FinishReason>([
+  'length',
+  'content-filter',
+  'error',
+]);
+
+/** Error names that mean the request's time budget ran out. */
+const TIMEOUT_ERROR_NAMES: ReadonlySet<string> = new Set([
+  // Our own `timeout` aborts the request through an AbortController…
+  'AbortError',
+  // …and AbortSignal.timeout() rejects with a DOMException of this name,
+  // whose message ("The operation was aborted due to timeout") says neither.
+  'TimeoutError',
+]);
+
+/** Message fragment older SDK paths use for a request timeout. */
+const TIMED_OUT_TEXT = 'timed out';
+
+/** Name given to the error raised when streamText reports it was aborted. */
+const TIMEOUT_ERROR_NAME = 'TimeoutError';
+
+/** Stream parts of streamText's `fullStream` this executor acts on. */
+const PART_TEXT_DELTA = 'text-delta';
+const PART_ERROR = 'error';
+const PART_FINISH = 'finish';
+const PART_ABORT = 'abort';
+
+/**
+ * Reject a finish reason that means the answer is incomplete.
+ *
+ * enhanceError() prefixes the provider name.
+ */
+function assertFinished(finishReason: FinishReason | undefined): void {
+  if (finishReason === undefined) {
+    throw new Error(
+      'The response stream ended without a finish event. The result is incomplete and must ' +
+        'not be treated as a finished run.'
+    );
+  }
+  if (INCOMPLETE_FINISH_REASONS.has(finishReason)) {
+    throw new Error(
+      `The model stopped before finishing its answer (finishReason=${finishReason}); the ` +
+        `response was truncated. The result is incomplete and must not be treated as a ` +
+        `finished run.`
+    );
+  }
+}
+
+/** The error streamText's `abort` part stands for: our timeout aborted the request. */
+function streamAbortedError(reason: string | undefined): Error {
+  const error = new Error(reason ?? 'The response stream was aborted');
+  error.name = TIMEOUT_ERROR_NAME;
+  return error;
+}
 
 /** Features supported by all SDK-based executors */
 const SDK_SUPPORTED_FEATURES = new Set<string>(['streaming', 'structured-output', 'system-prompt']);
@@ -79,16 +144,10 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
         prompt,
         system: options?.systemPrompt,
         timeout,
+        abortSignal: options?.abortSignal,
       });
 
-      // enhanceError() in the catch below prefixes the provider name.
-      if (response.finishReason === TRUNCATED_FINISH_REASON) {
-        throw new Error(
-          `Response was truncated at the output token limit ` +
-            `(finishReason=${TRUNCATED_FINISH_REASON}). The result is incomplete and must not ` +
-            `be treated as a finished run.`
-        );
-      }
+      assertFinished(response.finishReason);
 
       return {
         result: response.text,
@@ -96,7 +155,7 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
         usage: this.mapUsage(response.usage),
       };
     } catch (error) {
-      throw this.enhanceError(error, timeout);
+      throw this.enhanceError(error, timeout, options?.abortSignal);
     }
   }
 
@@ -114,25 +173,38 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
         prompt,
         system: options?.systemPrompt,
         timeout,
+        abortSignal: options?.abortSignal,
       });
     } catch (error) {
-      throw this.enhanceError(error, timeout);
+      throw this.enhanceError(error, timeout, options?.abortSignal);
     }
 
     let fullText = '';
+    /** Set by the stream's `finish` part — its absence means the stream was cut. */
+    let finishReason: FinishReason | undefined;
     try {
       for await (const part of streamResult.fullStream) {
-        if (part.type === 'text-delta') {
+        if (part.type === PART_TEXT_DELTA) {
           fullText += part.text;
           yield {
             type: 'progress',
             content: part.text,
             timestamp: new Date(),
           };
-        } else if (part.type === 'error') {
+        } else if (part.type === PART_ERROR) {
           throw part.error;
+        } else if (part.type === PART_FINISH) {
+          finishReason = part.finishReason;
+        } else if (part.type === PART_ABORT) {
+          // streamText reports an abort as a part and then ends the stream
+          // cleanly. The source is the `timeout` budget or the caller's
+          // abortSignal; enhanceError tells the two apart.
+          throw streamAbortedError(part.reason);
         }
       }
+
+      // Same rule as execute(): a fragment is not a finished run.
+      assertFinished(finishReason);
 
       yield {
         type: 'result',
@@ -140,7 +212,7 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
         timestamp: new Date(),
       };
     } catch (error) {
-      throw this.enhanceError(error, timeout);
+      throw this.enhanceError(error, timeout, options?.abortSignal);
     }
   }
 
@@ -160,6 +232,7 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
       system: options.systemPrompt,
       schema: jsonSchema(options.outputSchema!),
       timeout,
+      abortSignal: options.abortSignal,
     });
 
     return {
@@ -195,8 +268,14 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
    * Enhance errors with provider context for better diagnostics.
    * Never includes the API key in error messages.
    */
-  private enhanceError(error: unknown, timeout: number): Error {
+  private enhanceError(error: unknown, timeout: number, abortSignal?: AbortSignal): Error {
     const provider = this.providerDisplayName;
+
+    // Checked first: the SDK reports a cancelled request with the same error
+    // names as a timeout, and a caller's cancel must not read as one.
+    if (abortSignal?.aborted) {
+      return new Error(`${provider}: ${AGENT_ABORTED_MESSAGE}`);
+    }
 
     if (APICallError.isInstance(error)) {
       const { statusCode, responseHeaders } = error;
@@ -223,8 +302,11 @@ export abstract class AiSdkBaseExecutorService implements IAgentExecutor {
     }
 
     if (error instanceof Error) {
-      if (error.name === 'AbortError' || error.message.includes('timed out')) {
-        return new Error(`${provider}: Request timed out after ${timeout}ms.`);
+      if (TIMEOUT_ERROR_NAMES.has(error.name) || error.message.includes(TIMED_OUT_TEXT)) {
+        // The shared timeout text is what retry classification and the
+        // supervisor fail-safe recognise; a provider-specific wording read as
+        // `unknown` and the request was re-sent three more times.
+        return new Error(`${provider}: ${agentTimeoutMessage(timeout)}`);
       }
 
       if (

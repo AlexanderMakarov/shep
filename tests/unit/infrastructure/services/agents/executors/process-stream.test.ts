@@ -10,7 +10,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
+  MAX_TOOL_INPUT_LOG_CHARS,
+  toolInputLogPreview,
   SIGKILL_GRACE_MS,
+  agentTimeoutMessage,
   buildSpawnOptions,
   classifySpawnError,
   createLineAccumulator,
@@ -417,5 +420,41 @@ describe('signalTerminationMessage', () => {
 
     expect(message).not.toContain('null');
     expect(message.length).toBeGreaterThan(0);
+  });
+});
+
+describe('agentTimeoutMessage', () => {
+  it('should keep the prefix retry classification matches on', () => {
+    // node-helpers treats this prefix as non-retryable; changing it would
+    // silently turn every timeout into a retry.
+    expect(agentTimeoutMessage(300_000)).toMatch(/^Agent execution timed out/);
+  });
+
+  it('should name the budget that elapsed, in seconds', () => {
+    expect(agentTimeoutMessage(300_000)).toBe('Agent execution timed out after 300s');
+  });
+
+  it('should keep sub-second budgets exact rather than rounding them to 0s', () => {
+    expect(agentTimeoutMessage(1_500)).toBe('Agent execution timed out after 1.5s');
+  });
+});
+
+describe('toolInputLogPreview', () => {
+  it('keeps a small tool input intact', () => {
+    expect(toolInputLogPreview({ command: 'ls' })).toBe('{"command":"ls"}');
+  });
+
+  it('caps a large tool input so one Write call cannot add megabytes to the worker log', () => {
+    const content = 'x'.repeat(MAX_TOOL_INPUT_LOG_CHARS * 10);
+    const preview = toolInputLogPreview({ file_path: '/a.ts', content });
+
+    const full = JSON.stringify({ file_path: '/a.ts', content });
+    expect(preview.startsWith(full.slice(0, MAX_TOOL_INPUT_LOG_CHARS))).toBe(true);
+    expect(preview).toContain(`${full.length - MAX_TOOL_INPUT_LOG_CHARS} more chars`);
+    expect(preview.length).toBeLessThan(MAX_TOOL_INPUT_LOG_CHARS + 40);
+  });
+
+  it('treats a missing input as an empty object', () => {
+    expect(toolInputLogPreview(undefined)).toBe('{}');
   });
 });

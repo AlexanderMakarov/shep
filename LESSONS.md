@@ -2645,3 +2645,84 @@ session-tree sidebar) or the canvas viewport is inset so nothing is ever laid ou
 it. `pointer-events-none` answers "can I click through it", never "can I see through it" —
 and never check only the empty-canvas case, since the overlap appears exactly when the
 canvas is full.
+
+## A status only one writer guards is a status any writer can overturn
+
+Spec 116 audited shep against an external list of agent-harness bugs. The `allowedFrom` guard on
+`agent_runs.updateStatus` existed, but only the crash sweep used it. Every other writer — the
+worker's boot/heartbeat/terminal writes, Stop, Approve, Reject — wrote `WHERE id = ?`, so a Stop
+issued while the worker booted was overwritten by its first heartbeat, and two concurrent
+approvals each spawned a worker into one worktree.
+
+**Rules:**
+
+1. **Every status writer states the statuses it may leave.** The worker may write `running` only
+   from `pending`/`running` and a terminal status only from `running`; Stop only from a
+   non-terminal status; Approve/Reject only from a resumable one. The boolean the write returns
+   IS the claim — a worker whose boot claim fails exits before building its graph.
+2. **Record a stop before you signal.** Signalling first lets the dying worker's own write land
+   first, and then the stop looks like it failed.
+3. **A claim needs a release on the path that cannot finish.** A run claimed to `running` whose
+   worker fails to spawn has no owner; hand the claim back (guarded on `running`) and rethrow.
+
+## "It ended" is not "it answered" — for streams as much as for exit codes
+
+`StreamingExecutorProxy.execute()` only caught thrown errors, but subprocess executors report
+timeouts, kills and non-zero exits as an `error` stream event and then end — so every failed
+`shep run` stream was recorded as a completed run with `result: ''`. It also closed the shared
+channel after every node, silently dropping the events of every node after the first.
+
+**Rules:**
+
+1. The last `result`/`error` event decides a stream's outcome; a stream with neither was cut
+   short and rejects.
+2. A signal kill rejects even with partial output unless the CLI's terminal event (Codex
+   `turn.completed`, Claude/Cursor/Copilot `result`) was already seen.
+3. Whoever owns a channel's lifetime closes it once; a per-call helper must never close it.
+
+## An SSE comment is invisible to EventSource
+
+`': heartbeat\n\n'` keeps proxies from idling out a connection, but `EventSource` never
+dispatches comments to page code, so a client watchdog reset only by events tore down a healthy
+quiet stream every 60s — and each reconnect replayed the full message/question history because
+per-connection caches started empty. Send a named `heartbeat` event, seed per-connection caches
+silently on connect (sending only still-open state such as pending questions), and upsert by id
+on the client so a replay is idempotent.
+
+## A commit hook that fails restores its backup over everyone's working tree
+
+Mid-session a failed `git commit` (the typecheck hook tripped on uninstalled electron deps)
+made lint-staged restore its automatic backup, silently reverting uncommitted edits other
+agents were making in the same checkout. Rules: never commit from a checkout another writer is
+editing — wait until every writer reports, then run the full verification, then commit; if a
+hook fails, check `git diff` of every in-flight file before anything else. When a dependency
+cannot be installed (egress 403), install the exact package from an allowed registry into the
+ignored `node_modules` **and apply the repo's `patches/` to it** — an unpatched stand-in made a
+security test fail for a reason that had nothing to do with the code.
+
+## A liveness signal nobody reads is not liveness
+
+`agent_runs.last_heartbeat` was written every 30s and read by nothing, so a hung worker kept its
+run `running` forever and a worker that died before recording its pid left a `pending` run no
+command could clear. A heartbeat is only half a mechanism; the sweep that acts on it is the other
+half, and it must run on every surface's read path (CLI, TUI, MCP, web), guarded on the exact
+`updated_at` it judged so a heartbeat landing mid-sweep wins.
+
+## A derived count must also derive "is it still running"
+
+The parallel-feature slot count read lifecycle only; a failed or stopped run leaves the
+lifecycle in a running phase, so every crash leaked a slot permanently. Derive occupancy from
+the current run's status in the same sub-select the atomic claim uses, and wire the queue drain
+to every event that frees a slot — including failure and stop, not only completion.
+
+## "Full local verification" means every script CI runs, not the four in the rule
+
+The spec 116 follow-up passed lint, format, typecheck, unit, integration and three builds locally,
+then went red twice in CI: `check:stories` rejected a grandfathered entry for a component that
+had just gained its story, and the Electron build rejected `tree-kill` because a core adapter
+started importing it and the Electron bundle includes core. Neither check is in the four-step
+rule, and both run in seconds. Rules: before pushing, grep `.github/workflows/*.yml` for every
+`pnpm run …` and run each one that can run locally (`check:stories`, `generate` with a clean
+diff, `node packages/electron/scripts/build.mjs`); a new third-party import in `packages/core`
+is also a `packages/electron/package.json` dependency; when adding a story, remove the
+component from `scripts/check-stories.mjs`'s grandfathered list in the same change.

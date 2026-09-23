@@ -46,12 +46,16 @@ import {
 } from './security-constraint-validator.js';
 import { createExecutorLogger, type ExecutorLogger } from './executor-logger.js';
 import {
+  agentTimeoutMessage,
   createLineAccumulator,
   createStderrTail,
   killProcessTree,
   signalTerminationMessage,
   terminateWithEscalation,
+  watchProcessIdle,
   writePromptToStdin,
+  AGENT_ABORTED_MESSAGE,
+  watchAbortSignal,
 } from './process-stream.js';
 
 /** Binary name on PATH. */
@@ -178,29 +182,43 @@ export class KimiCodeExecutorService implements IAgentExecutor {
       const settle = (outcome: () => void): void => {
         if (settled) return;
         settled = true;
+        abortWatch.stop();
         clearTimers();
         outcome();
       };
 
-      if (options?.timeout) {
-        timeoutId = setTimeout(() => {
-          log(`Timeout after ${options.timeout}ms — terminating agent`);
-          killProcessTree(proc);
-          // SIGTERM is a request the child may ignore. Escalate to SIGKILL so
-          // the process cannot survive, and reject NOW rather than waiting for
-          // a 'close' event that a wedged child may never emit — that is how a
-          // timed-out run turns into a permanently pending promise.
-          sigkillId = setTimeout(() => {
-            try {
-              proc.kill('SIGKILL');
-            } catch {
-              /* already gone */
-            }
-          }, SIGKILL_GRACE_MS);
-          sigkillId.unref?.();
-          settle(() => reject(new Error('Agent execution timed out')));
-        }, options.timeout);
+      /** Out of budget (total or idle): kill, and reject now. */
+      const expire = (message: string): void => {
+        if (settled) return;
+        log(`${message} — terminating agent`);
+        killProcessTree(proc);
+        // SIGTERM is a request the child may ignore. Escalate to SIGKILL so
+        // the process cannot survive, and reject NOW rather than waiting for
+        // a 'close' event that a wedged child may never emit — that is how a
+        // timed-out run turns into a permanently pending promise.
+        sigkillId = setTimeout(() => {
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* already gone */
+          }
+        }, SIGKILL_GRACE_MS);
+        sigkillId.unref?.();
+        settle(() => reject(new Error(message)));
+      };
+
+      const timeoutMs = options?.timeout;
+      if (timeoutMs) {
+        timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
       }
+      // Kimi's output has no terminal event: any silence mid-run is idle.
+      watchProcessIdle(proc, options?.idleTimeout, expire);
+      // The caller's cancel. Unlike a timeout, it is reported from 'close',
+      // so awaiting this call awaits the teardown.
+      const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+        onAbort: () => log(`${AGENT_ABORTED_MESSAGE} — terminating agent`),
+        onUnreaped: () => settle(() => reject(new Error(AGENT_ABORTED_MESSAGE))),
+      });
 
       const accumulator = createLineAccumulator(
         (line) => {
@@ -253,6 +271,10 @@ export class KimiCodeExecutorService implements IAgentExecutor {
         log(`Process closed with code ${code}, result=${finalText.length} chars`);
 
         settle(() => {
+          if (abortWatch.aborted) {
+            reject(new Error(AGENT_ABORTED_MESSAGE));
+            return;
+          }
           if (code === EXIT_CODE_TRANSIENT_FAILURE) {
             reject(
               new Error(
@@ -268,9 +290,10 @@ export class KimiCodeExecutorService implements IAgentExecutor {
           }
 
           // code === null means a signal killed the agent (OOM killer, an
-          // external kill). Resolving that as success hands the caller an
-          // empty result as if the agent had nothing to say.
-          if (code === null && !finalText) {
+          // external kill). Kimi's output has no terminal event, so text that
+          // arrived before the kill cannot be told apart from a finished turn —
+          // a kill is always a failure, never a partial answer.
+          if (code === null) {
             reject(new Error(signalTerminationMessage(signal, stderr.text())));
             return;
           }
@@ -314,15 +337,33 @@ export class KimiCodeExecutorService implements IAgentExecutor {
     /** Assistant text seen so far — the answer the result event announces. */
     let resultText = '';
     let processClosed = false;
+    /** The timeout already reported the outcome; the kill's 'close' must not. */
+    let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    if (options?.timeout) {
-      timeoutId = setTimeout(() => {
-        log(`Timeout after ${options.timeout}ms — terminating agent`);
-        terminateWithEscalation(proc);
-        enqueue({ type: 'error', content: 'Agent execution timed out', timestamp: new Date() });
-      }, options.timeout);
+    /**
+     * Out of budget (total or idle): kill, report, and END the stream now —
+     * waiting for the kill's 'close' left a wedged child's stream open forever.
+     */
+    const expire = (message: string): void => {
+      if (timedOut || processClosed) return;
+      timedOut = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      log(`${message} — terminating agent`);
+      terminateWithEscalation(proc);
+      enqueue({ type: 'error', content: message, timestamp: new Date() });
+      enqueue(null);
+    };
+
+    const timeoutMs = options?.timeout;
+    if (timeoutMs) {
+      timeoutId = setTimeout(() => expire(agentTimeoutMessage(timeoutMs)), timeoutMs);
     }
+    watchProcessIdle(proc, options?.idleTimeout, expire);
+    // The caller's cancel ends the stream the way a timeout does.
+    const abortWatch = watchAbortSignal(proc, options?.abortSignal, {
+      onAbort: () => expire(AGENT_ABORTED_MESSAGE),
+    });
 
     const accumulator = createLineAccumulator((line) => {
       // Accumulate assistant TEXT only: a tool-call announcement is progress
@@ -349,14 +390,17 @@ export class KimiCodeExecutorService implements IAgentExecutor {
       accumulator.flush();
       if (timeoutId) clearTimeout(timeoutId);
 
-      if (code !== 0 && code !== null) {
+      if (timedOut) {
+        // Already reported by the timeout callback.
+      } else if (code !== 0 && code !== null) {
         const detail = stderr.text().trim() || `Process exited with code ${code}`;
         const content =
           code === EXIT_CODE_TRANSIENT_FAILURE
             ? `Kimi Code reported a transient failure (exit ${code}) — ${detail}`
             : detail;
         enqueue({ type: 'error', content, timestamp: new Date() });
-      } else if (code === null && !resultText) {
+      } else if (code === null) {
+        // No terminal event exists in Kimi's output: a kill is never a result.
         enqueue({
           type: 'error',
           content: signalTerminationMessage(signal, stderr.text()),
@@ -384,6 +428,7 @@ export class KimiCodeExecutorService implements IAgentExecutor {
       }
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      abortWatch.stop();
       // A consumer that breaks out of the loop would otherwise leave the agent
       // running until it finished on its own.
       if (!processClosed) terminateWithEscalation(proc);

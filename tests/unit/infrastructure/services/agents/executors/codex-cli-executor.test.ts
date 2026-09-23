@@ -8,7 +8,7 @@
  */
 
 import 'reflect-metadata';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import * as fs from 'node:fs';
@@ -109,6 +109,12 @@ describe('CodexCliExecutorService', () => {
   beforeEach(() => {
     mockSpawn = vi.fn();
     executor = new CodexCliExecutorService(mockSpawn);
+  });
+
+  // A fake-timer test that fails before its own `useRealTimers()` must not
+  // leave every later test waiting on timers that never advance.
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // --- Task 2: Scaffold, agentType, supportsFeature ---
@@ -616,7 +622,7 @@ describe('CodexCliExecutorService', () => {
       mockProc.stderr.end();
       mockProc.emit('close', null);
 
-      await expect(executePromise).rejects.toThrow(/timed out/i);
+      await expect(executePromise).rejects.toThrow('Agent execution timed out after 5s');
       expect(mockProc.kill).toHaveBeenCalled();
       vi.useRealTimers();
     });
@@ -640,7 +646,7 @@ describe('CodexCliExecutorService', () => {
       const executePromise = executor.execute('Test', { silent: true });
       emitJsonlLines(
         mockProc,
-        [threadStarted('t-1'), agentMessageCompleted('Partial')],
+        [threadStarted('t-1'), agentMessageCompleted('Partial'), turnCompleted()],
         'authentication failed: invalid api key',
         0
       );
@@ -997,7 +1003,8 @@ describe('CodexCliExecutorService', () => {
       vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
 
       const answer = 'héllo — ✅ 日本語 🚀 done';
-      const payload = Buffer.from(`${agentMessageCompleted(answer)}\n`, 'utf8');
+      // A real run ends with turn.completed; only the message is split.
+      const payload = Buffer.from(`${agentMessageCompleted(answer)}\n${turnCompleted()}\n`, 'utf8');
       const splitAt = payload.indexOf(Buffer.from('🚀', 'utf8')) + 2;
 
       const executePromise = executor.execute('Test', { silent: true });
@@ -1030,6 +1037,83 @@ describe('CodexCliExecutorService', () => {
   });
 
   describe('signal termination', () => {
+    // A signal kill (OOM killer, external kill) mid-turn is not a finished turn,
+    // even when some agent text was already captured.
+    it('should reject naming the signal when killed after partial text', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Test', { silent: true });
+      process.nextTick(() => {
+        for (const line of [threadStarted('t-1'), agentMessageCompleted('partial work')])
+          mockProc.stdout.write(`${line}\n`);
+        mockProc.stdout.end();
+        mockProc.stderr.end();
+        mockProc.emit('close', null, 'SIGKILL');
+      });
+
+      await expect(executePromise).rejects.toThrow(/SIGKILL/);
+    });
+
+    it('should keep the answer when the signal arrives after turn.completed', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Test', { silent: true });
+      process.nextTick(() => {
+        for (const line of [
+          threadStarted('t-1'),
+          agentMessageCompleted('all done'),
+          turnCompleted(),
+        ])
+          mockProc.stdout.write(`${line}\n`);
+        mockProc.stdout.end();
+        mockProc.stderr.end();
+        mockProc.emit('close', null, 'SIGTERM');
+      });
+
+      expect((await executePromise).result).toBe('all done');
+    });
+
+    it('should stream an error, not a result, when killed after partial text', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      process.nextTick(() => {
+        for (const line of [threadStarted('t-1'), agentMessageCompleted('partial work')])
+          mockProc.stdout.write(`${line}\n`);
+        mockProc.stdout.end();
+        mockProc.stderr.end();
+        mockProc.emit('close', null, 'SIGKILL');
+      });
+      const events: { type: string; content: string }[] = [];
+      for await (const event of executor.executeStream('Test', { silent: true })) {
+        events.push({ type: event.type, content: event.content });
+      }
+
+      expect(events.some((e) => e.type === 'error' && e.content.includes('SIGKILL'))).toBe(true);
+      expect(events.some((e) => e.type === 'result')).toBe(false);
+    });
+
+    it('should reject when the turn failed even though text was captured', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Test', { silent: true });
+      emitJsonlLines(
+        mockProc,
+        [
+          threadStarted('t-1'),
+          agentMessageCompleted('partial work'),
+          JSON.stringify({ type: 'turn.failed', error: { message: 'context window exceeded' } }),
+        ],
+        null,
+        0
+      );
+
+      await expect(executePromise).rejects.toThrow('context window exceeded');
+    });
+
     it('should name the signal when the CLI is killed with nothing captured', async () => {
       const mockProc = createMockChildProcess();
       vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
@@ -1136,7 +1220,71 @@ describe('CodexCliExecutorService', () => {
     });
   });
 
+  describe('turn completion', () => {
+    // Codex ends every turn with `turn.completed` (or `turn.failed`). A clean
+    // exit without either means stdout was cut short — the text captured so
+    // far is a fragment, however complete it looks.
+    it('should reject an exit 0 whose turn never completed, even with captured text', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Test', { silent: true });
+      emitJsonlLines(
+        mockProc,
+        [threadStarted('thread-1'), agentMessageCompleted('Halfway through the refactor')],
+        null,
+        0
+      );
+
+      await expect(executePromise).rejects.toThrow(
+        'Codex CLI exited without a turn.completed event — the turn was cut short before it finished'
+      );
+    });
+
+    it('should prefer a stderr diagnosis when the turn produced nothing', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const executePromise = executor.execute('Test', { silent: true });
+      emitJsonlLines(mockProc, [threadStarted('thread-1')], 'Error: authentication failed', 0);
+
+      await expect(executePromise).rejects.toThrow(/authentication/i);
+    });
+
+    it('should stream an error, not silence, for an exit 0 whose turn never completed', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const events: { type: string; content: string }[] = [];
+      const stream = executor.executeStream('Test', { silent: true });
+      emitJsonlLines(mockProc, [agentMessageCompleted('Halfway')], null, 0);
+      for await (const event of stream) events.push({ type: event.type, content: event.content });
+
+      expect(events).toContainEqual({
+        type: 'error',
+        content:
+          'Codex CLI exited without a turn.completed event — the turn was cut short before it finished',
+      });
+    });
+  });
+
   describe('executeStream lifetime', () => {
+    it('should time out a stream that never closes, naming the budget', async () => {
+      const mockProc = createMockChildProcess();
+      vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
+
+      const events: { type: string; content: string }[] = [];
+      for await (const event of executor.executeStream('Test', { silent: true, timeout: 20 })) {
+        events.push({ type: event.type, content: event.content });
+      }
+
+      expect(events).toContainEqual({
+        type: 'error',
+        content: 'Agent execution timed out after 0.02s',
+      });
+      expect(mockProc.kill).toHaveBeenCalled();
+    });
+
     it('should kill the child when the consumer stops iterating early', async () => {
       const mockProc = createMockChildProcess();
       vi.mocked(mockSpawn).mockReturnValue(mockProc as any);
@@ -1152,5 +1300,62 @@ describe('CodexCliExecutorService', () => {
 
       expect(mockProc.kill).toHaveBeenCalled();
     });
+  });
+});
+
+describe('CodexCliExecutorService — idle timeout', () => {
+  // A stalled agent (hung API connection, wedged tool) used to sit out the
+  // whole total budget — 30 minutes by default, hours for a long implement
+  // stage. `idleTimeout` ends it after that long without any output.
+  const IDLE_MESSAGE = 'Agent execution timed out: no output for 60s';
+  let mockSpawn: SpawnFunction;
+  let executor: CodexCliExecutorService;
+
+  beforeEach(() => {
+    mockSpawn = vi.fn();
+    executor = new CodexCliExecutorService(mockSpawn);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('execute(): kills an agent silent for the idle budget, naming the budget', async () => {
+    vi.useFakeTimers();
+    const proc = createMockChildProcess();
+    vi.mocked(mockSpawn).mockReturnValue(proc as any);
+
+    const outcome = executor.execute('Prompt', { silent: true, idleTimeout: 60_000 }).then(
+      () => 'resolved',
+      (error: Error) => error.message
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    proc.stderr.write('still working\n'); // any output restarts the budget
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(proc.kill).toHaveBeenCalled();
+    proc.emit('close', null, 'SIGTERM');
+
+    expect(await outcome).toBe(IDLE_MESSAGE);
+  });
+
+  it('executeStream(): ends a silent stream with an idle-timeout error event', async () => {
+    const proc = createMockChildProcess();
+    vi.mocked(mockSpawn).mockReturnValue(proc as any);
+
+    const events: { type: string; content: string }[] = [];
+    for await (const event of executor.executeStream('Prompt', {
+      silent: true,
+      idleTimeout: 20,
+    })) {
+      events.push({ type: event.type, content: event.content });
+    }
+
+    expect(events).toContainEqual({
+      type: 'error',
+      content: 'Agent execution timed out: no output for 0.02s',
+    });
+    expect(proc.kill).toHaveBeenCalled();
   });
 });
