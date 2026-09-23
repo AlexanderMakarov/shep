@@ -351,8 +351,9 @@ Supporting files in the same directory:
 - `security-constraint-validator.ts` -- per-execution constraint checks
 
 Dynamic model catalogs (OpenRouter HTTP, Together AI HTTP, Cursor
-`cursor-agent --list-models`) live under `common/model-catalogs/` and are
-reached through `AgentExecutorFactory.listAvailableModels()` — never by
+`cursor-agent --list-models`, Claude Code `/model`) implement `IModelCatalog`
+under `common/model-catalogs/`, share a TTL cache via `TtlModelCatalog`, and
+are reached through `AgentExecutorFactory.listAvailableModels()` — never by
 spawning on every agent turn.
 
 `packages/core/src/domain/shared/agent-resume-descriptor.ts` (`RESUME_BINARIES`)
