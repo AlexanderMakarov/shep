@@ -36,6 +36,7 @@ export type {
   InteractiveAgentSessionHandle,
 } from './interactive-agent-executor.interface.js';
 export type { CatalogEntry } from './model-catalog.types.js';
+export type { IModelCatalog } from './model-catalog.interface.js';
 export type {
   IAgentMessageBus,
   AgentMessageBusFilter,

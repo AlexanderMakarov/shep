@@ -18,7 +18,11 @@ describe('TogetherAiModelCatalogService', () => {
     const fetchFn = vi.fn().mockResolvedValue(okResponse([]));
     const catalog = new TogetherAiModelCatalogService(fetchFn as unknown as typeof fetch);
 
-    await catalog.listModels('tg-key');
+    await catalog.listModels({
+      type: 'together-ai' as never,
+      authMethod: 'token' as never,
+      token: 'tg-key',
+    });
 
     const init = fetchFn.mock.calls[0][1] as RequestInit;
     expect(init.signal).toBeInstanceOf(AbortSignal);
@@ -32,7 +36,13 @@ describe('TogetherAiModelCatalogService', () => {
       );
     const catalog = new TogetherAiModelCatalogService(fetchFn as unknown as typeof fetch);
 
-    await expect(catalog.listModels('tg-key')).resolves.toEqual([]);
+    await expect(
+      catalog.listModels({
+        type: 'together-ai' as never,
+        authMethod: 'token' as never,
+        token: 'tg-key',
+      })
+    ).resolves.toEqual([]);
   });
 
   it('should not call upstream without an API key', async () => {

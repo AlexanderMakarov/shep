@@ -1,39 +1,27 @@
 /**
  * Cursor Model Catalog
  *
- * Discovers the live model list from `cursor-agent --list-models`. Results are
- * cached in-process with a short TTL so opening the model picker does not spawn
- * the CLI on every keystroke or agent turn.
- *
- * On spawn/timeout/parse failure the service returns the last-good cache when
- * present, otherwise an empty list so the factory can fall back to the hardcoded
- * CURSOR_MODELS catalog (same pattern as OpenRouter/Together).
+ * Discovers models via `cursor-agent --list-models`. Caching lives in
+ * {@link TtlModelCatalog}.
  */
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { AgentConfig } from '../../../../../domain/generated/output.js';
 import type { AgentModelListing } from '../../../../../application/ports/output/agents/agent-executor-factory.interface.js';
 import { MODEL_CATALOG_FETCH_TIMEOUT_MS } from './catalog-fetch.js';
+import { TtlModelCatalog } from './ttl-model-catalog.js';
 
 const execFileAsync = promisify(execFile);
-
-/** In-process TTL — same spirit as OpenRouter's 5-minute cache. */
-export const CURSOR_MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
-
 const CURSOR_BINARY = 'cursor-agent';
 
-/**
- * Injectable runner for `cursor-agent --list-models` stdout.
- * Tests stub this; production uses {@link defaultCursorListModels}.
- */
+/** Injectable runner for `cursor-agent --list-models` stdout. */
 export type CursorListModelsFn = () => Promise<string>;
 
 /**
  * Parse one stdout dump from `cursor-agent --list-models`.
  *
- * Lines look like `id - Display Name` (optional parenthetical notes). The
- * "Available models" header and blank/malformed lines are skipped. Trailing
- * zero-width / BOM junk from some CLI builds is stripped from both sides.
+ * Lines look like `id - Display Name`. The header and malformed lines are skipped.
  */
 export function parseCursorListModelsOutput(stdout: string): AgentModelListing[] {
   const listings: AgentModelListing[] = [];
@@ -63,30 +51,13 @@ async function defaultCursorListModels(): Promise<string> {
   return typeof stdout === 'string' ? stdout : String(stdout);
 }
 
-export class CursorModelCatalogService {
-  private cache: { expiresAt: number; data: AgentModelListing[] } | null = null;
+export class CursorModelCatalogService extends TtlModelCatalog {
+  constructor(private readonly listModelsFn: CursorListModelsFn = defaultCursorListModels) {
+    super();
+  }
 
-  constructor(private readonly listModelsFn: CursorListModelsFn = defaultCursorListModels) {}
-
-  async listModels(): Promise<AgentModelListing[]> {
-    const now = Date.now();
-    if (this.cache && this.cache.expiresAt > now) {
-      return this.cache.data;
-    }
-
-    let stdout: string;
-    try {
-      stdout = await this.listModelsFn();
-    } catch {
-      return this.cache?.data ?? [];
-    }
-
-    const listings = parseCursorListModelsOutput(stdout);
-    if (listings.length === 0) {
-      return this.cache?.data ?? [];
-    }
-
-    this.cache = { expiresAt: now + CURSOR_MODEL_CATALOG_TTL_MS, data: listings };
-    return listings;
+  protected async fetchModels(_authConfig?: AgentConfig): Promise<AgentModelListing[]> {
+    const stdout = await this.listModelsFn();
+    return parseCursorListModelsOutput(stdout);
   }
 }

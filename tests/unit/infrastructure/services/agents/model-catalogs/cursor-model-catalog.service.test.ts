@@ -13,6 +13,7 @@ import {
   CursorModelCatalogService,
   parseCursorListModelsOutput,
 } from '@/infrastructure/services/agents/common/model-catalogs/cursor-model-catalog.service.js';
+import { MODEL_CATALOG_TTL_MS } from '@/infrastructure/services/agents/common/model-catalogs/catalog-fetch.js';
 
 const FIXTURE = readFileSync(join(__dirname, 'fixtures', 'cursor-list-models.txt'), 'utf8');
 
@@ -76,7 +77,7 @@ describe('CursorModelCatalogService', () => {
     const catalog = new CursorModelCatalogService(run);
 
     await catalog.listModels();
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TTL_MS + 1);
     await catalog.listModels();
 
     expect(run).toHaveBeenCalledTimes(2);
@@ -94,7 +95,7 @@ describe('CursorModelCatalogService', () => {
     const catalog = new CursorModelCatalogService(run);
 
     const first = await catalog.listModels();
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TTL_MS + 1);
     const second = await catalog.listModels();
 
     expect(second).toEqual(first);

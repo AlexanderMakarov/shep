@@ -119,9 +119,10 @@ The default model is `claude-sonnet-4-6`. The picker only offers models the **co
 supports, so switching agents can change which models are available.
 
 For **Cursor CLI**, the picker prefers the live list from `cursor-agent --list-models` (cached
-in-process for a few minutes). If the binary is missing or the command fails, Shep falls back to
-the hardcoded Cursor entries in `agent-catalog.ts` (`auto`, `composer-2.5`, …). OpenRouter and
-Together AI use the same live-then-fallback pattern via their HTTP catalogs.
+in-process for a few minutes). **Claude Code** discovers aliases via `claude … "/model"`.
+**OpenRouter** / **Together AI** use their HTTP catalogs. If discovery fails, Shep falls back to
+the hardcoded entries in `agent-catalog.ts`. All live catalogs share one `IModelCatalog` port and
+a TTL cache (see `model-catalogs/catalog-fetch.ts`).
 
 ### Adaptive model tiers
 

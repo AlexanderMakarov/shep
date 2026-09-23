@@ -1,20 +1,18 @@
 /**
  * Together AI Model Catalog
  *
- * Fetches the list of models available on Together AI via `/v1/models`.
- * Together's catalog endpoint requires an API key, so callers MUST supply a
- * token — without one the list will be empty.
- *
- * Results are cached in-process with a short TTL.
+ * Fetches models from Together AI `/v1/models`. Requires an API key.
+ * Caching lives in {@link TtlModelCatalog} (keyed by token).
  *
  * API docs: https://docs.together.ai/reference/models-1
  */
 
+import type { AgentConfig } from '../../../../../domain/generated/output.js';
 import type { AgentModelListing } from '../../../../../application/ports/output/agents/agent-executor-factory.interface.js';
 import { MODEL_CATALOG_FETCH_TIMEOUT_MS } from './catalog-fetch.js';
+import { TtlModelCatalog } from './ttl-model-catalog.js';
 
 const ENDPOINT = 'https://api.together.xyz/v1/models';
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface TogetherAiPricing {
   input?: number;
@@ -32,47 +30,29 @@ interface TogetherAiModelEntry {
 
 type FetchFn = typeof fetch;
 
-export class TogetherAiModelCatalogService {
-  private cache: { expiresAt: number; data: AgentModelListing[]; key: string } | null = null;
+export class TogetherAiModelCatalogService extends TtlModelCatalog {
+  constructor(private readonly fetchFn: FetchFn = fetch) {
+    super();
+  }
 
-  constructor(private readonly fetchFn: FetchFn = fetch) {}
-
-  async listModels(apiKey?: string): Promise<AgentModelListing[]> {
+  protected async fetchModels(authConfig?: AgentConfig): Promise<AgentModelListing[]> {
+    const apiKey = authConfig?.token?.trim();
     if (!apiKey) return [];
 
-    const now = Date.now();
-    if (this.cache && this.cache.expiresAt > now && this.cache.key === apiKey) {
-      return this.cache.data;
-    }
+    const response = await this.fetchFn(ENDPOINT, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(MODEL_CATALOG_FETCH_TIMEOUT_MS),
+    });
 
-    let response: Response;
-    try {
-      response = await this.fetchFn(ENDPOINT, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        signal: AbortSignal.timeout(MODEL_CATALOG_FETCH_TIMEOUT_MS),
-      });
-    } catch {
-      return this.cache?.data ?? [];
-    }
+    if (!response.ok) return [];
 
-    if (!response.ok) {
-      return this.cache?.data ?? [];
-    }
-
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      return this.cache?.data ?? [];
-    }
-
-    // Together's /v1/models returns an array directly.
+    const body: unknown = await response.json();
     const entries = Array.isArray(body) ? (body as TogetherAiModelEntry[]) : [];
 
-    const listings: AgentModelListing[] = entries
+    return entries
       .filter((entry) => !entry.type || entry.type === 'chat' || entry.type === 'language')
       .map((entry) => {
         const input = entry.pricing?.input ?? 0;
@@ -87,8 +67,5 @@ export class TogetherAiModelCatalogService {
             entry.organization ?? (entry.id.includes('/') ? entry.id.split('/')[0] : undefined),
         };
       });
-
-    this.cache = { expiresAt: now + CACHE_TTL_MS, data: listings, key: apiKey };
-    return listings;
   }
 }

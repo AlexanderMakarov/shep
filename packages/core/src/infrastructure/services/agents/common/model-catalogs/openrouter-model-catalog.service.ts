@@ -2,21 +2,20 @@
  * OpenRouter Model Catalog
  *
  * Fetches the current list of models from OpenRouter's public `/api/v1/models`
- * endpoint. Results are cached in-process with a short TTL so repeated UI
- * lookups don't hammer the API.
+ * endpoint. Caching lives in {@link TtlModelCatalog}.
  *
- * OpenRouter allows anonymous access to the catalog — a token is optional but
- * still passed along when available so the response honours the caller's
- * organisation filters.
+ * OpenRouter allows anonymous access — a token is optional but still passed
+ * when available so the response honours organisation filters.
  *
  * API docs: https://openrouter.ai/docs/api-reference/list-available-models
  */
 
+import type { AgentConfig } from '../../../../../domain/generated/output.js';
 import type { AgentModelListing } from '../../../../../application/ports/output/agents/agent-executor-factory.interface.js';
 import { MODEL_CATALOG_FETCH_TIMEOUT_MS } from './catalog-fetch.js';
+import { TtlModelCatalog } from './ttl-model-catalog.js';
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/models';
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface OpenRouterPricing {
   prompt?: string;
@@ -37,42 +36,26 @@ interface OpenRouterListResponse {
 
 type FetchFn = typeof fetch;
 
-export class OpenRouterModelCatalogService {
-  private cache: { expiresAt: number; data: AgentModelListing[] } | null = null;
+export class OpenRouterModelCatalogService extends TtlModelCatalog {
+  constructor(private readonly fetchFn: FetchFn = fetch) {
+    super();
+  }
 
-  constructor(private readonly fetchFn: FetchFn = fetch) {}
-
-  async listModels(apiKey?: string): Promise<AgentModelListing[]> {
-    const now = Date.now();
-    if (this.cache && this.cache.expiresAt > now) {
-      return this.cache.data;
-    }
-
+  protected async fetchModels(authConfig?: AgentConfig): Promise<AgentModelListing[]> {
+    const apiKey = authConfig?.token?.trim();
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-    let response: Response;
-    try {
-      response = await this.fetchFn(ENDPOINT, {
-        headers,
-        signal: AbortSignal.timeout(MODEL_CATALOG_FETCH_TIMEOUT_MS),
-      });
-    } catch {
-      return this.cache?.data ?? [];
-    }
+    const response = await this.fetchFn(ENDPOINT, {
+      headers,
+      signal: AbortSignal.timeout(MODEL_CATALOG_FETCH_TIMEOUT_MS),
+    });
 
-    if (!response.ok) {
-      return this.cache?.data ?? [];
-    }
+    if (!response.ok) return [];
 
-    let body: OpenRouterListResponse;
-    try {
-      body = (await response.json()) as OpenRouterListResponse;
-    } catch {
-      return this.cache?.data ?? [];
-    }
+    const body = (await response.json()) as OpenRouterListResponse;
 
-    const listings: AgentModelListing[] = (body.data ?? []).map((entry) => {
+    return (body.data ?? []).map((entry) => {
       const promptPrice = parseFloat(entry.pricing?.prompt ?? '0');
       const completionPrice = parseFloat(entry.pricing?.completion ?? '0');
       const isFree = promptPrice === 0 && completionPrice === 0;
@@ -86,8 +69,5 @@ export class OpenRouterModelCatalogService {
         vendor,
       };
     });
-
-    this.cache = { expiresAt: now + CACHE_TTL_MS, data: listings };
-    return listings;
   }
 }
