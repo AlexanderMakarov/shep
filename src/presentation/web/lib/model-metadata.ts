@@ -49,7 +49,7 @@ const MODEL_METADATA: Record<string, ModelMeta> = {
   },
   'gpt-5': { displayName: 'GPT-5', description: 'Legacy flagship' },
 
-  // Cursor CLI models
+  // Cursor CLI models (static fallback; live list comes from --list-models)
   auto: { displayName: 'Auto', description: 'Cursor default model routing' },
   'composer-2.5': { displayName: 'Composer 2.5', description: 'Cursor coding model' },
   'composer-2.5-fast': {
@@ -58,7 +58,17 @@ const MODEL_METADATA: Record<string, ModelMeta> = {
   },
   // Legacy id kept for old settings rows that still store composer-1.5
   'composer-1.5': { displayName: 'Composer 1.5', description: 'Legacy multi-file editing' },
-  'grok-code': { displayName: 'Grok Code', description: 'xAI code model' },
+  'grok-code': { displayName: 'Grok Code', description: 'xAI code model (legacy id)' },
+  'cursor-grok-4.6-high': { displayName: 'Grok 4.6', description: 'xAI Grok via Cursor' },
+  'claude-opus-5-high': { displayName: 'Opus 5', description: 'Claude Opus 5 via Cursor' },
+  'claude-sonnet-5-high': { displayName: 'Sonnet 5', description: 'Claude Sonnet 5 via Cursor' },
+  'claude-4.6-sonnet-medium': {
+    displayName: 'Sonnet 4.6',
+    description: 'Claude Sonnet 4.6 via Cursor',
+  },
+  'gemini-3.1-pro': { displayName: 'Gemini 3.1 Pro', description: 'Advanced reasoning' },
+  // Legacy preview id still used by other agents' catalogs
+  // (keep single entry — displayName covers both shapes via getModelMeta fallback if needed)
 
   // Z.ai models
   'z-ai/glm-5.3': {

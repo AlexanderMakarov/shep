@@ -21,15 +21,14 @@ const CLAUDE_CODE_CATALOG = [
   'glm-5.2',
 ];
 
-/** Cursor's catalog deliberately has no Haiku-class Claude model. */
+/** Synthetic Cursor-like catalog for tier tests (ids must exist in MODEL_TIERS). */
 const CURSOR_CATALOG = [
-  'auto',
-  'composer-2.5',
   'claude-opus-5',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
   'gpt-5.4-high',
   'gemini-3.1-pro-preview',
+  'composer-2.5',
 ];
 
 const GEMINI_CATALOG = [

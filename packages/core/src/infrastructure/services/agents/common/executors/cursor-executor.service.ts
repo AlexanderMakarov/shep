@@ -59,21 +59,22 @@ const CURSOR_NOT_FOUND_MESSAGE =
 const UNUSABLE_MODEL_MARKER = 'Cannot use this model';
 
 /**
- * Map canonical model IDs (used across shep) to Cursor CLI model names.
- * Cursor uses short names like "sonnet-4.6" instead of "claude-sonnet-4-6".
- * Models that already match Cursor's naming pass through unchanged.
+ * Map legacy / Shep-canonical model IDs to current Cursor CLI ids from
+ * `cursor-agent --list-models`. Live catalog ids pass through unchanged.
  */
 const CURSOR_MODEL_MAP: Record<string, string> = {
-  'claude-opus-5': 'opus-5',
-  'claude-opus-4-8': 'opus-4.8',
-  'claude-opus-4-7': 'opus-4.7',
-  'claude-opus-4-6': 'opus-4.6',
-  'claude-sonnet-5': 'sonnet-5',
-  'claude-sonnet-4-6': 'sonnet-4.6',
-  'claude-haiku-4-5': 'haiku-4.5',
-  'grok-code': 'grok',
-  // Obsolete catalog id → current Composer line (CLI no longer lists 1.5).
+  // Obsolete Composer
   'composer-1.5': 'composer-2.5',
+  // Pre-rename Claude aliases → current Cursor CLI ids
+  'claude-opus-5': 'claude-opus-5-high',
+  'claude-opus-4-8': 'claude-opus-4-8-high',
+  'claude-opus-4-7': 'claude-opus-4-7-high',
+  'claude-opus-4-6': 'claude-4.6-opus-high',
+  'claude-sonnet-5': 'claude-sonnet-5-high',
+  'claude-sonnet-4-6': 'claude-4.6-sonnet-medium',
+  'claude-haiku-4-5': 'claude-4.5-sonnet',
+  'grok-code': 'cursor-grok-4.6-high',
+  'gemini-3.1-pro-preview': 'gemini-3.1-pro',
 };
 
 function toCursorModelName(model: string): string {

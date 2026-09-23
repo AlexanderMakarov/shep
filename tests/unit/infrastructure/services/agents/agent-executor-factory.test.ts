@@ -380,25 +380,15 @@ describe('AgentExecutorFactory', () => {
       ]);
     });
 
-    it('should return cursor model list', () => {
+    it('should return cursor model list from AGENT_CATALOG', () => {
       const models = factory.getSupportedModels(AgentType.Cursor);
 
-      expect(models).toEqual([
-        'auto',
-        'composer-2.5',
-        'composer-2.5-fast',
-        'claude-opus-5',
-        'claude-opus-4-8',
-        'claude-opus-4-7',
-        'claude-opus-4-6',
-        'claude-sonnet-5',
-        'claude-sonnet-4-6',
-        'gpt-5.4-high',
-        'gpt-5.2',
-        'gpt-5.3-codex',
-        'gemini-3.1-pro-preview',
-        'grok-code',
-      ]);
+      // DRY: assert against the catalog, not a duplicated literal list.
+      expect(models).toEqual([...AGENT_CATALOG[AgentType.Cursor].models]);
+      expect(models[0]).toBe('auto');
+      expect(models).toContain('composer-2.5');
+      expect(models).not.toContain('composer-1.5');
+      expect(models).not.toContain('claude-opus-4-6');
     });
 
     it('should return codex-cli model list with 12 models', () => {
@@ -566,7 +556,8 @@ describe('AgentExecutorFactory - resolveAdaptiveModelPlan', () => {
   });
 
   it('falls back to a tier the agent actually serves — Cursor lists no Haiku', () => {
-    const plan = factory.resolveAdaptiveModelPlan(AgentType.Cursor, 'claude-opus-5');
+    // Pin a live Cursor id so the resolved plan stays inside getSupportedModels().
+    const plan = factory.resolveAdaptiveModelPlan(AgentType.Cursor, 'claude-opus-5-high');
     expect(factory.getSupportedModels(AgentType.Cursor)).toContain(plan.low);
     expect(plan.low).not.toBe('claude-haiku-4-5');
   });
