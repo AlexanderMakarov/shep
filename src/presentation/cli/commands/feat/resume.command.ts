@@ -19,6 +19,12 @@ export function createResumeCommand(): Command {
     .description(t('cli:commands.feat.resume.description'))
     .argument('<id>', t('cli:commands.feat.resume.idArgument'))
     .option('--force', t('cli:commands.feat.resume.forceOption'))
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ shep feat resume abc12345`
+    )
     .action(async (id: string, options: { force?: boolean }) => {
       try {
         const useCase = container.resolve(ResumeFeatureUseCase);
