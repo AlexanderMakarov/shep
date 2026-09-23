@@ -118,6 +118,11 @@ shep feat new "…" --model <id>   # per-feature override
 The default model is `claude-sonnet-4-6`. The picker only offers models the **configured agent**
 supports, so switching agents can change which models are available.
 
+For **Cursor CLI**, the picker prefers the live list from `cursor-agent --list-models` (cached
+in-process for a few minutes). If the binary is missing or the command fails, Shep falls back to
+the hardcoded Cursor entries in `agent-catalog.ts` (`auto`, `composer-2.5`, …). OpenRouter and
+Together AI use the same live-then-fallback pattern via their HTTP catalogs.
+
 ### Adaptive model tiers
 
 Adaptive selection routes each planned task to a model matching its complexity. The pinned model

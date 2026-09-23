@@ -1,0 +1,9 @@
+Available models
+
+auto - Auto (current, default)
+gpt-5.3-codex - Codex 5.3
+composer-2.5 - Composer 2.5
+composer-2.5-fast - Composer 2.5 Fast
+claude-opus-5-thinking-high - Claude Opus 5 1M Thinking
+gpt-5.2 - GPT-5.2
+grok-4.7-high - Grok 4.7  High

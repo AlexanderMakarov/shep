@@ -100,9 +100,10 @@ export interface IAgentExecutorFactory {
    * when the provider exposes a discovery API (OpenRouter, Together AI).
    *
    * For providers that expose a model catalog API, this fetches the full
-   * current list over HTTP (cached in-process with a short TTL). For static
-   * providers, it returns the same identifiers as {@link getSupportedModels}
-   * wrapped as listings with only the `id` field populated.
+   * current list over HTTP (cached in-process with a short TTL). For Cursor CLI
+   * it runs `cursor-agent --list-models` (same TTL). For static providers, it
+   * returns the same identifiers as {@link getSupportedModels} wrapped as
+   * listings with only the `id` field populated.
    *
    * Callers MUST pass the provider's auth config when one is required — some
    * catalogs (e.g. OpenRouter) require a token to return the full list.

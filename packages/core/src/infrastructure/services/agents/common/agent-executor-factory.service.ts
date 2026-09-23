@@ -23,6 +23,7 @@ import type {
 } from '../../../../application/ports/output/agents/agent-executor-factory.interface.js';
 import { OpenRouterModelCatalogService } from './model-catalogs/openrouter-model-catalog.service.js';
 import { TogetherAiModelCatalogService } from './model-catalogs/together-ai-model-catalog.service.js';
+import { CursorModelCatalogService } from './model-catalogs/cursor-model-catalog.service.js';
 import { ClaudeCodeExecutorService } from './executors/claude-code-executor.service.js';
 import { ClaudeCodeInteractiveExecutor } from './executors/claude-code-interactive-executor.service.js';
 import { CursorExecutorService } from './executors/cursor-executor.service.js';
@@ -92,19 +93,23 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
   private readonly cache = new Map<string, IAgentExecutor>();
   private readonly openRouterCatalog: OpenRouterModelCatalogService;
   private readonly togetherAiCatalog: TogetherAiModelCatalogService;
+  private readonly cursorCatalog: CursorModelCatalogService;
 
   /**
    * @param spawn - Spawn function for creating subprocesses (injectable for testing).
    * @param openRouterCatalog - Optional OpenRouter catalog (defaults to new instance).
    * @param togetherAiCatalog - Optional Together AI catalog (defaults to new instance).
+   * @param cursorCatalog - Optional Cursor CLI catalog (defaults to new instance).
    */
   constructor(
     private readonly spawn: SpawnFunction,
     openRouterCatalog?: OpenRouterModelCatalogService,
-    togetherAiCatalog?: TogetherAiModelCatalogService
+    togetherAiCatalog?: TogetherAiModelCatalogService,
+    cursorCatalog?: CursorModelCatalogService
   ) {
     this.openRouterCatalog = openRouterCatalog ?? new OpenRouterModelCatalogService();
     this.togetherAiCatalog = togetherAiCatalog ?? new TogetherAiModelCatalogService();
+    this.cursorCatalog = cursorCatalog ?? new CursorModelCatalogService();
   }
 
   /**
@@ -224,8 +229,9 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
 
   /**
    * List models available for the given agent type. For OpenRouter and
-   * Together AI this hits the provider's catalog API (cached). For all other
-   * agents it wraps the static list returned by {@link getSupportedModels}.
+   * Together AI this hits the provider's catalog API (cached). For Cursor it
+   * runs `cursor-agent --list-models` (cached). For all other agents it wraps
+   * the static list returned by {@link getSupportedModels}.
    */
   async listAvailableModels(
     agentType: AgentType,
@@ -245,6 +251,12 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
       const dynamic = await this.togetherAiCatalog.listModels(token);
       if (dynamic.length > 0) return dynamic;
       return TOGETHER_AI_MODELS.map((id) => ({ id }));
+    }
+
+    if (key === 'cursor') {
+      const dynamic = await this.cursorCatalog.listModels();
+      if (dynamic.length > 0) return dynamic;
+      return this.getSupportedModels(agentType).map((id) => ({ id }));
     }
 
     return this.getSupportedModels(agentType).map((id) => ({ id }));
