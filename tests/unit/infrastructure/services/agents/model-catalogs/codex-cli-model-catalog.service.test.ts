@@ -64,4 +64,23 @@ describe('CodexCliModelCatalogService', () => {
     await catalog.listModels();
     expect(run).toHaveBeenCalledTimes(2);
   });
+
+  it('returns last-good when a later fetch fails', async () => {
+    const run = vi.fn().mockResolvedValueOnce(FIXTURE).mockRejectedValueOnce(new Error('timeout'));
+    const catalog = new CodexCliModelCatalogService(run);
+
+    const first = await catalog.listModels();
+    await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TTL_MS + 1);
+    const second = await catalog.listModels();
+
+    expect(second).toEqual(first);
+    expect(second.map((l) => l.id)).toContain('gpt-5.4');
+  });
+
+  it('returns an empty list when the runner fails and there is no cache', async () => {
+    const run = vi.fn().mockRejectedValue(new Error('codex not found'));
+    const catalog = new CodexCliModelCatalogService(run);
+
+    await expect(catalog.listModels()).resolves.toEqual([]);
+  });
 });

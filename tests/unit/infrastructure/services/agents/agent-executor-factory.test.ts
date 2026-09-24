@@ -590,7 +590,7 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
       ]),
     };
 
-    const factory = new AgentExecutorFactory(vi.fn(), new Map([['cursor', cursorCatalog]]));
+    const factory = new AgentExecutorFactory(vi.fn(), new Map([[AgentType.Cursor, cursorCatalog]]));
 
     await expect(factory.listAvailableModels(AgentType.Cursor)).resolves.toEqual([
       { id: 'auto', displayName: 'Auto' },
@@ -604,7 +604,7 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
       listModels: vi.fn().mockResolvedValue([]),
     };
 
-    const factory = new AgentExecutorFactory(vi.fn(), new Map([['cursor', cursorCatalog]]));
+    const factory = new AgentExecutorFactory(vi.fn(), new Map([[AgentType.Cursor, cursorCatalog]]));
 
     const listings = await factory.listAvailableModels(AgentType.Cursor);
     expect(listings.map((l) => l.id)).toEqual(factory.getSupportedModels(AgentType.Cursor));
@@ -623,16 +623,20 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
       listModels: vi.fn().mockResolvedValue([{ id: 'auto' }]),
     };
     const claude: IModelCatalog = {
-      listModels: vi.fn().mockResolvedValue([{ id: 'opus' }]),
+      listModels: vi.fn().mockResolvedValue([{ id: 'claude-opus-5' }]),
+    };
+    const codex: IModelCatalog = {
+      listModels: vi.fn().mockResolvedValue([{ id: 'gpt-5.4' }]),
     };
 
     const factory = new AgentExecutorFactory(
       vi.fn(),
       new Map([
-        ['openrouter', openRouter],
-        ['together-ai', together],
-        ['cursor', cursor],
-        ['claude-code', claude],
+        [AgentType.OpenRouter, openRouter],
+        [AgentType.TogetherAi, together],
+        [AgentType.Cursor, cursor],
+        [AgentType.ClaudeCode, claude],
+        [AgentType.CodexCli, codex],
       ])
     );
 
@@ -643,7 +647,10 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
       { id: 'tg/model' },
     ]);
     await expect(factory.listAvailableModels(AgentType.ClaudeCode)).resolves.toEqual([
-      { id: 'opus' },
+      { id: 'claude-opus-5' },
+    ]);
+    await expect(factory.listAvailableModels(AgentType.CodexCli)).resolves.toEqual([
+      { id: 'gpt-5.4' },
     ]);
     expect(cursor.listModels).not.toHaveBeenCalled();
   });
@@ -661,10 +668,10 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
       }),
     });
 
-    const catalogs = new Map<string, IModelCatalog>([
-      ['cursor', makeCatalog()],
-      ['claude-code', makeCatalog()],
-      ['codex-cli', makeCatalog()],
+    const catalogs = new Map([
+      [AgentType.Cursor, makeCatalog()],
+      [AgentType.ClaudeCode, makeCatalog()],
+      [AgentType.CodexCli, makeCatalog()],
     ]);
     const factory = new AgentExecutorFactory(vi.fn(), catalogs);
 
@@ -674,6 +681,26 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
     for (const catalog of catalogs.values()) {
       expect(catalog.listModels).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it('swallows rejecting catalogs during warm so one failure does not abort others', async () => {
+    const ok: IModelCatalog = {
+      listModels: vi.fn().mockResolvedValue([{ id: 'ok' }]),
+    };
+    const bad: IModelCatalog = {
+      listModels: vi.fn().mockRejectedValue(new Error('boom')),
+    };
+    const factory = new AgentExecutorFactory(
+      vi.fn(),
+      new Map([
+        [AgentType.Cursor, ok],
+        [AgentType.ClaudeCode, bad],
+      ])
+    );
+
+    await expect(factory.warmModelCatalogs()).resolves.toBeUndefined();
+    expect(ok.listModels).toHaveBeenCalledTimes(1);
+    expect(bad.listModels).toHaveBeenCalledTimes(1);
   });
 
   it('passes active-agent auth only to the matching catalog during warm', async () => {
@@ -686,8 +713,8 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
     const factory = new AgentExecutorFactory(
       vi.fn(),
       new Map([
-        ['together-ai', together],
-        ['cursor', cursor],
+        [AgentType.TogetherAi, together],
+        [AgentType.Cursor, cursor],
       ])
     );
     const auth = { type: AgentType.TogetherAi, token: 'secret' } as AgentConfig;

@@ -10,7 +10,7 @@
 
 import 'reflect-metadata';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { container } from 'tsyringe';
+import { container, instanceCachingFactory } from 'tsyringe';
 import DatabaseConstructor from 'better-sqlite3';
 import type Database from 'better-sqlite3';
 import { spawn } from 'node:child_process';
@@ -51,7 +51,8 @@ describe('Agent Infrastructure Integration', () => {
     });
 
     container.register<IAgentExecutorFactory>('IAgentExecutorFactory', {
-      useFactory: () => new AgentExecutorFactory(spawn),
+      // Match production: catalogs own an in-process TTL cache on the factory.
+      useFactory: instanceCachingFactory(() => new AgentExecutorFactory(spawn)),
     });
 
     container.register<IAgentRegistry>('IAgentRegistry', {
@@ -102,6 +103,12 @@ describe('Agent Infrastructure Integration', () => {
     it('should resolve IAgentExecutorFactory', () => {
       const factory = container.resolve<IAgentExecutorFactory>('IAgentExecutorFactory');
       expect(factory).toBeInstanceOf(AgentExecutorFactory);
+    });
+
+    it('should resolve the same IAgentExecutorFactory singleton twice', () => {
+      const a = container.resolve<IAgentExecutorFactory>('IAgentExecutorFactory');
+      const b = container.resolve<IAgentExecutorFactory>('IAgentExecutorFactory');
+      expect(a).toBe(b);
     });
 
     it('should resolve IAgentRegistry with pre-registered agents', () => {

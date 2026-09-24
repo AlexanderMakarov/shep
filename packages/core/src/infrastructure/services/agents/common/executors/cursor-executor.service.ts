@@ -50,7 +50,7 @@ const CURSOR_BINARY = 'cursor-agent';
 
 /** Shown when the binary is missing, so the user knows how to fix it. */
 const CURSOR_NOT_FOUND_MESSAGE =
-  'Cursor agent CLI not found. Please install Cursor and ensure the "cursor" command is available on PATH.';
+  'Cursor agent CLI not found. Please install Cursor and ensure the "cursor-agent" command is available on PATH.';
 
 /**
  * stderr fragment Cursor prints when the requested model is unavailable.

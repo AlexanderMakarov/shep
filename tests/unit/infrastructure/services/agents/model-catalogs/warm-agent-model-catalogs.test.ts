@@ -42,4 +42,19 @@ describe('warmAgentModelCatalogs', () => {
 
     expect(warmModelCatalogs).toHaveBeenCalledWith(undefined);
   });
+
+  it('propagates warmModelCatalogs rejection to the caller', async () => {
+    const warmModelCatalogs = vi.fn().mockRejectedValue(new Error('warm failed'));
+    const container = {
+      resolve: vi.fn((token: string) => {
+        if (token === 'IAgentExecutorFactory') return { warmModelCatalogs };
+        if (token === 'ISettingsRepository') {
+          return { load: vi.fn().mockResolvedValue(null) };
+        }
+        throw new Error(`unexpected token ${token}`);
+      }),
+    } as unknown as DependencyContainer;
+
+    await expect(warmAgentModelCatalogs(container)).rejects.toThrow('warm failed');
+  });
 });

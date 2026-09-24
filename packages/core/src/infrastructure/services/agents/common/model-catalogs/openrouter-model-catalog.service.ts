@@ -56,18 +56,24 @@ export class OpenRouterModelCatalogService extends TtlModelCatalog {
     const body = (await response.json()) as OpenRouterListResponse;
 
     return (body.data ?? []).map((entry) => {
-      const promptPrice = parseFloat(entry.pricing?.prompt ?? '0');
-      const completionPrice = parseFloat(entry.pricing?.completion ?? '0');
-      const isFree = promptPrice === 0 && completionPrice === 0;
       const vendor = entry.id.includes('/') ? entry.id.split('/')[0] : undefined;
       return {
         id: entry.id,
         displayName: entry.name,
         description: entry.description,
         contextLength: entry.context_length,
-        isFree,
+        isFree: openRouterIsFree(entry.pricing),
         vendor,
       };
     });
   }
+}
+
+/** `isFree` only when both prices are present and numerically zero — never assume free. */
+function openRouterIsFree(pricing: OpenRouterPricing | undefined): boolean | undefined {
+  if (!pricing) return undefined;
+  const promptPrice = parseFloat(pricing.prompt ?? 'NaN');
+  const completionPrice = parseFloat(pricing.completion ?? 'NaN');
+  if (Number.isNaN(promptPrice) || Number.isNaN(completionPrice)) return undefined;
+  return promptPrice === 0 && completionPrice === 0;
 }

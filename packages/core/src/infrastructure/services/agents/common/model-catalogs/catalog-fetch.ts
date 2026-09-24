@@ -1,21 +1,23 @@
 /**
  * Shared upstream-request settings for the model catalogs.
  *
- * ## Caching (investigation summary)
+ * ## Caching
  *
- * Today every catalog uses an **in-process TTL cache** ({@link MODEL_CATALOG_TTL_MS}):
- * - Hit while fresh → no HTTP/CLI call (picker reopen is cheap).
- * - Miss / expiry → fetch; on failure return last-good cache or `[]`.
- * - Together AI also keys the cache by API token so switching accounts
- *   cannot leak another org's model list.
+ * Every catalog uses an **in-process TTL cache** ({@link MODEL_CATALOG_TTL_MS} = 1h):
+ * - Hit while fresh (same auth cache key) → no HTTP/CLI call.
+ * - Miss / expiry → fetch; on failure or empty response return last-good for
+ *   that same key only (do not extend TTL), else `[]`.
+ * - Concurrent callers for the same key share one in-flight fetch (singleflight).
+ * - Returned arrays are shallow copies so callers cannot mutate the cache.
+ * - Token-backed providers (Together AI, OpenRouter) key by `authConfig.token`.
+ *
+ * Boot also calls {@link IAgentExecutorFactory.warmModelCatalogs} from the web
+ * serve/ui path so the first picker open usually hits a warm cache. Discovery is
+ * still never run on every agent turn — only via `listAvailableModels` / warm.
  *
  * Not yet implemented (candidates for a follow-up):
  * - Persist last-good snapshot under `~/.shep/` so cold starts stay offline-friendly.
- * - Invalidate when `settings.agent.type` / token changes (today TTL alone handles it).
  * - Per-agent TTL overrides (CLI discovery is slower than HTTP).
- *
- * Do **not** call discovery on every agent turn — only via
- * `IAgentExecutorFactory.listAvailableModels` when the UI/settings load the picker.
  */
 
 /** Longest a catalog request may take before it is abandoned. */

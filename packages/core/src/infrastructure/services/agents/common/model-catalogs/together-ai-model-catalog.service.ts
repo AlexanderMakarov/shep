@@ -55,17 +55,21 @@ export class TogetherAiModelCatalogService extends TtlModelCatalog {
     return entries
       .filter((entry) => !entry.type || entry.type === 'chat' || entry.type === 'language')
       .map((entry) => {
-        const input = entry.pricing?.input ?? 0;
-        const output = entry.pricing?.output ?? 0;
-        const isFree = input === 0 && output === 0;
         return {
           id: entry.id,
           displayName: entry.display_name,
           contextLength: entry.context_length,
-          isFree,
+          isFree: togetherIsFree(entry.pricing),
           vendor:
             entry.organization ?? (entry.id.includes('/') ? entry.id.split('/')[0] : undefined),
         };
       });
   }
+}
+
+/** `isFree` only when both prices are present and numerically zero — never assume free. */
+function togetherIsFree(pricing: TogetherAiPricing | undefined): boolean | undefined {
+  if (!pricing) return undefined;
+  if (typeof pricing.input !== 'number' || typeof pricing.output !== 'number') return undefined;
+  return pricing.input === 0 && pricing.output === 0;
 }

@@ -1292,18 +1292,19 @@ Tsyringe walks every `@inject(token)` decorator on a class and resolves the **en
 
 ## Dynamic Model Catalogs Must Not Be Validated Against Static Lists
 
-OpenRouter and Together AI expose dynamic model catalogs via REST APIs. Their model lists change frequently — new models added daily, old ones retired. The factory already has `listAvailableModels()` that fetches the live catalog with a 5-minute in-process cache and a static fallback for offline cases.
+Multiple agents expose live model catalogs (OpenRouter / Together AI via REST; Cursor via `cursor-agent --list-models`; Claude Code via `/model` aliases; Codex via `codex debug models`). Lists change frequently. `listAvailableModels(agentType, authConfig?)` fetches through the registered `IModelCatalog`, caches in-process for **1 hour** (`MODEL_CATALOG_TTL_MS`) with last-good fallback for the same auth cache key, and falls back to the static `AGENT_CATALOG` list when discovery is empty. Web boot also warms catalogs in parallel via `warmModelCatalogs`.
 
 **What went wrong (issue 098):** `UpdateFeaturePinnedConfigUseCase` validated the user's selected model against `factory.getSupportedModels(agentType)` — the **sync** method that returns the **static hardcoded** list (`OPENROUTER_MODELS`). The web ModelPicker showed the user the live dynamic catalog (`getAllAgentModels` → `listAvailableModels`), so the user could pick `nvidia/nemotron-3-super-120b-a12b:free` from the dropdown, but submitting threw `Unsupported model "..." for agent "openrouter"`. The picker and the validator were reading from two different sources of truth.
 
-**Rule:** For any provider that exposes a remote model catalog (OpenRouter, Together AI, future SDK-backed providers), validation MUST use the same `listAvailableModels()` path the picker uses. Never call `getSupportedModels()` (static) when the user picked from a list returned by `listAvailableModels()` (dynamic). The static list is a fallback for offline rendering, not a denylist.
+**Rule:** For any provider that exposes a remote/CLI model catalog, validation MUST use the same `listAvailableModels()` path the picker uses. Never call `getSupportedModels()` (static) when the user picked from a list returned by `listAvailableModels()` (dynamic). The static list is a fallback for offline rendering, not a denylist. Live Claude aliases must map to Shep canonical ids (or merge with hardcoded) so adaptive selection stays aligned.
 
 **Pattern to check when adding a new dynamic-catalog provider:**
 
-1. The catalog service goes in `infrastructure/services/agents/common/model-catalogs/` and exposes `listModels(apiKey?)`
-2. Wire it into `AgentExecutorFactory.listAvailableModels()` — return dynamic list if non-empty, otherwise the static fallback
+1. The catalog service goes in `infrastructure/services/agents/common/model-catalogs/`, extends `TtlModelCatalog`, and exposes `listModels(authConfig?)`
+2. Register it under `AgentType` in `createDefaultModelCatalogs()` — factory returns dynamic list if non-empty, otherwise the static fallback
 3. Audit every consumer of `getSupportedModels()` to confirm it's only used for offline UI hints, NEVER for validation
 4. The web action that powers the picker (`getAllAgentModels`) and the use case that validates the choice (e.g. `UpdateFeaturePinnedConfigUseCase`) must both go through `listAvailableModels` — same source of truth
+5. Keep `IAgentExecutorFactory` a process-wide singleton (`instanceCachingFactory`) so the TTL cache survives picker opens; otherwise every resolve re-spawns discovery
 
 ## Auto-Deploy Must Trigger on Agent-Finishes Transition, Not on `setupComplete` SSE Race
 

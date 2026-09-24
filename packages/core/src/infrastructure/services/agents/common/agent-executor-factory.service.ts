@@ -233,8 +233,7 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
     agentType: AgentType,
     authConfig?: AgentConfig
   ): Promise<AgentModelListing[]> {
-    const key = agentType as string;
-    const catalog: IModelCatalog | undefined = this.catalogs.get(key);
+    const catalog: IModelCatalog | undefined = this.catalogs.get(agentType);
 
     if (catalog) {
       const dynamic = await catalog.listModels(authConfig);
@@ -248,7 +247,7 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
    * Prefetch every registered catalog concurrently into the shared TTL cache.
    */
   async warmModelCatalogs(authConfig?: AgentConfig): Promise<void> {
-    const activeType = authConfig?.type as string | undefined;
+    const activeType = authConfig?.type;
     await Promise.all(
       [...this.catalogs.entries()].map(([agentType, catalog]) => {
         const auth = activeType && activeType === agentType ? authConfig : undefined;

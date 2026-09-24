@@ -1,8 +1,8 @@
 /**
  * CursorModelCatalogService Unit Tests
  *
- * Discovers models via `cursor-agent --list-models`. The picker waits on this,
- * so spawn failures, timeouts, and parse errors must fall back to empty (factory
+ * Discovers models via `cursor-agent --list-models`. Boot may warm this cache;
+ * spawn failures, timeouts, and parse errors must fall back to empty (factory
  * then serves the hardcoded CURSOR_MODELS list) rather than hanging or throwing.
  */
 
@@ -68,7 +68,8 @@ describe('CursorModelCatalogService', () => {
 
     expect(first.map((l) => l.id)).toContain('auto');
     expect(first.map((l) => l.id)).toContain('composer-2.5');
-    expect(second).toBe(first);
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
     expect(run).toHaveBeenCalledTimes(1);
   });
 
