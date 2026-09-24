@@ -402,8 +402,11 @@ That set and `getSupportedAgents()` used to be hand-listed and could disagree wi
 `supported: true` in the catalog without adding the switch case reintroduces exactly that, so do
 both in the same change.
 
-`createInteractiveExecutor` / `supportsInteractive` are separate and currently Claude-Code-only;
-leave them alone unless you are implementing a real interactive session.
+`createInteractiveExecutor` / `supportsInteractive` are separate from one-shot
+executors. Today **Claude Code** (Agent SDK V2) and **Cursor** (`cursor-agent`
+create-chat / `--print` / `--resume`) support Application interactive chat.
+Leave these alone unless you are implementing a real interactive session for
+another agent type.
 
 ## Step 5 — Add the tool-installer entry
 

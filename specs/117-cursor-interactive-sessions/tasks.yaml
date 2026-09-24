@@ -1,0 +1,110 @@
+name: cursor-interactive-sessions
+summary: 4 tasks across 3 phases; RED-first for executor and factory.
+relatedFeatures:
+  - "074-interactive-feature-agent"
+  - "015-cursor-support"
+technologies:
+  - "TypeScript"
+  - "Vitest"
+relatedLinks:
+  - title: "Issue #894"
+    url: "https://github.com/shep-ai/shep/issues/894"
+tasks:
+  - id: task-1
+    phaseId: phase-1
+    title: RED — CursorInteractiveExecutor create/resume/stream tests
+    description: >
+      Write failing unit tests for CursorInteractiveExecutor using a fake spawn:
+      create-chat allocates id; resumeSession skips create-chat; send+stream
+      spawns with --print stream-json --resume and maps NDJSON to InteractiveAgentEvent.
+    state: Done
+    dependencies: []
+    acceptanceCriteria:
+      - Test file exists under tests/unit/.../cursor-interactive-executor.test.ts
+      - Tests fail because CursorInteractiveExecutor is missing or incomplete
+      - Coverage includes createSession, resumeSession, delta/tool/done/error mapping, abort
+    tdd:
+      red:
+        - "createSession: spawn create-chat; sessionId equals stdout UUID"
+        - "resumeSession: no create-chat; first turn args include --resume <id>"
+        - "stream: assistant text → delta; tool_call started → tool_use; result → done with usage"
+        - "stream: error / failed result → error event"
+        - "abort() terminates active child process"
+      green:
+        - "Implement minimal CursorInteractiveExecutor to pass"
+      refactor:
+        - "Share parse helpers with one-shot executor only if duplication is clear"
+    estimatedEffort: M
+  - id: task-2
+    phaseId: phase-1
+    title: GREEN — Implement CursorInteractiveExecutor
+    description: >
+      Implement IInteractiveAgentExecutor for Cursor: create-chat for new sessions,
+      per-turn --print --output-format stream-json --stream-partial-output --yolo
+      --resume <chatId>, map events, close/abort kill child. Inject SpawnFunction.
+    state: Done
+    dependencies: ["task-1"]
+    acceptanceCriteria:
+      - CursorInteractiveExecutor implements createSession and resumeSession
+      - Unit tests from task-1 pass
+      - No SDK imports; spawn-only like CursorExecutorService
+      - onUserQuestion / AskUserQuestion not required for green path
+    tdd:
+      red:
+        - "Keep task-1 tests red until implementation lands"
+      green:
+        - "Add cursor-interactive-executor.service.ts and pass all executor tests"
+      refactor:
+        - "Clarify comments on per-turn process model vs Claude persistent SDK"
+    estimatedEffort: M
+  - id: task-3
+    phaseId: phase-2
+    title: Factory supportsInteractive + createInteractiveExecutor for Cursor
+    description: >
+      Wire AgentExecutorFactory so Cursor is interactive; update unit/integration
+      tests; keep Claude path unchanged; refresh unsupported-agent error text.
+    state: Done
+    dependencies: ["task-2"]
+    acceptanceCriteria:
+      - supportsInteractive(AgentType.Cursor) === true
+      - createInteractiveExecutor(Cursor) returns CursorInteractiveExecutor
+      - supportsInteractive still false for OpenRouter/Together/Ollama
+      - Factory unit tests updated and green
+    tdd:
+      red:
+        - "supportsInteractive(Cursor) expected true (fails today)"
+        - "createInteractiveExecutor(Cursor) returns interactive executor (fails today)"
+      green:
+        - "Factory branch for cursor + updated error message"
+      refactor:
+        - "Use AgentType enum comparisons consistently with surrounding code"
+    estimatedEffort: S
+  - id: task-4
+    phaseId: phase-3
+    title: Docs — interactive is Claude Code and Cursor
+    description: >
+      Update docs/development/adding-agent-types.md and docs/architecture/agent-system.md
+      so interactive is no longer described as Claude-only.
+    state: Done
+    dependencies: ["task-3"]
+    acceptanceCriteria:
+      - adding-agent-types.md mentions Cursor interactive (or createInteractiveExecutor for Cursor)
+      - agent-system.md reflects Claude Code + Cursor interactive support
+      - No claim that only Claude supports interactive mode
+    tdd: null
+    estimatedEffort: S
+totalEstimate: M
+openQuestions: []
+content: |
+  ## Summary
+
+  Implement Cursor Application-chat interactive sessions on top of PR #890's branch.
+  Tasks 1–2 are the executor TDD cycle; task 3 wires the factory; task 4 updates docs.
+
+  ## Acceptance checklist
+
+  - [ ] factory.supportsInteractive(Cursor) is true
+  - [ ] createInteractiveExecutor(Cursor) works
+  - [ ] create + resume + stream mapping covered by unit tests
+  - [ ] Docs updated
+  - [ ] Closes #894 intent (AskUserQuestion parity deferred)

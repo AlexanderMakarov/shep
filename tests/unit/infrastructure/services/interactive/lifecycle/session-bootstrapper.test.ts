@@ -329,7 +329,15 @@ describe('SessionBootstrapper', () => {
         'feat-1',
         InteractiveSessionStatus.error
       );
-      expect(logger.error).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('boot failed'),
+        expect.objectContaining({ error: 'agent failed' })
+      );
+      expect(persistence.persistMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('agent failed'),
+        })
+      );
     });
 
     it('skips sending boot prompt and goes to ready when bootPrompt is empty (silent boot)', async () => {

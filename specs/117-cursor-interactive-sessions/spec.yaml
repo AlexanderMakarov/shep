@@ -1,0 +1,87 @@
+# Feature Specification (YAML)
+# Source of truth. Markdown is auto-generated.
+
+name: cursor-interactive-sessions
+number: 117
+branch: feat/117-cursor-interactive-sessions
+oneLiner: >-
+  Wire Cursor as a real IInteractiveAgentExecutor so Application chat works when
+  Settings agent is Cursor (create + resume multi-turn sessions).
+summary: >
+  Application chat bootstraps via createInteractiveExecutor / supportsInteractive.
+  Today only Claude Code is wired; selecting Cursor fails with a hard factory error.
+  Cursor already has a one-shot CLI executor (cursor-agent). This feature adds
+  CursorInteractiveExecutor behind IInteractiveAgentExecutor, driven by
+  cursor-agent --print + stream-json + --resume / create-chat, maps NDJSON events
+  to InteractiveAgentEvent, and flips factory.supportsInteractive(Cursor) to true.
+  Stacks on feat/cursor-model-discovery-b (PR #890 / issue #886). Closes #894.
+  AskUserQuestion parity is explicitly out of scope (Cursor --yolo auto-approves;
+  companion UX guard is #895).
+phase: Requirements
+sizeEstimate: M
+
+relatedFeatures:
+  - "074-interactive-feature-agent"
+  - "015-cursor-support"
+  - "087-dynamic-model-catalog"
+
+technologies:
+  - "TypeScript"
+  - "cursor-agent CLI (--print, stream-json, --resume, create-chat)"
+  - "Vitest"
+  - "IInteractiveAgentExecutor / InteractiveAgentEvent"
+
+relatedLinks:
+  - title: "GitHub issue #894"
+    url: "https://github.com/shep-ai/shep/issues/894"
+  - title: "PR #890 (model discovery base)"
+    url: "https://github.com/shep-ai/shep/pull/890"
+  - title: "Companion UX guard #895"
+    url: "https://github.com/shep-ai/shep/issues/895"
+
+openQuestions: []
+
+content: |
+  ## Problem Statement
+
+  Selecting Cursor as the default agent and opening Application chat fails because
+  `AgentExecutorFactory.createInteractiveExecutor` only accepts `claude-code`.
+  Cursor already supports scripted multi-turn via `cursor-agent create-chat`,
+  `--print --output-format stream-json`, and `--resume <chatId>`. The gap is a
+  durable `IInteractiveAgentExecutor` that Application chat can bootstrap and
+  resume through the existing session lifecycle.
+
+  ## Success Criteria
+
+  - [ ] `factory.supportsInteractive(AgentType.Cursor)` returns `true`
+  - [ ] `createInteractiveExecutor(AgentType.Cursor, …)` returns a working `IInteractiveAgentExecutor`
+  - [ ] Session create allocates a chat id (`create-chat`) and expose it as `sessionId` after first turn (or immediately when known)
+  - [ ] `resumeSession(chatId)` continues the same conversation via `--resume`
+  - [ ] Stream events map to existing `InteractiveAgentEvent` types consumed by `AgentStreamConsumer`
+  - [ ] RED-first unit tests cover factory wiring + executor create/resume/stream mapping
+  - [ ] Docs no longer claim interactive is Claude-only without mentioning Cursor
+
+  ## Out of Scope
+
+  - AskUserQuestion / `onUserQuestion` parity with Claude SDK (Cursor `--yolo` auto-approves; no pause UX)
+  - UX guard when agent lacks interactive support (#895)
+  - Interactive support for other CLI agents (Codex, Gemini, Copilot, …)
+
+  ## Affected Areas
+
+  | Area | Impact | Reasoning |
+  | ---- | ------ | --------- |
+  | Agent executors | High | New `CursorInteractiveExecutor` |
+  | AgentExecutorFactory | Medium | Wire Cursor into supportsInteractive / createInteractiveExecutor |
+  | Interactive session lifecycle | Low | Uses existing handle contract; no API changes |
+  | Docs (adding-agent-types, agent-system) | Low | Update Claude-only wording |
+  | Unit tests | High | Factory + executor TDD |
+
+  ## Dependencies
+
+  - Base branch: `feat/cursor-model-discovery-b` (PR #890) — model discovery / catalog code intersections
+  - Existing: `IInteractiveAgentExecutor`, `SessionBootstrapper`, `CursorExecutorService` spawn/stream patterns
+
+  ## Size Estimate
+
+  **M** — New interactive executor + factory wiring + tests + docs. No TypeSpec or schema changes. Reuses Cursor CLI flags already proven in the one-shot executor.

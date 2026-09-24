@@ -6,17 +6,28 @@
  * 2. Walking remaining steps: for each pending step, send its prompt
  *    to the agent, wait for the turn to complete, mark it done.
  *
+ * When boot failed before any `workflow_steps` rows were created (common when
+ * interactive session create throws), Resume re-enters `RunWorkflowUseCase`
+ * instead of silently returning — otherwise the UI "Retry" appears to do nothing
+ * and daemon.log stays empty.
+ *
  * The agent SDK session is resumed (same conversation context) because
  * the session service looks up the previous `agentSessionId` from the DB.
  */
 
 import { injectable, inject } from 'tsyringe';
-import { WorkflowStepStatus, type WorkflowStep } from '../../../domain/generated/output.js';
+import {
+  ApplicationStatus,
+  WorkflowStepStatus,
+  type WorkflowStep,
+} from '../../../domain/generated/output.js';
 import type { IApplicationRepository } from '../../ports/output/repositories/application-repository.interface.js';
 import type { IWorkflowStepRepository } from '../../ports/output/repositories/workflow-step-repository.interface.js';
 import type { IInteractiveSessionService } from '../../ports/output/services/interactive-session-service.interface.js';
 import type { IInteractiveSessionRepository } from '../../ports/output/repositories/interactive-session-repository.interface.js';
+import type { ILogger } from '../../ports/output/services/logger.interface.js';
 import type { SendInteractiveMessageUseCase } from '../interactive/send-interactive-message.use-case.js';
+import { RunWorkflowUseCase } from '../workflows/run-workflow.use-case.js';
 import { featureIdForApplication } from '../../../domain/shared/feature-id.js';
 import { APPLICATION_CREATION_WORKFLOW } from './application-creation.workflow.js';
 
@@ -36,7 +47,13 @@ export class ResumeApplicationWorkflowUseCase {
     @inject('SendInteractiveMessageUseCase')
     private readonly sendMessage: SendInteractiveMessageUseCase,
     @inject('IInteractiveSessionRepository')
-    private readonly sessionRepo: IInteractiveSessionRepository
+    private readonly sessionRepo: IInteractiveSessionRepository,
+    // Class token — NOT the string 'RunWorkflowUseCase', which was stolen by
+    // scheduled-workflows DI for RunScheduledWorkflowUseCase.
+    @inject(RunWorkflowUseCase)
+    private readonly runWorkflow: RunWorkflowUseCase,
+    @inject('ILogger')
+    private readonly logger: ILogger
   ) {}
 
   async execute(input: ResumeApplicationWorkflowInput): Promise<void> {
@@ -44,8 +61,46 @@ export class ResumeApplicationWorkflowUseCase {
     if (!app) throw new Error(`Application ${input.applicationId} not found`);
 
     const featureId = featureIdForApplication(app.id);
+
+    // Clear stale Error from a prior failed boot so the UI does not keep
+    // showing "failed" while the retry is actually running.
+    if (app.status === ApplicationStatus.Error) {
+      await this.appRepo.update(app.id, { status: ApplicationStatus.Active });
+    } else if (app.status === ApplicationStatus.Idle) {
+      await this.appRepo.update(app.id, { status: ApplicationStatus.Active });
+    }
+
     const steps = await this.stepRepo.listByFeature(featureId);
-    if (steps.length === 0) return;
+
+    // Boot never got far enough to seed workflow_steps — re-enter the full
+    // orchestrator rather than no-op (which looked like a successful Retry).
+    if (steps.length === 0) {
+      if (app.setupComplete) {
+        this.logger.info('[resume-application] no steps and setup already complete', {
+          applicationId: app.id,
+          featureId,
+        });
+        return;
+      }
+      this.logger.warn(
+        `[resume-application] no workflow steps for ${featureId}; re-running application-creation workflow`,
+        { applicationId: app.id, agentType: app.agentType }
+      );
+      await this.runWorkflow.execute({
+        featureId,
+        worktreePath: app.repositoryPath,
+        workflow: APPLICATION_CREATION_WORKFLOW,
+        model: app.modelOverride,
+        agentType: app.agentType,
+        visibleFirstMessage: app.description,
+      });
+      const agentSessionId = await this.sessionRepo.findLatestAgentSessionIdForFeature(featureId);
+      await this.appRepo.update(app.id, {
+        setupComplete: true,
+        ...(agentSessionId ? { agentSessionId } : {}),
+      });
+      return;
+    }
 
     // Reset interrupted steps back to pending
     for (const step of steps) {
@@ -89,8 +144,15 @@ export class ResumeApplicationWorkflowUseCase {
         });
         this.session.notifyWorkflowStep(featureId, await this.refreshStep(step.id));
       } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        this.logger.error(`[resume-application] step failed: ${errorMessage}`, {
+          applicationId: app.id,
+          featureId,
+          stepId: step.id,
+          error: errorMessage,
+        });
         await this.stepRepo.updateStatus(step.id, WorkflowStepStatus.failed, {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage,
         });
         this.session.notifyWorkflowStep(featureId, await this.refreshStep(step.id));
         return;

@@ -29,6 +29,7 @@ import {
 import { ClaudeCodeExecutorService } from './executors/claude-code-executor.service.js';
 import { ClaudeCodeInteractiveExecutor } from './executors/claude-code-interactive-executor.service.js';
 import { CursorExecutorService } from './executors/cursor-executor.service.js';
+import { CursorInteractiveExecutor } from './executors/cursor-interactive-executor.service.js';
 import { DevAgentExecutorService } from './executors/dev-executor.service.js';
 import { GeminiCliExecutorService } from './executors/gemini-cli-executor.service.js';
 import { CodexCliExecutorService } from './executors/codex-cli-executor.service.js';
@@ -258,7 +259,8 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
 
   /**
    * Create an interactive executor for multi-turn agent sessions.
-   * Currently only Claude Code supports interactive sessions via the SDK.
+   * Claude Code uses the Agent SDK V2 session API; Cursor uses per-turn
+   * `cursor-agent --print` with create-chat / --resume.
    *
    * @param agentType - The type of agent to create an interactive executor for
    * @param _authConfig - Agent authentication and configuration
@@ -273,9 +275,12 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
     if (key === 'claude-code') {
       return new ClaudeCodeInteractiveExecutor();
     }
+    if (key === 'cursor') {
+      return new CursorInteractiveExecutor(this.spawn);
+    }
     throw new Error(
       `Agent type '${agentType}' does not support interactive sessions. ` +
-        `Only 'claude-code' supports interactive mode.`
+        `Supported interactive agents: 'claude-code', 'cursor'.`
     );
   }
 
@@ -286,7 +291,8 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
    * @returns true if createInteractiveExecutor can be called for this type
    */
   supportsInteractive(agentType: AgentType): boolean {
-    return (agentType as string) === 'claude-code';
+    const key = agentType as string;
+    return key === 'claude-code' || key === 'cursor';
   }
 }
 

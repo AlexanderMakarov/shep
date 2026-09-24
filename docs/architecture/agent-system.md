@@ -345,10 +345,15 @@ executor factory. There is no `aider-executor.service.ts`.
 Supporting files in the same directory:
 
 - `ai-sdk-base-executor.service.ts` -- shared base for the four SDK executors
-- `claude-code-interactive-executor.service.ts` -- interactive (chat) variant
+- `claude-code-interactive-executor.service.ts` -- interactive (chat) variant for Claude Code
+- `cursor-interactive-executor.service.ts` -- interactive (chat) variant for Cursor (`create-chat` / `--resume`)
 - `mock-executor.service.ts` / `mock-executor-factory.service.ts` -- test doubles
 - `process-stream.ts` -- reusable `createLineAccumulator()` and `killProcessTree()`
 - `security-constraint-validator.ts` -- per-execution constraint checks
+
+`IInteractiveAgentExecutor` is created via `IAgentExecutorFactory.createInteractiveExecutor`.
+`supportsInteractive` is true for `claude-code` and `cursor`. Other agents remain one-shot only.
+Application chat must honour `supportsInteractive` before bootstrapping a session.
 
 `packages/core/src/domain/shared/agent-resume-descriptor.ts` (`RESUME_BINARIES`)
 records which CLI agents support session resume.
@@ -360,6 +365,7 @@ The agent system uses these key interfaces (defined in `packages/core/src/applic
 | Interface                     | Purpose                                                                 |
 | ----------------------------- | ----------------------------------------------------------------------- |
 | `IAgentExecutor`              | Execute prompts against an AI coding agent                              |
+| `IInteractiveAgentExecutor`   | Multi-turn Application chat (Claude Code SDK; Cursor CLI resume)      |
 | `IAgentExecutorFactory`       | Create executor instances for a given agent type                        |
 | `IAgentExecutorProvider`      | Resolve the current executor from settings                              |
 | `IModelCatalog`               | Live model discovery per provider (HTTP or CLI); TTL-cached             |

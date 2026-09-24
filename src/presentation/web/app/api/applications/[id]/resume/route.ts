@@ -6,6 +6,9 @@
  * Resets interrupted steps to pending and re-runs the workflow
  * from where it left off. The agent SDK session is resumed with
  * the same conversation context.
+ *
+ * Awaits the use case so failures become HTTP 500 + daemon.log lines
+ * instead of fire-and-forget silent drops.
  */
 
 import type { NextRequest } from 'next/server';
@@ -23,7 +26,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams): Prom
   try {
     const { id } = await params;
     const useCase = resolve<ResumeApplicationWorkflowUseCase>('ResumeApplicationWorkflowUseCase');
-    void useCase.execute({ applicationId: id });
+    await useCase.execute({ applicationId: id });
     return NextResponse.json({ ok: true });
   } catch (error) {
     // eslint-disable-next-line no-console

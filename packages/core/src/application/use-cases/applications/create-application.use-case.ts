@@ -30,7 +30,7 @@ import type { ILogger } from '../../ports/output/services/logger.interface.js';
 import type { ISettingsProvider } from '../../ports/output/services/settings-provider.interface.js';
 import type { CreateProjectUseCase } from '../projects/create-project.use-case.js';
 import type { SendInteractiveMessageUseCase } from '../interactive/send-interactive-message.use-case.js';
-import type { RunWorkflowUseCase } from '../workflows/run-workflow.use-case.js';
+import { RunWorkflowUseCase } from '../workflows/run-workflow.use-case.js';
 import type { IInteractiveSessionRepository } from '../../ports/output/repositories/interactive-session-repository.interface.js';
 import { featureIdForApplication } from '../../../domain/shared/feature-id.js';
 import { APPLICATION_CREATION_WORKFLOW } from './application-creation.workflow.js';
@@ -162,7 +162,8 @@ export class CreateApplicationUseCase {
     private readonly sendMessage: SendInteractiveMessageUseCase,
     @inject('IApplicationBriefStore')
     private readonly briefStore: IApplicationBriefStore,
-    @inject('RunWorkflowUseCase')
+    // Class token — string 'RunWorkflowUseCase' collides with scheduled-workflows.
+    @inject(RunWorkflowUseCase)
     private readonly runWorkflow: RunWorkflowUseCase,
     @inject('IInteractiveSessionRepository')
     private readonly sessionRepo: IInteractiveSessionRepository,

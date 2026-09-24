@@ -487,6 +487,14 @@ describe('AgentExecutorFactory', () => {
   });
 
   describe('supportsInteractive', () => {
+    it('should return true for claude-code', () => {
+      expect(factory.supportsInteractive(AgentType.ClaudeCode)).toBe(true);
+    });
+
+    it('should return true for cursor', () => {
+      expect(factory.supportsInteractive(AgentType.Cursor)).toBe(true);
+    });
+
     it('should return false for openrouter', () => {
       expect(factory.supportsInteractive(AgentType.OpenRouter)).toBe(false);
     });
@@ -497,6 +505,31 @@ describe('AgentExecutorFactory', () => {
 
     it('should return false for ollama', () => {
       expect(factory.supportsInteractive(AgentType.Ollama)).toBe(false);
+    });
+  });
+
+  describe('createInteractiveExecutor', () => {
+    it('should return ClaudeCodeInteractiveExecutor for claude-code', () => {
+      const executor = factory.createInteractiveExecutor(AgentType.ClaudeCode, defaultAuthConfig);
+      expect(executor.constructor.name).toBe('ClaudeCodeInteractiveExecutor');
+    });
+
+    it('should return CursorInteractiveExecutor for cursor', () => {
+      const executor = factory.createInteractiveExecutor(AgentType.Cursor, {
+        type: AgentType.Cursor,
+        authMethod: AgentAuthMethod.Session,
+      });
+      expect(executor.constructor.name).toBe('CursorInteractiveExecutor');
+    });
+
+    it('should throw for agents without interactive support', () => {
+      expect(() =>
+        factory.createInteractiveExecutor(AgentType.OpenRouter, {
+          type: AgentType.OpenRouter,
+          authMethod: AgentAuthMethod.Token,
+          token: 'test',
+        })
+      ).toThrow(/claude-code.*cursor/);
     });
   });
 });

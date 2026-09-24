@@ -7,6 +7,79 @@ discovery), introduce a shared port and register each provider behind it
 instead of shipping a one-tool patch. Sibling providers then opt in the same
 way; presentation and docs stay provider-agnostic.
 
+## Edit issue/PR bodies; do not stack agent comments
+
+Until another participant comments or reacts, fold new facts and corrections
+into the GitHub issue/PR **description**. Do not post a trail of agent-only
+comments that fragment the ticket. Batch related updates into one body edit.
+
+## `shep start` serves `dist/`, not your dirty source tree
+
+Source edits under `packages/core/src` do nothing until `pnpm build` (or
+`pnpm build:release`) refreshes `dist/`. `bin/shep` →
+`dist/src/presentation/cli/index.js`. After implementing an agent change,
+rebuild, then `shep stop && shep start` (or `shep ui`). Confirm with
+`rg CursorInteractive dist/packages/core` (or the symbol you added) before
+claiming the running daemon has the fix.
+
+## daemon.log rotates on start — check `.old` and persist UI-visible errors
+
+`shep start` renames `daemon.log` → `daemon.log.old`. Boot failures logged only
+to the previous file look "missing". Put the failure reason in the log *line*
+(not only `meta.error`), and persist a chat/assistant message on interactive
+boot failure so the Application page is not an empty Error badge.
+
+## Application Resume with zero `workflow_steps` used to no-op
+
+`RunWorkflowUseCase` seeds steps only after the first interactive send. If
+session boot throws first, Resume found no steps and returned success with no
+log. Resume must re-enter `RunWorkflowUseCase` when steps are empty and setup
+is incomplete, and the HTTP route must `await` the use case (not `void`).
+
+## Never reuse a DI string token across unrelated use cases
+
+`registerScheduledWorkflows` registered `RunScheduledWorkflowUseCase` under the
+string token `'RunWorkflowUseCase'`, overwriting the interactive application
+orchestrator registered in `registerInteractive`. Create/Resume then resolved
+the scheduled use case, which called `findById(workflowInputObject)` and threw
+`RangeError: Too few parameter values were provided` — often only visible if
+the HTTP route awaits the call. Prefer class-token `@inject(RunWorkflowUseCase)`
+for the interactive orchestrator, and name scheduled tokens
+`RunScheduledWorkflowUseCase`. Add a container test that both resolve to the
+correct classes.
+
+## Stale Application `Error` status looks like a failed retry
+
+Resume can successfully re-enter the workflow while `applications.status`
+stays `Error` from the prior boot failure. The UI then shows "failed" even
+though `cursor-agent` is mid-turn and `workflow_steps` are `running`. Clear
+Error → Idle (or Active) at resume start; confirm with process list / step
+rows before declaring the retry broken.
+
+## Application chat ≠ `shep agent ls`; force-stop ≠ cancel workflow
+
+Interactive Application turns live in `interactive_sessions` /
+`interactive_messages`, not `agent_runs` — so `shep agent ls` is empty while
+Cursor chat is busy. Step-card force-stop only flips `workflow_steps` to
+`interrupted` (409 if already terminal) and does **not** abort
+`RunWorkflowUseCase` or kill `cursor-agent`. A user message mid-bootstrap can
+get a real answer, then the still-running workflow immediately queues the next
+step prompts on the same session and buries the reply. Orphan CLI processes
+(`--resume <agent_session_id>`) can also leave the session looking idle in DB
+while a stuck verify/wire child still holds the Cursor chat. To intervene:
+composer stop (`POST .../chat/<featureId>/stop`), then kill leftover
+`cursor-agent` PIDs if needed; do not expect `shep agent stop` for app chat.
+
+## Interactive chat is a separate capability from one-shot executors
+
+Picking Cursor (or any CLI agent) in Settings does not mean Application chat
+works. Chat bootstraps via `createInteractiveExecutor` / `supportsInteractive`.
+Claude Code and Cursor now have interactive executors; other agents still do
+not. Honour `supportsInteractive` in the UI (#895) so unsupported agents are
+not a daemon.log-only crash.
+
+Track: Cursor interactive (#894); UX guard for unsupported interactive (#895).
+
 ## Exercise real concurrency and retain subprocess errors
 
 `Promise.resolve(runner.run(...))` still runs each synchronous CLI command in

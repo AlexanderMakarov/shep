@@ -1,0 +1,48 @@
+feature:
+  id: "117-cursor-interactive-sessions"
+  name: "cursor-interactive-sessions"
+  number: 117
+  branch: "feat/117-cursor-interactive-sessions"
+  lifecycle: "implementation"
+  createdAt: "2026-09-24T07:47:00.000Z"
+
+status:
+  phase: "ready-for-review"
+  progress:
+    completed: 4
+    total: 4
+    percentage: 100
+  currentTask: null
+  lastUpdated: "2026-09-24T07:54:30.000Z"
+  lastUpdatedBy: "shep-kit:implement"
+
+validation:
+  lastRun: "2026-09-24T07:49:00.000Z"
+  gatesPassed:
+    - completeness
+    - architecture
+    - consistency
+  autoFixesApplied: []
+
+tasks:
+  current: null
+  blocked: []
+  failed: []
+
+checkpoints:
+  - phase: "feature-created"
+    completedAt: "2026-09-24T07:47:00.000Z"
+    completedBy: "shep-kit:new-feature-fast"
+  - phase: "research-complete"
+    completedAt: "2026-09-24T07:47:00.000Z"
+    completedBy: "shep-kit:new-feature-fast"
+  - phase: "plan-complete"
+    completedAt: "2026-09-24T07:47:00.000Z"
+    completedBy: "shep-kit:new-feature-fast"
+  - phase: "implementation-complete"
+    completedAt: "2026-09-24T07:54:30.000Z"
+    completedBy: "shep-kit:implement"
+
+errors:
+  current: null
+  history: []

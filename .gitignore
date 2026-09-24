@@ -116,3 +116,4 @@ scripts/marketing/output/
 
 # Local agent-tooling run records (not project source)
 .coding-agent/
+shep-home-backup-*.zip

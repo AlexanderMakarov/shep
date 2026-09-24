@@ -41,7 +41,10 @@ import type { AgentConfigResolver } from './agent-config.resolver.js';
 import type { UserInteractionCoordinator } from '../runtime/user-interaction.coordinator.js';
 import type { ILogger } from '../../../../application/ports/output/services/logger.interface.js';
 import type { InteractiveSession } from '../../../../domain/generated/output.js';
-import { InteractiveSessionStatus } from '../../../../domain/generated/output.js';
+import {
+  InteractiveMessageRole,
+  InteractiveSessionStatus,
+} from '../../../../domain/generated/output.js';
 import { ConcurrentSessionLimitError } from '../../../../domain/errors/concurrent-session-limit.error.js';
 import { BootWatchdog } from './boot-watchdog.js';
 
@@ -316,12 +319,36 @@ export class SessionBootstrapper {
       // If session was already cleaned up by stopSession, nothing more to do
       if (!this.registry.has(state.sessionId)) return;
 
-      // Boot failed — mark session as error so the frontend can show the failure
-      this.logger.error(`[InteractiveSession] boot failed for session ${state.sessionId}`, {
-        sessionId: state.sessionId,
-        featureId,
-        error: err,
-      });
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      // Put the reason in the log line itself — meta-only Errors are easy to miss
+      // after daemon.log rotation, and operators grep for this prefix.
+      this.logger.error(
+        `[InteractiveSession] boot failed for session ${state.sessionId}: ${errorMessage}`,
+        {
+          sessionId: state.sessionId,
+          featureId,
+          error: errorMessage,
+        }
+      );
+
+      // Surface the failure in the chat transcript so the UI is not a silent
+      // "Error" badge with an empty thread (daemon.log alone is not enough —
+      // start rotates the log away).
+      try {
+        const now = new Date();
+        await this.persistence.persistMessage({
+          id: crypto.randomUUID(),
+          featureId: state.featureId,
+          sessionId: state.sessionId,
+          role: InteractiveMessageRole.assistant,
+          content: `**Session failed to start**\n\n${errorMessage}`,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch {
+        // Best-effort — status update below still runs
+      }
+
       try {
         await this.persistence.updateSessionStatusAndNotify(
           state.sessionId,

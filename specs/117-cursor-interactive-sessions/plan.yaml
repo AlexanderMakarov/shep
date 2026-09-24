@@ -1,0 +1,98 @@
+name: cursor-interactive-sessions
+summary: >-
+  Four sequential phases: shared Cursor CLI helpers (optional extract), interactive
+  executor TDD, factory wiring TDD, docs. RED-GREEN-REFACTOR on every code phase.
+relatedFeatures:
+  - "074-interactive-feature-agent"
+  - "015-cursor-support"
+technologies:
+  - "TypeScript"
+  - "Vitest"
+  - "cursor-agent CLI"
+relatedLinks:
+  - title: "Issue #894"
+    url: "https://github.com/shep-ai/shep/issues/894"
+phases:
+  - id: phase-1
+    name: Cursor interactive executor
+    description: >-
+      Implement CursorInteractiveExecutor with createSession (create-chat),
+      resumeSession, per-turn send+stream via --print stream-json --resume,
+      and NDJSON → InteractiveAgentEvent mapping. Inject spawn for tests.
+    parallel: false
+    taskIds: ["task-1", "task-2"]
+  - id: phase-2
+    name: Factory wiring
+    description: >-
+      supportsInteractive(Cursor)=true; createInteractiveExecutor returns
+      CursorInteractiveExecutor; keep Claude path; update error text.
+    parallel: false
+    taskIds: ["task-3"]
+  - id: phase-3
+    name: Docs
+    description: Update adding-agent-types / agent-system so interactive is not Claude-only.
+    parallel: false
+    taskIds: ["task-4"]
+filesToCreate:
+  - path: packages/core/src/infrastructure/services/agents/common/executors/cursor-interactive-executor.service.ts
+    description: IInteractiveAgentExecutor for Cursor CLI multi-turn sessions
+  - path: tests/unit/infrastructure/services/agents/executors/cursor-interactive-executor.test.ts
+    description: RED-first unit tests for create/resume/stream mapping
+filesToModify:
+  - path: packages/core/src/infrastructure/services/agents/common/agent-executor-factory.service.ts
+    description: Wire Cursor into supportsInteractive / createInteractiveExecutor
+  - path: tests/unit/infrastructure/services/agents/agent-executor-factory.test.ts
+    description: Assert Cursor interactive support and executor type
+  - path: tests/integration/infrastructure/services/agents/factory-sdk-executors.test.ts
+    description: Adjust interactive assertions if they assume Claude-only
+  - path: docs/development/adding-agent-types.md
+    description: Mention Cursor interactive alongside Claude Code
+  - path: docs/architecture/agent-system.md
+    description: Note interactive support for Claude Code and Cursor
+openQuestions: []
+content: |
+  ## Architecture Overview
+
+  ```
+  SessionBootstrapper
+    → IAgentExecutorFactory.createInteractiveExecutor(Cursor)
+    → CursorInteractiveExecutor
+         createSession  → spawn create-chat → chatId
+         resumeSession  → wrap existing chatId
+         handle.send(msg) + handle.stream()
+           → spawn cursor-agent --yolo -p --output-format stream-json
+                --stream-partial-output --resume <chatId> [--model …]
+           → map NDJSON → InteractiveAgentEvent
+    → AgentStreamConsumer (unchanged)
+  ```
+
+  Clean Architecture: new file stays in infrastructure/executors; application
+  only sees IInteractiveAgentExecutor. No hardcoded Cursor outside the factory.
+
+  ## Implementation Strategy
+
+  1. RED tests for executor with fake spawn (create-chat stdout UUID; stream-json lines).
+  2. GREEN minimal executor.
+  3. RED factory tests for Cursor; GREEN factory branch.
+  4. Docs pass.
+
+  Extract shared Cursor helpers (model map, parseJsonLine, assistantText) only if
+  duplication is painful — prefer small extract over large refactor of the one-shot executor.
+
+  ## Testing Strategy (TDD: Tests FIRST)
+
+  Unit tests with injected `SpawnFunction` fakes:
+  - createSession runs `create-chat` and exposes sessionId
+  - resumeSession does not call create-chat; first stream uses --resume
+  - stream maps assistant / tool_call / result / error / partial deltas
+  - abort/close terminates the active child process
+  Factory unit + existing integration interactive checks updated for Cursor.
+
+  ## Risk Mitigation
+
+  | Risk | Mitigation |
+  | ---- | ---------- |
+  | sessionId empty until after first turn | create-chat returns UUID immediately; set sessionId before first send |
+  | Double text (assistant + partial) | Skip full assistant text when partial deltas already emitted |
+  | AskUserQuestion expected by UI | Out of scope; onUserQuestion unused; #895 for UX |
+  | Windows prompt mangling | Reuse PowerShell + temp-file pattern from CursorExecutorService |

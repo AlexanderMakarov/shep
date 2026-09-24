@@ -57,7 +57,7 @@ const SCHEDULED_WORKFLOW_USE_CASE_TOKENS = [
   'DeleteWorkflowUseCase',
   'ListWorkflowsUseCase',
   'GetWorkflowUseCase',
-  'RunWorkflowUseCase',
+  'RunScheduledWorkflowUseCase',
   'ScheduleWorkflowUseCase',
   'GetWorkflowHistoryUseCase',
   'ToggleWorkflowUseCase',
@@ -74,5 +74,25 @@ describe('Scheduled-workflows DI registrations (spec 111)', () => {
     const instance = container.resolve(token);
     expect(instance).toBeDefined();
     expect(typeof instance).toBe('object');
+  });
+
+  it('does not let scheduled "run" steal the interactive RunWorkflowUseCase token', async () => {
+    const { initializeContainer } = await import(CONTAINER);
+    const { RunWorkflowUseCase } = await import(
+      '../../../../packages/core/src/application/use-cases/workflows/run-workflow.use-case.js'
+    );
+    const { RunScheduledWorkflowUseCase } = await import(
+      '../../../../packages/core/src/application/use-cases/scheduled-workflows/run-scheduled-workflow.use-case.js'
+    );
+    const container = await initializeContainer();
+
+    const interactiveByClass = container.resolve(RunWorkflowUseCase);
+    const interactiveByToken = container.resolve('RunWorkflowUseCase');
+    const scheduledByToken = container.resolve('RunScheduledWorkflowUseCase');
+
+    expect(interactiveByClass).toBeInstanceOf(RunWorkflowUseCase);
+    expect(interactiveByToken).toBeInstanceOf(RunWorkflowUseCase);
+    expect(scheduledByToken).toBeInstanceOf(RunScheduledWorkflowUseCase);
+    expect(interactiveByToken).not.toBe(scheduledByToken);
   });
 });

@@ -1,0 +1,89 @@
+name: cursor-interactive-sessions
+summary: >-
+  Per-turn cursor-agent --print subprocess with create-chat / --resume for session
+  durability; map stream-json NDJSON to InteractiveAgentEvent; wire factory.
+relatedFeatures:
+  - "074-interactive-feature-agent"
+  - "015-cursor-support"
+technologies:
+  - "cursor-agent CLI"
+  - "TypeScript"
+  - "Vitest"
+relatedLinks:
+  - title: "Issue #894"
+    url: "https://github.com/shep-ai/shep/issues/894"
+openQuestions: []
+decisions:
+  - title: Session durability model
+    chosen: >-
+      One subprocess per turn via --print + stream-json; durable chat id from
+      create-chat (create) or caller (resume); each send+stream run uses --resume <id>
+    rejected:
+      - "Persistent PTY / interactive TUI session (not scriptable; conflicts with --print)"
+      - "Reuse CursorExecutorService.executeStream directly as the interactive handle (wrong port; no session handle lifecycle)"
+    rationale: >-
+      Matches verified CLI surface and mirrors how Claude interactive exposes
+      send/stream per turn. create-chat returns a UUID immediately so resume
+      after daemon restart works once agentSessionId is persisted.
+  - title: Where interactive Cursor lives
+    chosen: New CursorInteractiveExecutor implementing IInteractiveAgentExecutor
+    rejected:
+      - "Add interactive methods onto CursorExecutorService / IAgentExecutor"
+      - "Hardcode Cursor in SessionBootstrapper"
+    rationale: >-
+      Spec 074 already chose a separate interactive port + factory method.
+      Keep resolution in AgentExecutorFactory only.
+  - title: AskUserQuestion / onUserQuestion
+    chosen: Document as unsupported for Cursor v1; do not block session create
+    rejected:
+      - "Attempt CLI-level AskUserQuestion interception without evidence of a pause API"
+    rationale: >-
+      --yolo / --force auto-approves tools. Issue #894 explicitly treats flag
+      presence as necessary but not sufficient for Claude parity. #895 covers UX.
+  - title: Spawn / Windows prompt delivery
+    chosen: Mirror CursorExecutorService spawn patterns (direct argv POSIX; PowerShell + temp file on Windows)
+    rejected:
+      - "shell: true with cmd.exe for -p prompts"
+    rationale: Cross-platform rules and existing Cursor executor already solved mangling.
+  - title: Model id mapping
+    chosen: Reuse the same toCursorModelName map as the one-shot executor (extract shared helper if cheap)
+    rejected:
+      - "Pass Shep-canonical ids through unchanged"
+    rationale: Live catalog ids pass through; legacy aliases still need mapping.
+content: |
+  ## Technology Decisions
+
+  ### Per-turn CLI vs persistent process
+
+  Claude Code interactive uses a persistent SDK session. Cursor has no equivalent
+  SDK for Application chat. `cursor-agent --print` is the supported scripted path.
+  Multi-turn continuity comes from `--resume <chatId>` after `create-chat`.
+
+  ### Event mapping
+
+  Map Cursor NDJSON (`assistant`, `tool_call`, `result`, `error`, and partial
+  text when `--stream-partial-output` is set) onto `InteractiveAgentEvent`
+  (`delta`, `tool_use`, `tool_result`/`status`, `done`, `error`, `init` as available).
+  Prefer deltas when partial streaming is on; avoid double-emitting full assistant text.
+
+  ### Factory
+
+  `supportsInteractive` returns true for `claude-code` and `cursor`.
+  `createInteractiveExecutor` returns `ClaudeCodeInteractiveExecutor` or
+  `CursorInteractiveExecutor`. Error message lists both when unsupported.
+
+  ## Library Analysis
+
+  No new libraries. Reuse `process-stream` helpers, `EventChannel`, and spawn DI
+  from the existing Cursor one-shot executor.
+
+  ## Security Considerations
+
+  Same as one-shot Cursor: `--yolo` / permissive mode. Interactive path inherits
+  that constraint; document in executor capabilities comments. No new network surfaces.
+
+  ## Performance Implications
+
+  Each chat turn pays CLI process startup (similar to one-shot Cursor runs). Acceptable
+  for Application chat; not a substitute for Claude's near-instant V2 session reuse.
+  Prefer `--stream-partial-output` so the UI gets deltas before turn completion.

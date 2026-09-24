@@ -72,7 +72,7 @@ export function registerScheduledWorkflows(c: DependencyContainer): void {
   c.register('GetWorkflowUseCase', {
     useFactory: (container) => container.resolve(GetScheduledWorkflowUseCase),
   });
-  c.register('RunWorkflowUseCase', {
+  c.register('RunScheduledWorkflowUseCase', {
     useFactory: (container) => container.resolve(RunScheduledWorkflowUseCase),
   });
   c.register('ScheduleWorkflowUseCase', {
