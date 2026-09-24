@@ -37,11 +37,8 @@ export interface AgentCliInfo {
 /**
  * Rich model listing returned by dynamic model catalogs.
  *
- * HTTP providers (OpenRouter, Together AI) often include display metadata and
- * optional per-token USD prices. CLI providers (Cursor, Claude Code, Codex)
- * usually supply id + display name only — pricing fields stay unset.
- * There is **no** Shep-side hardcoded $/token table; the UI shows a Free badge
- * when {@link isFree} is true and otherwise omits dollar amounts.
+ * Providers may fill display metadata when available; callers should tolerate
+ * listings that only have {@link id}.
  */
 export interface AgentModelListing {
   /** Provider-specific model identifier (e.g. 'anthropic/claude-sonnet-4.5'). */
@@ -56,10 +53,6 @@ export interface AgentModelListing {
   isFree?: boolean;
   /** Vendor / organization (e.g. 'anthropic', 'meta-llama'). */
   vendor?: string;
-  /** USD per input token when the provider publishes it (e.g. OpenRouter). */
-  promptPrice?: number;
-  /** USD per output token when the provider publishes it. */
-  completionPrice?: number;
 }
 
 /**
@@ -108,18 +101,11 @@ export interface IAgentExecutorFactory {
    * List models available for the given agent type, enriched with metadata
    * when a registered {@link IModelCatalog} can discover them live.
    *
-   * Discovery is provider-specific and TTL-cached in-process:
-   * - **OpenRouter** / **Together AI** — HTTP `/models` (token optional for
-   *   OpenRouter; required for Together). May include `isFree` and optional
-   *   per-token USD prices when the API publishes them.
-   * - **Cursor** — `cursor-agent --list-models`
-   * - **Claude Code** — `claude -p … "/model"` (Available: aliases)
-   * - **Codex CLI** — `codex debug models` (JSON catalog)
-   *
-   * Agents without a catalog (or when discovery returns empty) fall back to
-   * the same identifiers as {@link getSupportedModels}, wrapped as listings
-   * with only the `id` field populated. Callers MUST pass auth when the
-   * active agent needs a token for a full list.
+   * Discovery is TTL-cached in-process. Agents without a catalog (or when
+   * discovery returns empty) fall back to the same identifiers as
+   * {@link getSupportedModels}, wrapped as listings with only the `id` field
+   * populated. Callers MUST pass auth when the active agent needs a token for
+   * a full list.
    *
    * @param agentType - The agent type to query
    * @param authConfig - Optional auth config supplying an API token

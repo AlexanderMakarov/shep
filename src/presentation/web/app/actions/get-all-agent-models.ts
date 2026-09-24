@@ -17,10 +17,6 @@ export interface ModelInfo {
   contextLength?: number;
   isFree?: boolean;
   vendor?: string;
-  /** USD per input token when the provider catalog publishes it. */
-  promptPrice?: number;
-  /** USD per output token when the provider catalog publishes it. */
-  completionPrice?: number;
 }
 
 export interface AgentModelGroup {
@@ -59,8 +55,6 @@ function toModelInfo(listing: AgentModelListing): ModelInfo {
     contextLength: listing.contextLength,
     isFree: listing.isFree,
     vendor: listing.vendor,
-    promptPrice: listing.promptPrice,
-    completionPrice: listing.completionPrice,
   };
 }
 

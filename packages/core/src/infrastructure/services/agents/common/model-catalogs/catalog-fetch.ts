@@ -22,4 +22,4 @@
 export const MODEL_CATALOG_FETCH_TIMEOUT_MS = 10_000;
 
 /** In-process cache lifetime shared by all {@link TtlModelCatalog} providers. */
-export const MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
+export const MODEL_CATALOG_TTL_MS = 60 * 60 * 1000;

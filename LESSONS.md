@@ -1,8 +1,11 @@
 # Lessons Learned
 
-## Probe every installed agent CLI before documenting discovery gaps
+## Prefer a shared port when one provider gains a capability
 
-When adding `IModelCatalog` discovery, run the binaries that are actually on the machine (`claude -p --restricted --safe-mode "/model"`, `codex debug models`, `cursor-agent --list-models`) before claiming a provider has no list command. Document only real gaps (e.g. gemini/kimi/copilot missing locally). Do not leave factory JSDoc Cursor-only when OpenRouter/Together/Claude/Codex share the same port. Price fields on `AgentModelListing` come from the provider response (`isFree` / optional USD); `MODEL_METADATA` is labels only — there is no Shep $/token table.
+When a capability exists for one agent or integration (for example live model
+discovery), introduce a shared port and register each provider behind it
+instead of shipping a one-tool patch. Sibling providers then opt in the same
+way; presentation and docs stay provider-agnostic.
 
 ## Exercise real concurrency and retain subprocess errors
 

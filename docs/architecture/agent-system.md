@@ -369,11 +369,6 @@ The agent system uses these key interfaces (defined in `packages/core/src/applic
 | `IFeatureAgentProcessService` | Manage feature agent background processes                               |
 | `IStructuredAgentCaller`      | Make structured (typed) calls to agents                                 |
 
-`IModelCatalog` implementations live under `common/model-catalogs/` (OpenRouter,
-Together AI, Cursor `--list-models`, Claude Code `/model`, Codex
-`debug models`). The factory looks them up by agent type via
-`listAvailableModels()` — never on every agent turn.
-
 ## Workflow Stages
 
 | Stage            | Node factory              | Responsibility                                               |

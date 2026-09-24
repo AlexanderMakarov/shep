@@ -58,13 +58,11 @@ describe('OpenRouterModelCatalogService', () => {
         contextLength: 1000,
         isFree: true,
         vendor: 'vendor',
-        promptPrice: 0,
-        completionPrice: 0,
       },
     ]);
   });
 
-  it('maps live OpenRouter pricing into isFree and per-token USD fields', async () => {
+  it('marks non-zero OpenRouter pricing as not free', async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       okResponse({
         data: [
@@ -86,8 +84,6 @@ describe('OpenRouterModelCatalogService', () => {
         contextLength: undefined,
         isFree: false,
         vendor: 'vendor',
-        promptPrice: 0.000001,
-        completionPrice: 0.000002,
       },
     ]);
   });
