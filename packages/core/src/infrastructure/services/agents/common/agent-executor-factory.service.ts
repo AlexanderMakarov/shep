@@ -245,6 +245,19 @@ export class AgentExecutorFactory implements IAgentExecutorFactory {
   }
 
   /**
+   * Prefetch every registered catalog concurrently into the shared TTL cache.
+   */
+  async warmModelCatalogs(authConfig?: AgentConfig): Promise<void> {
+    const activeType = authConfig?.type as string | undefined;
+    await Promise.all(
+      [...this.catalogs.entries()].map(([agentType, catalog]) => {
+        const auth = activeType && activeType === agentType ? authConfig : undefined;
+        return catalog.listModels(auth).catch(() => [] as AgentModelListing[]);
+      })
+    );
+  }
+
+  /**
    * Create an interactive executor for multi-turn agent sessions.
    * Currently only Claude Code supports interactive sessions via the SDK.
    *

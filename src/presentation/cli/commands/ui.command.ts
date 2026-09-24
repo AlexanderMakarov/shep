@@ -21,6 +21,7 @@ import { container } from '@/infrastructure/di/container.js';
 import type { IVersionService } from '@/application/ports/output/services/version-service.interface.js';
 import type { ILogger } from '@/application/ports/output/services/logger.interface.js';
 import type { IWebServerService } from '@/application/ports/output/services/web-server-service.interface.js';
+import { warmAgentModelCatalogs } from '@/infrastructure/services/agents/common/model-catalogs/warm-agent-model-catalogs.js';
 import type { IAgentRunRepository } from '@/application/ports/output/agents/agent-run-repository.interface.js';
 import type { IPhaseTimingRepository } from '@/application/ports/output/agents/phase-timing-repository.interface.js';
 import type { IFeatureRepository } from '@/application/ports/output/repositories/feature-repository.interface.js';
@@ -112,6 +113,9 @@ Examples:
         messages.newline();
 
         const service = container.resolve<IWebServerService>('IWebServerService');
+        void warmAgentModelCatalogs(container).catch((error) =>
+          console.warn(`[ui] model catalog warm failed: ${String(error)}`)
+        );
         await service.start(port, dir, dev);
 
         // Start notification watcher to detect agent status transitions

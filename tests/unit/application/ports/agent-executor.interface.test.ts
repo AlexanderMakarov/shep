@@ -134,6 +134,7 @@ describe('IAgentExecutorFactory type contracts', () => {
       getCliInfo: () => [],
       getSupportedModels: () => [],
       listAvailableModels: async () => [],
+      warmModelCatalogs: async () => undefined,
       createInteractiveExecutor: () => {
         throw new Error('not implemented');
       },
@@ -156,6 +157,7 @@ describe('IAgentExecutorFactory type contracts', () => {
       getCliInfo: () => [],
       getSupportedModels: () => [],
       listAvailableModels: async () => [],
+      warmModelCatalogs: async () => undefined,
       createInteractiveExecutor: () => {
         throw new Error('not implemented');
       },
@@ -182,6 +184,7 @@ describe('IAgentExecutorFactory type contracts', () => {
       getCliInfo: () => [],
       getSupportedModels: () => [],
       listAvailableModels: async () => [],
+      warmModelCatalogs: async () => undefined,
       createInteractiveExecutor: () => {
         throw new Error('not implemented');
       },

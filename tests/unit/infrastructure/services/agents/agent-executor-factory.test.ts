@@ -647,4 +647,54 @@ describe('AgentExecutorFactory - listAvailableModels', () => {
     ]);
     expect(cursor.listModels).not.toHaveBeenCalled();
   });
+
+  it('warms every registered catalog concurrently', async () => {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const makeCatalog = (): IModelCatalog => ({
+      listModels: vi.fn(async () => {
+        concurrent += 1;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        concurrent -= 1;
+        return [{ id: 'm' }];
+      }),
+    });
+
+    const catalogs = new Map<string, IModelCatalog>([
+      ['cursor', makeCatalog()],
+      ['claude-code', makeCatalog()],
+      ['codex-cli', makeCatalog()],
+    ]);
+    const factory = new AgentExecutorFactory(vi.fn(), catalogs);
+
+    await factory.warmModelCatalogs();
+
+    expect(maxConcurrent).toBe(3);
+    for (const catalog of catalogs.values()) {
+      expect(catalog.listModels).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('passes active-agent auth only to the matching catalog during warm', async () => {
+    const together: IModelCatalog = {
+      listModels: vi.fn().mockResolvedValue([{ id: 'tg/model' }]),
+    };
+    const cursor: IModelCatalog = {
+      listModels: vi.fn().mockResolvedValue([{ id: 'auto' }]),
+    };
+    const factory = new AgentExecutorFactory(
+      vi.fn(),
+      new Map([
+        ['together-ai', together],
+        ['cursor', cursor],
+      ])
+    );
+    const auth = { type: AgentType.TogetherAi, token: 'secret' } as AgentConfig;
+
+    await factory.warmModelCatalogs(auth);
+
+    expect(together.listModels).toHaveBeenCalledWith(auth);
+    expect(cursor.listModels).toHaveBeenCalledWith(undefined);
+  });
 });

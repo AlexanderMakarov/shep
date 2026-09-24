@@ -54,11 +54,14 @@ export function registerAgents(container: DependencyContainer): void {
 
   if (process.env.SHEP_MOCK_EXECUTOR === '1') {
     container.register<IAgentExecutorFactory>('IAgentExecutorFactory', {
-      useFactory: () => new MockAgentExecutorFactory(),
+      useFactory: instanceCachingFactory(() => new MockAgentExecutorFactory()),
     });
   } else {
     container.register<IAgentExecutorFactory>('IAgentExecutorFactory', {
-      useFactory: () => {
+      // Must be process-wide singleton: model catalogs own an in-process TTL
+      // cache. A fresh factory per resolve re-spawns every CLI/HTTP discovery
+      // on each picker open.
+      useFactory: instanceCachingFactory(() => {
         // Wrap spawn with sensible defaults: stdio piped and windowsHide on Win32.
         // Each executor controls its own `shell` option — cursor needs shell: true
         // for .cmd scripts, but claude-code must NOT use shell (DEP0190 / prompt mangling).
@@ -70,7 +73,7 @@ export function registerAgents(container: DependencyContainer): void {
           });
         };
         return new AgentExecutorFactory(spawnWithPipe);
-      },
+      }),
     });
   }
 

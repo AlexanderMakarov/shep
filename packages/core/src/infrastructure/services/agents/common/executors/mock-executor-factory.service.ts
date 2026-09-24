@@ -42,6 +42,10 @@ export class MockAgentExecutorFactory implements IAgentExecutorFactory {
     return [];
   }
 
+  async warmModelCatalogs(_authConfig?: AgentConfig): Promise<void> {
+    // No live catalogs in the mock factory.
+  }
+
   /**
    * The mock serves no catalog, so every tier collapses onto the pinned model —
    * E2E runs stay on one deterministic model regardless of the adaptive toggle.

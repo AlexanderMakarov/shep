@@ -26,6 +26,7 @@ function makeFactory(): IAgentExecutorFactory {
     getSupportedAgents: vi.fn(),
     getCliInfo: vi.fn(),
     listAvailableModels: vi.fn(),
+    warmModelCatalogs: vi.fn(),
     createInteractiveExecutor: vi.fn(),
     supportsInteractive: vi.fn(),
   } as unknown as IAgentExecutorFactory;

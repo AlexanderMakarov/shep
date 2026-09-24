@@ -149,6 +149,7 @@ function makeExecutorFactory(handle: InteractiveAgentSessionHandle): IAgentExecu
     getCliInfo: vi.fn().mockReturnValue([]),
     getSupportedModels: vi.fn().mockReturnValue([]),
     listAvailableModels: vi.fn().mockResolvedValue([]),
+    warmModelCatalogs: vi.fn().mockResolvedValue(undefined),
     supportsInteractive: vi.fn().mockReturnValue(true),
   } as unknown as IAgentExecutorFactory;
 }

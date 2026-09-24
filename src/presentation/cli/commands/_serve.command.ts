@@ -73,6 +73,7 @@ import {
   hasWorkflowScheduler,
 } from '@/infrastructure/services/workflow-scheduler/workflow-scheduler.service.js';
 import { hasSettings, getSettings } from '@/infrastructure/services/settings.service.js';
+import { warmAgentModelCatalogs } from '@/infrastructure/services/agents/common/model-catalogs/warm-agent-model-catalogs.js';
 
 function parsePort(value: string): number {
   const port = parseInt(value, 10);
@@ -103,6 +104,10 @@ export function createServeCommand(): Command {
 
         // Start the web server
         const service = container.resolve<IWebServerService>('IWebServerService');
+        // Prefetch model catalogs while Next prepares — picker should hit TTL cache.
+        void warmAgentModelCatalogs(container).catch((error) =>
+          process.stderr.write(`[_serve] model catalog warm failed: ${String(error)}\n`)
+        );
         await service.start(port, dir, dev);
 
         // Cap the daemon log while the daemon runs. start-daemon.ts rotates

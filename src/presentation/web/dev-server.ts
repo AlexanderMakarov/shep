@@ -20,6 +20,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequestListener } from '@/infrastructure/services/http-request-listener.js';
 import { initializeContainer, container } from '@/infrastructure/di/container.js';
+import { warmAgentModelCatalogs } from '@/infrastructure/services/agents/common/model-catalogs/warm-agent-model-catalogs.js';
 import type { IDeploymentService } from '@/application/ports/output/services/deployment-service.interface.js';
 import { InitializeSettingsUseCase } from '@/application/use-cases/settings/initialize-settings.use-case.js';
 import { initializeSettings } from '@/infrastructure/services/settings.service.js';
@@ -159,6 +160,11 @@ async function main() {
     }
 
     initializeSettings(settings);
+
+    // Prefetch live model catalogs so the picker hits TTL cache on first open.
+    void warmAgentModelCatalogs(container).catch((error) =>
+      console.warn('[dev-server] model catalog warm failed:', error)
+    );
 
     // Start notification watcher for real-time SSE events (same as shep ui)
     const runRepo = container.resolve<IAgentRunRepository>('IAgentRunRepository');

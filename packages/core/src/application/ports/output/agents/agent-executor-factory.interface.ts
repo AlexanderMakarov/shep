@@ -114,6 +114,17 @@ export interface IAgentExecutorFactory {
   listAvailableModels(agentType: AgentType, authConfig?: AgentConfig): Promise<AgentModelListing[]>;
 
   /**
+   * Prefetch every registered {@link IModelCatalog} in parallel so the model
+   * picker can hit the in-process TTL cache. Pass the active agent config when
+   * available — token-backed catalogs (e.g. Together AI) only receive auth when
+   * their agent type matches.
+   *
+   * Failures are swallowed per catalog; this must not throw for a single
+   * unreachable provider.
+   */
+  warmModelCatalogs(authConfig?: AgentConfig): Promise<void>;
+
+  /**
    * Resolve which model adaptive selection would use for each complexity tier,
    * given a pinned model and the agent that will run it.
    *

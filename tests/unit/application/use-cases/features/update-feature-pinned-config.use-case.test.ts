@@ -58,6 +58,7 @@ function createMockAgentExecutorFactory() {
       }
       return [{ id: 'claude-sonnet-4-6' }];
     }),
+    warmModelCatalogs: vi.fn().mockResolvedValue(undefined),
     createInteractiveExecutor: vi.fn(),
     supportsInteractive: vi.fn(),
   };
